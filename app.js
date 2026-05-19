@@ -873,6 +873,53 @@ function ensureXlsxReady() {
   return false;
 }
 
+
+function sanitizeFilePart(value, fallback = 'NA') {
+  const cleaned = String(value ?? '')
+    .trim()
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .replace(/\s+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return cleaned || fallback;
+}
+
+function todayYmd() {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}${mm}${dd}`;
+}
+
+function buildExcelReportFileName() {
+  const filteredRows = getFilteredRows();
+  const lotValues = uniqueValues('LOT ID', filteredRows);
+  let lotPart = 'LOT';
+  if (lotValues.length === 1) {
+    lotPart = lotValues[0];
+  } else if ((state.filters['LOT ID'] || []).length === 1) {
+    lotPart = state.filters['LOT ID'][0];
+  } else if (lotValues.length > 1) {
+    const representativeLots = lotValues.slice(0, 2).map(lot => sanitizeFilePart(lot, 'LOT'));
+    const moreCount = lotValues.length - representativeLots.length;
+    lotPart = representativeLots.join('_');
+    if (moreCount > 0) lotPart += `_and_${moreCount}more`;
+  }
+
+  const { label } = getMapColumns(); // Wafer or Strip
+  let mappingType = state.groupValue;
+  if (mappingType === 'MERGE') mappingType = 'MERGE';
+  if (mappingType === 'ALL') mappingType = 'ALL_IDs';
+
+  return [
+    sanitizeFilePart(lotPart, 'LOT'),
+    sanitizeFilePart(label, 'Map'),
+    sanitizeFilePart(mappingType, 'Mapping'),
+    todayYmd()
+  ].join('_') + '.xlsx';
+}
+
 function downloadExcelWorkbook(wb, fileName) {
   const XLSX_LIB = window.XLSX;
   try {
@@ -923,8 +970,7 @@ function exportExcelReport() {
     XLSX_LIB.utils.book_append_sheet(wb, makeDataWorksheet(state.rawRows, 'Raw 2DID', filteredSet), uniqueSheetName('2DID Information Detail', used));
     XLSX_LIB.utils.book_append_sheet(wb, makeDataWorksheet(state.rawRows, 'Raw 2DID'), uniqueSheetName('Raw Uploaded 2DID', used));
 
-    const title = $('reqTitle').value.trim() || `${state.mapType}_${state.groupValue}_mapping`;
-    const fileName = `${title.replace(/[\\/:*?"<>|]/g, '_').slice(0, 80)}_2DID_report.xlsx`;
+    const fileName = buildExcelReportFileName();
     downloadExcelWorkbook(wb, fileName);
   } catch (error) {
     console.error('Export Excel Report error:', error);

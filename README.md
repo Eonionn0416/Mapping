@@ -68,3 +68,19 @@ Mapping Sheet 규칙:
 - GitHub Pages에서 `xlsx-js-style` CDN 404 또는 다운로드 차단처럼 보이는 문제를 줄이기 위해 CDN fallback을 추가했습니다.
 - `XLSX.writeFile()` 대신 Blob 다운로드 방식을 우선 사용하고, 실패 시 `writeFile()`로 fallback합니다.
 - Export 실패 시 이제 alert와 console에 실제 오류가 표시됩니다.
+
+## V9 Export File Naming Rule
+
+Excel Report 파일명은 아래 규칙으로 저장됩니다.
+
+```text
+Lot#_(Wafer or Strip)_Mapping Type_YYYYMMDD.xlsx
+```
+
+예시:
+
+```text
+PEXL70.1_Wafer_MERGE_20260519.xlsx
+PEXL70.1_Strip_MS249028-12_0102_20260519.xlsx
+MULTI_LOT_2_Wafer_ALL_IDs_20260519.xlsx
+```
