@@ -1,0 +1,720 @@
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-app.js";
+import { getAnalytics, isSupported as analyticsIsSupported } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-analytics.js";
+import {
+  getFirestore,
+  collection,
+  doc,
+  setDoc,
+  getDoc,
+  getDocs,
+  deleteDoc,
+  query,
+  orderBy,
+  serverTimestamp,
+  writeBatch
+} from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDQG07Ay_CkTgHNKu2n8f--AlZPkviupTE",
+  authDomain: "mapping-17842.firebaseapp.com",
+  projectId: "mapping-17842",
+  storageBucket: "mapping-17842.firebasestorage.app",
+  messagingSenderId: "710133954609",
+  appId: "1:710133954609:web:10c990eca59eed79853d10",
+  measurementId: "G-DK2N63PM7S"
+};
+
+const app = initializeApp(firebaseConfig);
+analyticsIsSupported().then((supported) => {
+  if (supported) getAnalytics(app);
+}).catch(() => {});
+const db = getFirestore(app);
+
+const REQUIRED_COLUMNS = [
+  'LOT ID', 'STRIP ID', 'X', 'Y', 'UNIT ID', 'WAFER ID', 'WAFER COL', 'WAFER ROW', 'Fail'
+];
+const FILTER_COLUMNS = REQUIRED_COLUMNS;
+const HISTORY_COLLECTION = 'mappingHistories';
+const ROW_CHUNK_COLLECTION = 'rowChunks';
+const ROW_CHUNK_SIZE = 350;
+
+const state = {
+  rawRows: [],
+  sourceFileName: '',
+  filters: {},
+  mapType: 'strip',
+  groupValue: 'MERGE',
+  cellSize: 14,
+  showOnlyFail: false,
+  activeHistoryId: null,
+  histories: [],
+  isBusy: false
+};
+
+const $ = (id) => document.getElementById(id);
+const escapeHtml = (value) => String(value ?? '').replace(/[&<>"]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+
+function setBusy(isBusy, message = '') {
+  state.isBusy = isBusy;
+  const btn = document.querySelector('#requestForm button[type="submit"]');
+  if (btn) {
+    btn.disabled = isBusy;
+    btn.textContent = isBusy ? (message || 'Saving...') : 'Save mapping result';
+  }
+}
+
+function firestoreErrorMessage(error) {
+  const code = error?.code || '';
+  if (code.includes('permission-denied')) {
+    return 'Firestore 권한이 막혀 있습니다. Firebase Console > Firestore Rules에서 mappingHistories 읽기/쓰기를 허용한 뒤 Publish 해야 합니다.';
+  }
+  return error?.message || String(error);
+}
+
+function normalizeKey(key) {
+  return String(key || '').replace(/\s+/g, ' ').trim().toUpperCase();
+}
+
+function normalizeRows(rows) {
+  return rows.map((row, idx) => {
+    const normalized = { __idx: Number(row.__idx ?? idx) };
+    Object.keys(row).forEach((key) => {
+      const cleanKey = REQUIRED_COLUMNS.find(col => normalizeKey(col) === normalizeKey(key)) || key;
+      normalized[cleanKey] = row[key];
+    });
+    normalized.X = Number(normalized.X);
+    normalized.Y = Number(normalized.Y);
+    normalized['WAFER COL'] = Number(normalized['WAFER COL']);
+    normalized['WAFER ROW'] = Number(normalized['WAFER ROW']);
+    normalized.Fail = Number(normalized.Fail || 0);
+    return normalized;
+  }).filter(row => REQUIRED_COLUMNS.every(col => row[col] !== undefined && row[col] !== null && row[col] !== ''));
+}
+
+function compactRow(row) {
+  return {
+    __idx: Number(row.__idx),
+    'LOT ID': String(row['LOT ID'] ?? ''),
+    'STRIP ID': String(row['STRIP ID'] ?? ''),
+    X: Number(row.X),
+    Y: Number(row.Y),
+    'UNIT ID': String(row['UNIT ID'] ?? ''),
+    'WAFER ID': String(row['WAFER ID'] ?? ''),
+    'WAFER COL': Number(row['WAFER COL']),
+    'WAFER ROW': Number(row['WAFER ROW']),
+    Fail: Number(row.Fail || 0)
+  };
+}
+
+function readFile(file) {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const workbook = XLSX.read(e.target.result, { type: 'array' });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+    const missing = REQUIRED_COLUMNS.filter(col => !Object.keys(rows[0] || {}).some(k => normalizeKey(k) === normalizeKey(col)));
+    if (missing.length) {
+      alert(`필수 컬럼 누락: ${missing.join(', ')}`);
+      return;
+    }
+    state.rawRows = normalizeRows(rows);
+    state.sourceFileName = file.name;
+    state.filters = {};
+    state.groupValue = 'MERGE';
+    state.activeHistoryId = null;
+    updateActiveHistoryLabel();
+    renderFilters();
+    renderGroupOptions();
+    renderAll();
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function uniqueValues(col, rows = state.rawRows) {
+  return [...new Set(rows.map(r => String(r[col] ?? '')).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
+
+function getFilteredRows(rows = state.rawRows) {
+  return rows.filter(row => {
+    return Object.entries(state.filters).every(([col, values]) => {
+      if (!values || !values.length) return true;
+      return values.includes(String(row[col]));
+    });
+  });
+}
+
+function getMapColumns(mapType = state.mapType) {
+  return mapType === 'strip'
+    ? { groupCol: 'STRIP ID', xCol: 'X', yCol: 'Y', label: 'Strip' }
+    : { groupCol: 'WAFER ID', xCol: 'WAFER COL', yCol: 'WAFER ROW', label: 'Wafer' };
+}
+
+function getGlobalBounds(rows, xCol, yCol) {
+  const xs = rows.map(r => Number(r[xCol])).filter(Number.isFinite);
+  const ys = rows.map(r => Number(r[yCol])).filter(Number.isFinite);
+  if (!xs.length || !ys.length) return null;
+  const minX = Math.min(...xs) <= 0 ? Math.min(...xs) : 1;
+  const minY = Math.min(...ys) <= 0 ? Math.min(...ys) : 1;
+  return { minX, maxX: Math.max(...xs), minY, maxY: Math.max(...ys) };
+}
+
+function renderFilters() {
+  const panel = $('filterPanel');
+  panel.innerHTML = '';
+  FILTER_COLUMNS.forEach(col => {
+    const block = document.createElement('div');
+    block.className = 'filter-block';
+    const label = document.createElement('label');
+    label.textContent = col;
+    const select = document.createElement('select');
+    select.multiple = true;
+    uniqueValues(col).forEach(value => {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = value;
+      if ((state.filters[col] || []).includes(value)) option.selected = true;
+      select.appendChild(option);
+    });
+    select.addEventListener('change', () => {
+      state.activeHistoryId = null;
+      updateActiveHistoryLabel();
+      state.filters[col] = [...select.selectedOptions].map(o => o.value);
+      renderGroupOptions();
+      renderAll();
+    });
+    label.appendChild(select);
+    block.appendChild(label);
+    panel.appendChild(block);
+  });
+}
+
+function renderGroupOptions() {
+  const select = $('groupSelect');
+  const { groupCol } = getMapColumns();
+  const current = state.groupValue;
+  select.innerHTML = '';
+  [
+    ['MERGE', 'MERGE - all IDs overlay'],
+    ['ALL', 'ALL - separate maps']
+  ].forEach(([value, text]) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = text;
+    select.appendChild(option);
+  });
+  uniqueValues(groupCol).forEach(value => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = value;
+    select.appendChild(option);
+  });
+  select.value = [...select.options].some(o => o.value === current) ? current : 'MERGE';
+  state.groupValue = select.value;
+}
+
+function summarizeRows(rows) {
+  const fail = rows.filter(r => Number(r.Fail) > 0).length;
+  return {
+    total: state.rawRows.length,
+    inQty: rows.length,
+    failQty: fail,
+    failRate: rows.length ? (fail / rows.length) * 100 : 0
+  };
+}
+
+function renderSummary(filteredRows) {
+  const summary = summarizeRows(filteredRows);
+  $('totalCount').textContent = summary.total.toLocaleString();
+  $('filteredCount').textContent = summary.inQty.toLocaleString();
+  $('failCount').textContent = summary.failQty.toLocaleString();
+  $('failRate').textContent = `${summary.failRate.toFixed(4)}%`;
+}
+
+function buildCellMap(rows, xCol, yCol) {
+  const cellMap = new Map();
+  rows.forEach(row => {
+    const key = `${Number(row[xCol])}|${Number(row[yCol])}`;
+    if (!cellMap.has(key)) cellMap.set(key, []);
+    cellMap.get(key).push(row);
+  });
+  return cellMap;
+}
+
+function createMapTitle({ label, group, rows, isMerge, groupCol }) {
+  const fail = rows.filter(r => Number(r.Fail) > 0).length;
+  const div = document.createElement('div');
+  div.className = 'map-title';
+  const groupCount = isMerge ? uniqueValues(groupCol, rows).length : 1;
+  div.textContent = `${label}: ${group} / Units ${rows.length.toLocaleString()} / Fail ${fail.toLocaleString()}${isMerge ? ` / Merged IDs ${groupCount}` : ''}`;
+  return div;
+}
+
+function renderOneMap(container, options) {
+  const { rows, filteredSet, mapType, titleGroup, isMerge } = options;
+  const { groupCol, xCol, yCol, label } = getMapColumns(mapType);
+  const bounds = getGlobalBounds(state.rawRows.length ? state.rawRows : rows, xCol, yCol);
+  if (!bounds) return;
+
+  container.appendChild(createMapTitle({ label, group: titleGroup, rows, isMerge, groupCol }));
+
+  const grid = document.createElement('div');
+  grid.className = 'map-grid';
+  grid.style.setProperty('--cell-size', `${state.cellSize}px`);
+  grid.style.gridTemplateColumns = `repeat(${bounds.maxX - bounds.minX + 1}, var(--cell-size))`;
+
+  const cellMap = buildCellMap(rows, xCol, yCol);
+  for (let y = bounds.minY; y <= bounds.maxY; y++) {
+    for (let x = bounds.minX; x <= bounds.maxX; x++) {
+      const cellRows = cellMap.get(`${x}|${y}`) || [];
+      const cell = document.createElement('div');
+      cell.className = 'map-cell';
+      if (!cellRows.length) {
+        cell.classList.add('empty-cell');
+      } else {
+        const isFail = cellRows.some(row => Number(row.Fail) > 0);
+        const isFiltered = cellRows.some(row => filteredSet.has(row.__idx));
+        const isStacked = cellRows.length > 1;
+        if (isFail) cell.classList.add('fail');
+        if (isStacked) cell.classList.add('stacked');
+        if (!isFiltered) cell.classList.add('dim');
+        if (state.showOnlyFail) cell.classList.add('hide-normal');
+        cell.addEventListener('mousemove', (event) => showTooltip(event, cellRows, { groupCol }));
+        cell.addEventListener('mouseleave', hideTooltip);
+      }
+      grid.appendChild(cell);
+    }
+  }
+  container.appendChild(grid);
+}
+
+function renderMap(filteredRows) {
+  const container = $('mapContainer');
+  if (!state.rawRows.length) {
+    container.className = 'map-container empty';
+    container.textContent = 'Excel을 업로드하거나 Result History를 선택하면 Map이 표시됩니다.';
+    return;
+  }
+  container.className = 'map-container';
+  container.innerHTML = '';
+
+  const { groupCol } = getMapColumns();
+  const filteredSet = new Set(filteredRows.map(r => r.__idx));
+
+  if (state.groupValue === 'MERGE') {
+    renderOneMap(container, {
+      rows: state.rawRows,
+      filteredSet,
+      mapType: state.mapType,
+      titleGroup: 'MERGE',
+      isMerge: true
+    });
+    return;
+  }
+
+  const groups = state.groupValue === 'ALL' ? uniqueValues(groupCol, state.rawRows) : [state.groupValue];
+  groups.forEach(group => {
+    const rows = state.rawRows.filter(r => String(r[groupCol]) === String(group));
+    if (!rows.length) return;
+    renderOneMap(container, {
+      rows,
+      filteredSet,
+      mapType: state.mapType,
+      titleGroup: group,
+      isMerge: false
+    });
+  });
+}
+
+function showTooltip(event, rows, { groupCol }) {
+  const first = rows[0];
+  let tip = document.querySelector('.tooltip');
+  if (!tip) {
+    tip = document.createElement('div');
+    tip.className = 'tooltip';
+    document.body.appendChild(tip);
+  }
+  const failCount = rows.filter(r => Number(r.Fail) > 0).length;
+  const groups = [...new Set(rows.map(r => r[groupCol]))].slice(0, 8).join(', ');
+  const unitLines = rows.slice(0, 5).map(r => `${escapeHtml(r['UNIT ID'])} / Fail:${escapeHtml(r.Fail)}`).join('<br>');
+  tip.innerHTML = `
+    LOT: ${escapeHtml(first['LOT ID'])}<br>
+    Rows on cell: ${rows.length} / Fail: ${failCount}<br>
+    Group: ${escapeHtml(groups)}${rows.length > 8 ? ' ...' : ''}<br>
+    Strip: ${escapeHtml(first['STRIP ID'])} / X:${escapeHtml(first.X)}, Y:${escapeHtml(first.Y)}<br>
+    Wafer: ${escapeHtml(first['WAFER ID'])} / COL:${escapeHtml(first['WAFER COL'])}, ROW:${escapeHtml(first['WAFER ROW'])}<br>
+    Unit:<br>${unitLines}${rows.length > 5 ? '<br>...' : ''}
+  `;
+  tip.style.display = 'block';
+  tip.style.left = `${event.clientX + 14}px`;
+  tip.style.top = `${event.clientY + 14}px`;
+}
+function hideTooltip() {
+  const tip = document.querySelector('.tooltip');
+  if (tip) tip.style.display = 'none';
+}
+
+function renderAll() {
+  const filteredRows = getFilteredRows();
+  renderSummary(filteredRows);
+  renderMap(filteredRows);
+}
+
+function showPage(pageId) {
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.page === pageId));
+  document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === pageId));
+}
+
+function updateActiveHistoryLabel() {
+  const label = $('activeHistoryLabel');
+  if (!label) return;
+  if (!state.activeHistoryId) {
+    label.textContent = '현재 화면 상태를 Firestore Result History에 저장합니다.';
+    return;
+  }
+  const item = state.histories.find(h => h.id === state.activeHistoryId);
+  label.textContent = item
+    ? `History 불러옴: ${item.title} / ${item.createdAtText || '-'}`
+    : '현재 화면 상태를 Firestore Result History에 저장합니다.';
+}
+
+function setupNavigation() {
+  document.querySelectorAll('.nav-btn').forEach(btn => {
+    btn.addEventListener('click', () => showPage(btn.dataset.page));
+  });
+  document.querySelectorAll('[data-open-page]').forEach(btn => {
+    btn.addEventListener('click', () => showPage(btn.dataset.openPage));
+  });
+}
+
+function getSelectedBins() {
+  return [...$('binCheckboxes').querySelectorAll('input:checked')].map(i => i.value);
+}
+
+function currentSnapshot() {
+  const filteredRows = getFilteredRows();
+  const summary = summarizeRows(filteredRows);
+  const { groupCol, xCol, yCol } = getMapColumns();
+  const bounds = getGlobalBounds(state.rawRows, xCol, yCol);
+  return {
+    sourceFileName: state.sourceFileName,
+    mapType: state.mapType,
+    groupValue: state.groupValue,
+    cellSize: state.cellSize,
+    showOnlyFail: state.showOnlyFail,
+    filters: JSON.parse(JSON.stringify(state.filters)),
+    summary,
+    mapInfo: {
+      groupColumn: groupCol,
+      xColumn: xCol,
+      yColumn: yCol,
+      bounds,
+      rawRowCount: state.rawRows.length
+    }
+  };
+}
+
+function cleanFirestoreValue(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+async function saveHistoryToFirestore(item, rows) {
+  const historyRef = doc(db, HISTORY_COLLECTION, item.id);
+  const rowsCompact = rows.map(compactRow);
+  const chunkCount = Math.ceil(rowsCompact.length / ROW_CHUNK_SIZE);
+
+  await setDoc(historyRef, cleanFirestoreValue({
+    title: item.title,
+    ft: item.ft,
+    bins: item.bins,
+    comment: item.comment,
+    snapshot: item.snapshot,
+    createdAtText: item.createdAtText,
+    createdAt: serverTimestamp(),
+    rowCount: rowsCompact.length,
+    rowChunkSize: ROW_CHUNK_SIZE,
+    rowChunkCount: chunkCount
+  }));
+
+  let batch = writeBatch(db);
+  let opCount = 0;
+  for (let i = 0; i < chunkCount; i++) {
+    const chunkRef = doc(collection(db, HISTORY_COLLECTION, item.id, ROW_CHUNK_COLLECTION), String(i).padStart(5, '0'));
+    batch.set(chunkRef, cleanFirestoreValue({
+      index: i,
+      rows: rowsCompact.slice(i * ROW_CHUNK_SIZE, (i + 1) * ROW_CHUNK_SIZE)
+    }));
+    opCount++;
+    if (opCount >= 450) {
+      await batch.commit();
+      batch = writeBatch(db);
+      opCount = 0;
+    }
+  }
+  if (opCount > 0) await batch.commit();
+}
+
+async function loadHistoriesFromFirestore() {
+  try {
+    const q = query(collection(db, HISTORY_COLLECTION), orderBy('createdAt', 'desc'));
+    const snap = await getDocs(q);
+    state.histories = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderHistories();
+  } catch (error) {
+    console.error('Firestore history load failed:', error);
+    $('requestList').className = 'request-list empty';
+    $('requestList').textContent = firestoreErrorMessage(error);
+  }
+}
+
+async function loadRowsForHistory(id) {
+  const historyRef = doc(db, HISTORY_COLLECTION, id);
+  const historySnap = await getDoc(historyRef);
+  if (!historySnap.exists()) throw new Error('삭제되었거나 찾을 수 없는 History입니다.');
+
+  const chunkSnap = await getDocs(query(collection(db, HISTORY_COLLECTION, id, ROW_CHUNK_COLLECTION), orderBy('index', 'asc')));
+  const rows = [];
+  chunkSnap.forEach(d => rows.push(...(d.data().rows || [])));
+  return { item: { id: historySnap.id, ...historySnap.data() }, rows: normalizeRows(rows) };
+}
+
+async function deleteHistoryFromFirestore(id) {
+  const chunkSnap = await getDocs(collection(db, HISTORY_COLLECTION, id, ROW_CHUNK_COLLECTION));
+  let batch = writeBatch(db);
+  let opCount = 0;
+  for (const d of chunkSnap.docs) {
+    batch.delete(d.ref);
+    opCount++;
+    if (opCount >= 450) {
+      await batch.commit();
+      batch = writeBatch(db);
+      opCount = 0;
+    }
+  }
+  if (opCount > 0) await batch.commit();
+  await deleteDoc(doc(db, HISTORY_COLLECTION, id));
+}
+
+async function clearAllHistoriesFromFirestore() {
+  const snap = await getDocs(collection(db, HISTORY_COLLECTION));
+  for (const d of snap.docs) {
+    await deleteHistoryFromFirestore(d.id);
+  }
+}
+
+function setupRequestForm() {
+  const binBox = $('binCheckboxes');
+  for (let i = 2; i <= 20; i++) {
+    const label = document.createElement('label');
+    label.innerHTML = `<input type="checkbox" value="Bin${i}"> Bin${i}`;
+    binBox.appendChild(label);
+  }
+
+  $('requestForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (state.isBusy) return;
+    if (!state.rawRows.length) {
+      alert('먼저 2DID Excel을 업로드하고 Mapping 결과를 만든 뒤 저장하세요.');
+      return;
+    }
+    const item = {
+      id: crypto.randomUUID(),
+      createdAtText: new Date().toLocaleString('ko-KR'),
+      title: $('reqTitle').value.trim(),
+      ft: $('reqFt').value,
+      bins: getSelectedBins(),
+      comment: $('reqComment').value.trim(),
+      snapshot: currentSnapshot()
+    };
+
+    try {
+      setBusy(true, 'Saving to Firestore...');
+      await saveHistoryToFirestore(item, state.rawRows);
+      state.histories.unshift(item);
+      renderHistories();
+      await restoreHistoryToMapping(item.id, { useCurrentRows: true });
+      alert('현재 Mapping 결과가 Firestore Result History에 저장됐습니다.');
+    } catch (error) {
+      console.error('Firestore save failed:', error);
+      alert(firestoreErrorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  });
+}
+
+function renderHistories() {
+  const list = $('requestList');
+  if (!state.histories.length) {
+    list.className = 'request-list empty';
+    list.textContent = '저장된 결과가 없습니다.';
+    return;
+  }
+  list.className = 'request-list';
+  list.innerHTML = '';
+  state.histories.forEach(item => {
+    const s = item.snapshot?.summary || { inQty: 0, failQty: 0, failRate: 0 };
+    const div = document.createElement('div');
+    div.className = 'request-item';
+    div.innerHTML = `
+      <div class="request-item-head">
+        <button class="link-title" data-open="${item.id}">${escapeHtml(item.title)}</button>
+        <button class="danger-ghost-btn" data-delete="${item.id}">Delete</button>
+      </div>
+      <div class="badges">
+        <span class="badge">${escapeHtml(item.ft)}</span>
+        <span class="badge">${escapeHtml(item.snapshot?.mapType || '-')} / ${escapeHtml(item.snapshot?.groupValue || '-')}</span>
+        <span class="badge">${escapeHtml((item.bins || []).join(', ') || 'No bin')}</span>
+      </div>
+      <div class="request-meta">
+        In Qty: ${Number(s.inQty).toLocaleString()} / Fail Qty: ${Number(s.failQty).toLocaleString()} / Fail Rate: ${Number(s.failRate).toFixed(4)}%<br>
+        File: ${escapeHtml(item.snapshot?.sourceFileName || '-')} / Created: ${escapeHtml(item.createdAtText || '-')}<br>
+        ${item.comment ? `Comment: ${escapeHtml(item.comment)}` : ''}
+      </div>
+    `;
+    div.querySelector('[data-open]').addEventListener('click', () => restoreHistoryToMapping(item.id));
+    div.querySelector('[data-delete]').addEventListener('click', async (event) => {
+      event.stopPropagation();
+      if (!confirm('이 Result History를 삭제할까요?')) return;
+      try {
+        setBusy(true, 'Deleting...');
+        await deleteHistoryFromFirestore(item.id);
+        state.histories = state.histories.filter(r => r.id !== item.id);
+        if (state.activeHistoryId === item.id) state.activeHistoryId = null;
+        renderHistories();
+        updateActiveHistoryLabel();
+      } catch (error) {
+        console.error('Firestore delete failed:', error);
+        alert(firestoreErrorMessage(error));
+      } finally {
+        setBusy(false);
+      }
+    });
+    list.appendChild(div);
+  });
+}
+
+async function restoreHistoryToMapping(id, options = {}) {
+  try {
+    setBusy(true, 'Loading...');
+    let item = state.histories.find(h => h.id === id);
+    let rows = options.useCurrentRows ? state.rawRows : null;
+
+    if (!rows || !rows.length) {
+      const loaded = await loadRowsForHistory(id);
+      item = loaded.item;
+      rows = loaded.rows;
+      const idx = state.histories.findIndex(h => h.id === id);
+      if (idx >= 0) state.histories[idx] = item;
+    }
+
+    if (!item || !item.snapshot) return;
+    const snap = item.snapshot;
+    state.rawRows = normalizeRows(rows);
+    state.sourceFileName = snap.sourceFileName || state.sourceFileName || '';
+    state.mapType = snap.mapType || 'strip';
+    state.groupValue = snap.groupValue || 'MERGE';
+    state.cellSize = snap.cellSize || 14;
+    state.showOnlyFail = !!snap.showOnlyFail;
+    state.filters = JSON.parse(JSON.stringify(snap.filters || {}));
+    state.activeHistoryId = item.id;
+
+    $('mapType').value = state.mapType;
+    $('cellSize').value = state.cellSize;
+    $('showOnlyFail').checked = state.showOnlyFail;
+    $('reqTitle').value = item.title || '';
+    $('reqFt').value = item.ft || 'FT1';
+    $('reqComment').value = item.comment || '';
+    $('binCheckboxes').querySelectorAll('input').forEach(input => {
+      input.checked = (item.bins || []).includes(input.value);
+    });
+
+    renderFilters();
+    renderGroupOptions();
+    $('groupSelect').value = [...$('groupSelect').options].some(o => o.value === state.groupValue) ? state.groupValue : 'MERGE';
+    state.groupValue = $('groupSelect').value;
+    renderAll();
+    updateActiveHistoryLabel();
+    showPage('mappingPage');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  } catch (error) {
+    console.error('Firestore history restore failed:', error);
+    alert(firestoreErrorMessage(error));
+  } finally {
+    setBusy(false);
+  }
+}
+
+function download(filename, content, mime = 'application/json') {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+$('fileInput').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (file) readFile(file);
+});
+$('resetFilters').addEventListener('click', () => {
+  state.activeHistoryId = null;
+  updateActiveHistoryLabel();
+  state.filters = {};
+  renderFilters();
+  renderGroupOptions();
+  renderAll();
+});
+$('mapType').addEventListener('change', (e) => {
+  state.activeHistoryId = null;
+  updateActiveHistoryLabel();
+  state.mapType = e.target.value;
+  state.groupValue = 'MERGE';
+  renderGroupOptions();
+  renderAll();
+});
+$('groupSelect').addEventListener('change', (e) => {
+  state.activeHistoryId = null;
+  updateActiveHistoryLabel();
+  state.groupValue = e.target.value;
+  renderAll();
+});
+$('cellSize').addEventListener('input', (e) => {
+  state.activeHistoryId = null;
+  updateActiveHistoryLabel();
+  state.cellSize = Number(e.target.value);
+  renderAll();
+});
+$('showOnlyFail').addEventListener('change', (e) => {
+  state.activeHistoryId = null;
+  updateActiveHistoryLabel();
+  state.showOnlyFail = e.target.checked;
+  renderAll();
+});
+$('clearRequests').addEventListener('click', async () => {
+  if (!confirm('Firestore에 저장된 Result History를 모두 삭제할까요?')) return;
+  try {
+    setBusy(true, 'Deleting...');
+    await clearAllHistoriesFromFirestore();
+    state.histories = [];
+    renderHistories();
+    state.activeHistoryId = null;
+    updateActiveHistoryLabel();
+  } catch (error) {
+    console.error('Firestore clear failed:', error);
+    alert(firestoreErrorMessage(error));
+  } finally {
+    setBusy(false);
+  }
+});
+$('exportRequests').addEventListener('click', () => {
+  download('2did_mapping_histories_firestore_summary.json', JSON.stringify(state.histories, null, 2));
+});
+
+setupNavigation();
+setupRequestForm();
+renderHistories();
+updateActiveHistoryLabel();
+loadHistoriesFromFirestore();

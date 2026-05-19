@@ -1,0 +1,15 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // TEST / 개인 확인용: 로그인 없이 GitHub Pages에서 바로 저장 가능
+    // 공개 URL을 아는 사람은 누구나 읽기/쓰기/삭제 가능하므로 운영 전에는 Firebase Auth 기반으로 바꾸세요.
+    match /mappingHistories/{historyId} {
+      allow read, create, update, delete: if true;
+
+      match /rowChunks/{chunkId} {
+        allow read, create, update, delete: if true;
+      }
+    }
+  }
+}
