@@ -48,8 +48,12 @@ const state = {
   showOnlyFail: false,
   activeHistoryId: null,
   histories: [],
-  isBusy: false
+  isBusy: false,
+  filterSearches: {},
+  renderTimer: null
 };
+
+const FILTER_VISIBLE_LIMIT = 220;
 
 const $ = (id) => document.getElementById(id);
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
@@ -120,6 +124,7 @@ function readFile(file) {
     state.rawRows = normalizeRows(rows);
     state.sourceFileName = file.name;
     state.filters = {};
+    state.filterSearches = {};
     state.groupValue = 'MERGE';
     state.activeHistoryId = null;
     updateActiveHistoryLabel();
@@ -144,6 +149,10 @@ function getFilteredRows(rows = state.rawRows) {
   });
 }
 
+function hasActiveFilters() {
+  return Object.values(state.filters).some(values => values && values.length);
+}
+
 function getMapColumns(mapType = state.mapType) {
   return mapType === 'strip'
     ? { groupCol: 'STRIP ID', xCol: 'X', yCol: 'Y', label: 'Strip' }
@@ -159,33 +168,143 @@ function getGlobalBounds(rows, xCol, yCol) {
   return { minX, maxX: Math.max(...xs), minY, maxY: Math.max(...ys) };
 }
 
+function scheduleRenderAll(delay = 70) {
+  window.clearTimeout(state.renderTimer);
+  state.renderTimer = window.setTimeout(() => {
+    renderAll();
+  }, delay);
+}
+
+function applyFilterValue(col, value, checked) {
+  const values = new Set((state.filters[col] || []).map(String));
+  if (checked) values.add(String(value));
+  else values.delete(String(value));
+  state.filters[col] = [...values];
+  if (!state.filters[col].length) delete state.filters[col];
+  state.activeHistoryId = null;
+  updateActiveHistoryLabel();
+  scheduleRenderAll();
+}
+
+function addFilterValues(valuesByColumn) {
+  Object.entries(valuesByColumn).forEach(([col, values]) => {
+    const current = new Set((state.filters[col] || []).map(String));
+    values.filter(v => v !== undefined && v !== null && String(v) !== '').forEach(v => current.add(String(v)));
+    if (current.size) state.filters[col] = [...current];
+  });
+  state.activeHistoryId = null;
+  updateActiveHistoryLabel();
+  renderFilters();
+  scheduleRenderAll(20);
+}
+
+function removeFilterValues(valuesByColumn) {
+  Object.entries(valuesByColumn).forEach(([col, values]) => {
+    const current = new Set((state.filters[col] || []).map(String));
+    values.filter(v => v !== undefined && v !== null && String(v) !== '').forEach(v => current.delete(String(v)));
+    if (current.size) state.filters[col] = [...current];
+    else delete state.filters[col];
+  });
+  state.activeHistoryId = null;
+  updateActiveHistoryLabel();
+  renderFilters();
+  scheduleRenderAll(20);
+}
+
+function filtersContainAll(valuesByColumn) {
+  return Object.entries(valuesByColumn).every(([col, values]) => {
+    const current = new Set((state.filters[col] || []).map(String));
+    const cleanValues = values.filter(v => v !== undefined && v !== null && String(v) !== '').map(String);
+    return cleanValues.length && cleanValues.every(v => current.has(v));
+  });
+}
+
+function toggleFilterValues(valuesByColumn) {
+  if (filtersContainAll(valuesByColumn)) removeFilterValues(valuesByColumn);
+  else addFilterValues(valuesByColumn);
+}
+
+function resetFilterColumn(col) {
+  delete state.filters[col];
+  state.filterSearches[col] = '';
+  state.activeHistoryId = null;
+  updateActiveHistoryLabel();
+  renderFilters();
+  scheduleRenderAll(20);
+}
+
+function updateFilterCount(block, col) {
+  const count = (state.filters[col] || []).length;
+  const countEl = block.querySelector('.filter-count');
+  if (countEl) countEl.textContent = count ? `${count} selected` : 'All';
+}
+
+function renderFilterOptions(block, col, values) {
+  const optionBox = block.querySelector('.filter-options');
+  const selected = new Set((state.filters[col] || []).map(String));
+  const q = String(state.filterSearches[col] || '').trim().toLowerCase();
+  const matched = q
+    ? values.filter(value => String(value).toLowerCase().includes(q))
+    : values;
+  const visible = matched.slice(0, FILTER_VISIBLE_LIMIT);
+  const frag = document.createDocumentFragment();
+
+  visible.forEach(value => {
+    const row = document.createElement('label');
+    row.className = 'filter-option';
+    row.innerHTML = `<input type="checkbox" value="${escapeHtml(value)}" ${selected.has(String(value)) ? 'checked' : ''}> <span>${escapeHtml(value)}</span>`;
+    row.querySelector('input').addEventListener('change', (event) => {
+      applyFilterValue(col, value, event.target.checked);
+      updateFilterCount(block, col);
+    });
+    frag.appendChild(row);
+  });
+
+  optionBox.innerHTML = '';
+  optionBox.appendChild(frag);
+
+  let helper = block.querySelector('.filter-helper');
+  if (!helper) {
+    helper = document.createElement('div');
+    helper.className = 'filter-helper';
+    optionBox.after(helper);
+  }
+  if (!matched.length) {
+    helper.textContent = '검색 결과가 없습니다.';
+  } else if (matched.length > FILTER_VISIBLE_LIMIT) {
+    helper.textContent = `${matched.length.toLocaleString()}건 중 ${FILTER_VISIBLE_LIMIT.toLocaleString()}건 표시 중. 더 구체적으로 검색해줘.`;
+  } else if (q) {
+    helper.textContent = `${matched.length.toLocaleString()}건 검색됨. 체크하면 기존 선택은 유지됩니다.`;
+  } else {
+    helper.textContent = `${matched.length.toLocaleString()}건 표시 중.`;
+  }
+}
+
 function renderFilters() {
   const panel = $('filterPanel');
   panel.innerHTML = '';
   FILTER_COLUMNS.forEach(col => {
+    const values = uniqueValues(col);
+    const selected = new Set((state.filters[col] || []).map(String));
     const block = document.createElement('div');
-    block.className = 'filter-block';
-    const label = document.createElement('label');
-    label.textContent = col;
-    const select = document.createElement('select');
-    select.multiple = true;
-    uniqueValues(col).forEach(value => {
-      const option = document.createElement('option');
-      option.value = value;
-      option.textContent = value;
-      if ((state.filters[col] || []).includes(value)) option.selected = true;
-      select.appendChild(option);
+    block.className = 'filter-block enhanced-filter-block';
+    block.innerHTML = `
+      <div class="filter-head">
+        <strong>${escapeHtml(col)}</strong>
+        <button type="button" class="mini-reset-btn">Reset</button>
+      </div>
+      <div class="filter-subline"><span class="filter-count">${selected.size ? `${selected.size} selected` : 'All'}</span><span>${values.length.toLocaleString()} items</span></div>
+      <input class="filter-search" type="search" placeholder="Search ${escapeHtml(col)}..." value="${escapeHtml(state.filterSearches[col] || '')}" />
+      <div class="filter-options"></div>
+    `;
+
+    block.querySelector('.mini-reset-btn').addEventListener('click', () => resetFilterColumn(col));
+    block.querySelector('.filter-search').addEventListener('input', (event) => {
+      state.filterSearches[col] = event.target.value;
+      renderFilterOptions(block, col, values);
     });
-    select.addEventListener('change', () => {
-      state.activeHistoryId = null;
-      updateActiveHistoryLabel();
-      state.filters[col] = [...select.selectedOptions].map(o => o.value);
-      renderGroupOptions();
-      renderAll();
-    });
-    label.appendChild(select);
-    block.appendChild(label);
     panel.appendChild(block);
+    renderFilterOptions(block, col, values);
   });
 }
 
@@ -264,9 +383,15 @@ function renderOneMap(container, options) {
   grid.style.gridTemplateColumns = `repeat(${bounds.maxX - bounds.minX + 1}, var(--cell-size))`;
 
   const cellMap = buildCellMap(rows, xCol, yCol);
+  const activeFilters = hasActiveFilters();
+  grid.__cellMap = cellMap;
+  grid.__groupCol = groupCol;
+  const frag = document.createDocumentFragment();
+
   for (let y = bounds.minY; y <= bounds.maxY; y++) {
     for (let x = bounds.minX; x <= bounds.maxX; x++) {
-      const cellRows = cellMap.get(`${x}|${y}`) || [];
+      const key = `${x}|${y}`;
+      const cellRows = cellMap.get(key) || [];
       const cell = document.createElement('div');
       cell.className = 'map-cell';
       if (!cellRows.length) {
@@ -275,16 +400,32 @@ function renderOneMap(container, options) {
         const isFail = cellRows.some(row => Number(row.Fail) > 0);
         const isFiltered = cellRows.some(row => filteredSet.has(row.__idx));
         const isStacked = cellRows.length > 1;
+        cell.dataset.key = key;
         if (isFail) cell.classList.add('fail');
+        if (isFail && isFiltered && activeFilters) cell.classList.add('selected-fail');
         if (isStacked) cell.classList.add('stacked');
         if (!isFiltered) cell.classList.add('dim');
         if (state.showOnlyFail) cell.classList.add('hide-normal');
-        cell.addEventListener('mousemove', (event) => showTooltip(event, cellRows, { groupCol }));
-        cell.addEventListener('mouseleave', hideTooltip);
       }
-      grid.appendChild(cell);
+      frag.appendChild(cell);
     }
   }
+
+  grid.addEventListener('mousemove', (event) => {
+    const cell = event.target.closest('.map-cell[data-key]');
+    if (!cell || !grid.contains(cell)) return hideTooltip();
+    const cellRows = grid.__cellMap.get(cell.dataset.key) || [];
+    if (cellRows.length) showTooltip(event, cellRows, { groupCol: grid.__groupCol });
+  });
+  grid.addEventListener('mouseleave', hideTooltip);
+  grid.addEventListener('click', (event) => {
+    const cell = event.target.closest('.map-cell[data-key]');
+    if (!cell || !grid.contains(cell)) return;
+    const cellRows = grid.__cellMap.get(cell.dataset.key) || [];
+    applyMapCellFilter(cellRows);
+  });
+
+  grid.appendChild(frag);
   container.appendChild(grid);
 }
 
@@ -354,10 +495,180 @@ function hideTooltip() {
   if (tip) tip.style.display = 'none';
 }
 
+
+function buildMapCellFilterValues(rows) {
+  if (!rows || !rows.length) return null;
+  const vals = (col) => [...new Set(rows.map(r => r[col]).filter(v => v !== undefined && v !== null && String(v) !== ''))].map(String);
+  const first = rows[0];
+  const { groupCol, xCol, yCol } = getMapColumns();
+  const valuesByColumn = {
+    'LOT ID': vals('LOT ID'),
+    [xCol]: [String(first[xCol])],
+    [yCol]: [String(first[yCol])]
+  };
+
+  // MERGE cell은 같은 좌표에 수십~수백 unit이 겹칠 수 있어서 UNIT ID 전체를 필터에 넣으면 느려집니다.
+  // 그래서 MERGE/ALL에서는 좌표 중심으로 toggle하고, 단일 unit일 때만 UNIT ID를 같이 toggle합니다.
+  if (state.groupValue !== 'MERGE' && state.groupValue !== 'ALL') {
+    valuesByColumn[groupCol] = [String(state.groupValue)];
+  } else if (rows.length === 1) {
+    valuesByColumn[groupCol] = vals(groupCol);
+  }
+  if (rows.length === 1) valuesByColumn['UNIT ID'] = vals('UNIT ID');
+  return valuesByColumn;
+}
+
+function applyMapCellFilter(rows) {
+  const valuesByColumn = buildMapCellFilterValues(rows);
+  if (!valuesByColumn) return;
+  toggleFilterValues(valuesByColumn);
+}
+
+
+function parseStripId(stripId) {
+  const text = String(stripId || '').trim();
+  const match = text.match(/^(.+?)\s+(\d{2})(\d+)$/);
+  if (!match) {
+    return { batch: text || '-', panel: '-', stripNo: '-', normalized: text || '-' };
+  }
+  return {
+    batch: match[1].trim(),
+    panel: match[2],
+    stripNo: match[3],
+    normalized: text
+  };
+}
+
+function aggregateBy(rows, keyGetter) {
+  const map = new Map();
+  rows.forEach(row => {
+    const key = String(keyGetter(row) ?? '-');
+    if (!map.has(key)) map.set(key, { key, total: 0, fail: 0 });
+    const item = map.get(key);
+    item.total += 1;
+    if (Number(row.Fail) > 0) item.fail += 1;
+  });
+  const overallFail = rows.filter(r => Number(r.Fail) > 0).length;
+  const overallTotal = rows.length;
+  return [...map.values()].map(item => {
+    const othersTotal = overallTotal - item.total;
+    const othersFail = overallFail - item.fail;
+    const rate = item.total ? item.fail / item.total * 100 : 0;
+    const othersRate = othersTotal ? othersFail / othersTotal * 100 : 0;
+    const share = overallFail ? item.fail / overallFail * 100 : 0;
+    return {
+      ...item,
+      rate,
+      othersRate,
+      delta: rate - othersRate,
+      share
+    };
+  }).sort((a, b) => (b.fail - a.fail) || (b.rate - a.rate) || String(a.key).localeCompare(String(b.key), undefined, { numeric: true }));
+}
+
+function formatRate(value) {
+  return `${Number(value || 0).toFixed(4)}%`;
+}
+
+function makeStatsTable(title, rows, limit = 8) {
+  const shown = rows.slice(0, limit);
+  const body = shown.map((r, idx) => `
+    <tr>
+      <td>${idx + 1}</td>
+      <td>${escapeHtml(r.key)}</td>
+      <td>${Number(r.total).toLocaleString()}</td>
+      <td>${Number(r.fail).toLocaleString()}</td>
+      <td>${formatRate(r.rate)}</td>
+      <td>${formatRate(r.share)}</td>
+      <td>${formatRate(r.othersRate)}</td>
+      <td class="${r.delta > 0 ? 'stat-hot' : ''}">${r.delta >= 0 ? '+' : ''}${formatRate(r.delta)}</td>
+    </tr>
+  `).join('') || '<tr><td colspan="8">No data</td></tr>';
+  const top = rows.find(r => r.fail > 0);
+  const insight = top
+    ? `Top: ${escapeHtml(top.key)} / Fail ${top.fail.toLocaleString()} / Fail Rate ${formatRate(top.rate)} / Fail Share ${formatRate(top.share)}`
+    : 'Fail data가 없습니다.';
+  return `
+    <article class="stat-card">
+      <div class="stat-card-head"><strong>${escapeHtml(title)}</strong><span>${insight}</span></div>
+      <div class="stat-table-wrap">
+        <table class="stat-table">
+          <thead><tr><th>#</th><th>Group</th><th>In Qty</th><th>Fail</th><th>Fail Rate</th><th>Fail Share</th><th>Others Rate</th><th>Delta</th></tr></thead>
+          <tbody>${body}</tbody>
+        </table>
+      </div>
+    </article>
+  `;
+}
+
+
+function buildStatsGroups(rows, mapType = state.mapType) {
+  if (mapType === 'strip') {
+    const withParsed = rows.map(row => ({ row, parsed: parseStripId(row['STRIP ID']) }));
+    return [
+      { title: 'Batch 기준 Fail 집중도', rows: aggregateBy(withParsed.map(x => ({ ...x.row, __statKey: x.parsed.batch })), r => r.__statKey) },
+      { title: 'Batch + Panel 기준 Fail 집중도', rows: aggregateBy(withParsed.map(x => ({ ...x.row, __statKey: `${x.parsed.batch} / Panel ${x.parsed.panel}` })), r => r.__statKey) },
+      { title: 'Strip ID 기준 Fail 집중도', rows: aggregateBy(rows, r => r['STRIP ID']) },
+      { title: 'Strip 내 Y Row 기준 Fail 집중도', rows: aggregateBy(rows, r => `Strip Y Row ${r.Y}`) }
+    ];
+  }
+  return [
+    { title: 'Wafer ID 기준 Fail 집중도', rows: aggregateBy(rows, r => r['WAFER ID']) }
+  ];
+}
+
+function renderStats(filteredRows) {
+  const panel = $('statsPanel');
+  if (!panel) return;
+  if (!state.rawRows.length) {
+    panel.className = 'stats-panel empty';
+    panel.textContent = 'Excel을 업로드하면 통계가 표시됩니다.';
+    return;
+  }
+  const rows = filteredRows;
+  const failQty = rows.filter(r => Number(r.Fail) > 0).length;
+  const summary = summarizeRows(rows);
+  panel.className = 'stats-panel';
+
+  if (state.mapType === 'strip') {
+    const withParsed = rows.map(row => ({ row, parsed: parseStripId(row['STRIP ID']) }));
+    const byBatch = aggregateBy(withParsed.map(x => ({ ...x.row, __statKey: x.parsed.batch })), r => r.__statKey);
+    const byPanel = aggregateBy(withParsed.map(x => ({ ...x.row, __statKey: `${x.parsed.batch} / Panel ${x.parsed.panel}` })), r => r.__statKey);
+    const byStrip = aggregateBy(rows, r => r['STRIP ID']);
+    const byRow = aggregateBy(rows, r => `Strip Y Row ${r.Y}`);
+    const topStrip = byStrip.find(r => r.fail > 0);
+    const topRow = byRow.find(r => r.fail > 0);
+    panel.innerHTML = `
+      <div class="stat-summary-line">
+        <strong>Strip 집중도 분석</strong>
+        <span>Filtered In ${summary.inQty.toLocaleString()} / Fail ${failQty.toLocaleString()} / Fail Rate ${formatRate(summary.failRate)}</span>
+        <span>${topStrip ? `가장 몰린 Strip: ${escapeHtml(topStrip.key)} (${topStrip.fail.toLocaleString()} Fail)` : 'Fail 집중 Strip 없음'}</span>
+        <span>${topRow ? `가장 몰린 Row: ${escapeHtml(topRow.key)} (${topRow.fail.toLocaleString()} Fail)` : 'Fail 집중 Row 없음'}</span>
+      </div>
+      ${makeStatsTable('Batch 기준 Fail 집중도', byBatch)}
+      ${makeStatsTable('Batch + Panel 기준 Fail 집중도', byPanel)}
+      ${makeStatsTable('Strip ID 기준 Fail 집중도', byStrip)}
+      ${makeStatsTable('Strip 내 Y Row 기준 Fail 집중도', byRow)}
+    `;
+  } else {
+    const byWafer = aggregateBy(rows, r => r['WAFER ID']);
+    const topWafer = byWafer.find(r => r.fail > 0);
+    panel.innerHTML = `
+      <div class="stat-summary-line">
+        <strong>Wafer 집중도 분석</strong>
+        <span>Filtered In ${summary.inQty.toLocaleString()} / Fail ${failQty.toLocaleString()} / Fail Rate ${formatRate(summary.failRate)}</span>
+        <span>${topWafer ? `가장 몰린 Wafer ID: ${escapeHtml(topWafer.key)} (${topWafer.fail.toLocaleString()} Fail)` : 'Fail 집중 Wafer 없음'}</span>
+      </div>
+      ${makeStatsTable('Wafer ID 기준 Fail 집중도', byWafer, 12)}
+    `;
+  }
+}
+
 function renderAll() {
   const filteredRows = getFilteredRows();
   renderSummary(filteredRows);
   renderMap(filteredRows);
+  renderStats(filteredRows);
 }
 
 function showPage(pageId) {
@@ -771,6 +1082,12 @@ function buildMapWorksheet(config, filteredSet) {
     alignment: { horizontal: 'center', vertical: 'center' },
     border: { top: border, bottom: border, left: border, right: border }
   };
+  const selectedFailStyle = {
+    fill: { fgColor: { rgb: 'F59E0B' } },
+    font: { bold: true, color: { rgb: '111827' } },
+    alignment: { horizontal: 'center', vertical: 'center' },
+    border: { top: border, bottom: border, left: border, right: border }
+  };
   const dimStyle = {
     fill: { fgColor: { rgb: 'F3F4F6' } },
     font: { color: { rgb: '9CA3AF' } },
@@ -796,7 +1113,10 @@ function buildMapWorksheet(config, filteredSet) {
       }
       const isFail = rows.some(row => Number(row.Fail) > 0);
       const isFiltered = rows.some(row => filteredSet.has(row.__idx));
-      ws[ref].s = isFail ? failStyle : (isFiltered ? normalStyle : dimStyle);
+      const activeFilters = hasActiveFilters();
+      ws[ref].s = (isFail && isFiltered && activeFilters)
+        ? selectedFailStyle
+        : (isFail ? failStyle : (isFiltered ? normalStyle : dimStyle));
       if (rows.length > 1) {
         ws[ref].s.font = { ...(ws[ref].s.font || {}), bold: true };
       }
@@ -805,7 +1125,7 @@ function buildMapWorksheet(config, filteredSet) {
 
   ws['!merges'] = [];
   ws['!autofilter'] = { ref: XLSX.utils.encode_range(range) };
-  ws['A1'].c = [{ t: `B2 is the first mapping cell. ${title}; blank = no 2DID unit, number = unit count at that coordinate, red = Fail unit exists.` }];
+  ws['A1'].c = [{ t: `B2 is the first mapping cell. ${title}; blank = no 2DID unit, number = unit count at that coordinate, red = Fail unit exists, orange = selected/filtered Fail unit.` }];
   return ws;
 }
 
@@ -837,7 +1157,7 @@ function makeSummaryWorksheet() {
     ['Bounds', snapshot.mapInfo.bounds ? `X ${snapshot.mapInfo.bounds.minX}~${snapshot.mapInfo.bounds.maxX}, Y ${snapshot.mapInfo.bounds.minY}~${snapshot.mapInfo.bounds.maxY}` : '-'],
     ['Filters', filtersText],
     ['', ''],
-    ['Rule', 'Map starts at B2. X axis is row 1 from B column. Y axis is column A from row 2. Existing 2DID unit = 1. Merged coordinate = merged unit count. Blank = no unit. Red cell = Fail exists.']
+    ['Rule', 'Map starts at B2. X axis is row 1 from B column. Y axis is column A from row 2. Existing 2DID unit = 1. Merged coordinate = merged unit count. Blank = no unit. Red cell = Fail exists. Orange cell = selected/filtered Fail unit.']
   ];
   const ws = XLSX.utils.aoa_to_sheet(info);
   ws['!cols'] = [{ wch: 18 }, { wch: 90 }];
@@ -862,6 +1182,71 @@ function makeDataWorksheet(rows, name, filteredSet = null) {
     const range = XLSX.utils.decode_range(ws['!ref']);
     applySheetStyle(ws, range, { headerRows: 1 });
     ws['!autofilter'] = { ref: XLSX.utils.encode_range(range) };
+  }
+  return ws;
+}
+
+
+function makeStatisticsWorksheet(rows) {
+  const summary = summarizeRows(rows);
+  const groups = buildStatsGroups(rows, state.mapType);
+  const aoa = [
+    ['2DID Fail Concentration Statistics'],
+    ['Map Type', state.mapType],
+    ['Filtered In Qty', summary.inQty],
+    ['Fail Qty', summary.failQty],
+    ['Fail Rate', `${summary.failRate.toFixed(4)}%`],
+    []
+  ];
+
+  groups.forEach(section => {
+    aoa.push([section.title]);
+    aoa.push(['#', 'Group', 'In Qty', 'Fail Qty', 'Fail Rate', 'Fail Share', 'Others Rate', 'Delta vs Others']);
+    section.rows.forEach((r, idx) => {
+      aoa.push([
+        idx + 1,
+        r.key,
+        r.total,
+        r.fail,
+        `${Number(r.rate || 0).toFixed(4)}%`,
+        `${Number(r.share || 0).toFixed(4)}%`,
+        `${Number(r.othersRate || 0).toFixed(4)}%`,
+        `${r.delta >= 0 ? '+' : ''}${Number(r.delta || 0).toFixed(4)}%`
+      ]);
+    });
+    if (!section.rows.length) aoa.push(['-', 'No data', '', '', '', '', '', '']);
+    aoa.push([]);
+  });
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [
+    { wch: 8 }, { wch: 34 }, { wch: 12 }, { wch: 12 },
+    { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 16 }
+  ];
+  if (ws['!ref']) {
+    const range = XLSX.utils.decode_range(ws['!ref']);
+    applySheetStyle(ws, range);
+    for (let r = range.s.r; r <= range.e.r; r++) {
+      const aRef = XLSX.utils.encode_cell({ r, c: 0 });
+      const aCell = ws[aRef];
+      if (!aCell) continue;
+      if (String(aCell.v || '').includes('Statistics') || String(aCell.v || '').includes('집중도')) {
+        for (let c = 0; c <= 7; c++) {
+          styleCell(ws, XLSX.utils.encode_cell({ r, c }), {
+            fill: { fgColor: { rgb: String(aCell.v || '').includes('Statistics') ? '102033' : 'E8EEF9' } },
+            font: { bold: true, color: { rgb: String(aCell.v || '').includes('Statistics') ? 'FFFFFF' : '102033' } }
+          });
+        }
+      }
+      if (aCell.v === '#') {
+        for (let c = 0; c <= 7; c++) {
+          styleCell(ws, XLSX.utils.encode_cell({ r, c }), {
+            fill: { fgColor: { rgb: 'F8FAFF' } },
+            font: { bold: true, color: { rgb: '102033' } }
+          });
+        }
+      }
+    }
   }
   return ws;
 }
@@ -961,6 +1346,7 @@ function exportExcelReport() {
     const mapConfigs = getDisplayedMapConfigs();
 
     XLSX_LIB.utils.book_append_sheet(wb, makeSummaryWorksheet(), uniqueSheetName('2DID Information', used));
+    XLSX_LIB.utils.book_append_sheet(wb, makeStatisticsWorksheet(filteredRows), uniqueSheetName('Statistics', used));
     mapConfigs.forEach((config, idx) => {
       const { label } = getMapColumns();
       const suffix = mapConfigs.length > 1 ? `${idx + 1}_${config.titleGroup}` : config.titleGroup;
@@ -998,6 +1384,7 @@ $('resetFilters').addEventListener('click', () => {
   state.activeHistoryId = null;
   updateActiveHistoryLabel();
   state.filters = {};
+  state.filterSearches = {};
   renderFilters();
   renderGroupOptions();
   renderAll();
@@ -1020,7 +1407,7 @@ $('cellSize').addEventListener('input', (e) => {
   state.activeHistoryId = null;
   updateActiveHistoryLabel();
   state.cellSize = Number(e.target.value);
-  renderAll();
+  scheduleRenderAll(40);
 });
 $('exportExcelReport').addEventListener('click', exportExcelReport);
 $('showOnlyFail').addEventListener('change', (e) => {

@@ -84,3 +84,17 @@ PEXL70.1_Wafer_MERGE_20260519.xlsx
 PEXL70.1_Strip_MS249028-12_0102_20260519.xlsx
 MULTI_LOT_2_Wafer_ALL_IDs_20260519.xlsx
 ```
+
+## V11 Update
+- Filter UI를 checkbox + per-column search + per-column reset 형태로 강화했습니다.
+- 검색 후 checkbox를 클릭해도 기존 선택값은 유지되고 해당 item만 추가/해제됩니다.
+- Map cell 클릭 시 해당 cell 기준으로 관련 Lot/Strip/Wafer/좌표/Unit filter가 자동 추가됩니다.
+- Strip Map 기준 Batch / Panel / Strip ID / Strip Y Row fail 집중도 통계가 추가되었습니다.
+- Wafer Map 기준 Wafer ID fail 집중도 통계가 추가되었습니다.
+
+## V12 update
+- Filter search now renders only matched values, so searching inside each item shows the matching checkbox list directly.
+- Existing checked filters remain active while searching and adding another item.
+- Each filter item has Reset, and global Reset also clears search text.
+- Map cell events were changed from per-cell listeners to delegated events to reduce lag.
+- Clicking a merged map cell filters mainly by coordinate instead of pushing hundreds of Unit IDs into the filter state.
