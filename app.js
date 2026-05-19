@@ -866,30 +866,72 @@ function makeDataWorksheet(rows, name, filteredSet = null) {
   return ws;
 }
 
-function exportExcelReport() {
-  if (!state.rawRows.length) {
-    alert('먼저 2DID Excel을 업로드하거나 Result History를 불러온 뒤 Export 하세요.');
-    return;
+
+function ensureXlsxReady() {
+  if (window.XLSX && window.XLSX.utils && typeof window.XLSX.write === 'function') return true;
+  alert('Excel Library가 아직 로드되지 않았습니다. 페이지를 새로고침한 뒤 다시 시도하세요. GitHub Pages에서 CDN이 막히면 index.html의 xlsx-js-style CDN 경로를 확인해야 합니다.');
+  return false;
+}
+
+function downloadExcelWorkbook(wb, fileName) {
+  const XLSX_LIB = window.XLSX;
+  try {
+    const wbout = XLSX_LIB.write(wb, { bookType: 'xlsx', type: 'array', cellStyles: true });
+    const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (error) {
+    console.error('Excel export failed:', error);
+    // 일부 브라우저에서는 Blob 방식이 막힐 수 있어 SheetJS writeFile로 한 번 더 시도합니다.
+    if (typeof XLSX_LIB.writeFile === 'function') {
+      XLSX_LIB.writeFile(wb, fileName, { bookType: 'xlsx', cellStyles: true });
+      return;
+    }
+    throw error;
   }
-  const wb = XLSX.utils.book_new();
-  const used = new Set();
-  const filteredRows = getFilteredRows();
-  const filteredSet = new Set(filteredRows.map(r => r.__idx));
-  const mapConfigs = getDisplayedMapConfigs();
+}
 
-  XLSX.utils.book_append_sheet(wb, makeSummaryWorksheet(), uniqueSheetName('2DID Information', used));
-  mapConfigs.forEach((config, idx) => {
-    const { label } = getMapColumns();
-    const suffix = mapConfigs.length > 1 ? `${idx + 1}_${config.titleGroup}` : config.titleGroup;
-    const sheetName = uniqueSheetName(`${label}_${suffix}`, used);
-    XLSX.utils.book_append_sheet(wb, buildMapWorksheet(config, filteredSet), sheetName);
-  });
-  XLSX.utils.book_append_sheet(wb, makeDataWorksheet(state.rawRows, 'Raw 2DID', filteredSet), uniqueSheetName('2DID Information Detail', used));
-  XLSX.utils.book_append_sheet(wb, makeDataWorksheet(state.rawRows, 'Raw 2DID'), uniqueSheetName('Raw Uploaded 2DID', used));
+function exportExcelReport() {
+  try {
+    if (!ensureXlsxReady()) return;
+    if (!state.rawRows.length) {
+      alert('먼저 2DID Excel을 업로드하거나 Result History를 불러온 뒤 Export 하세요.');
+      return;
+    }
 
-  const title = $('reqTitle').value.trim() || `${state.mapType}_${state.groupValue}_mapping`;
-  const fileName = `${title.replace(/[\\/:*?"<>|]/g, '_').slice(0, 80)}_2DID_report.xlsx`;
-  XLSX.writeFile(wb, fileName, { bookType: 'xlsx', cellStyles: true });
+    const XLSX_LIB = window.XLSX;
+    const wb = XLSX_LIB.utils.book_new();
+    const used = new Set();
+    const filteredRows = getFilteredRows();
+    const filteredSet = new Set(filteredRows.map(r => r.__idx));
+    const mapConfigs = getDisplayedMapConfigs();
+
+    XLSX_LIB.utils.book_append_sheet(wb, makeSummaryWorksheet(), uniqueSheetName('2DID Information', used));
+    mapConfigs.forEach((config, idx) => {
+      const { label } = getMapColumns();
+      const suffix = mapConfigs.length > 1 ? `${idx + 1}_${config.titleGroup}` : config.titleGroup;
+      const sheetName = uniqueSheetName(`${label}_${suffix}`, used);
+      XLSX_LIB.utils.book_append_sheet(wb, buildMapWorksheet(config, filteredSet), sheetName);
+    });
+    XLSX_LIB.utils.book_append_sheet(wb, makeDataWorksheet(state.rawRows, 'Raw 2DID', filteredSet), uniqueSheetName('2DID Information Detail', used));
+    XLSX_LIB.utils.book_append_sheet(wb, makeDataWorksheet(state.rawRows, 'Raw 2DID'), uniqueSheetName('Raw Uploaded 2DID', used));
+
+    const title = $('reqTitle').value.trim() || `${state.mapType}_${state.groupValue}_mapping`;
+    const fileName = `${title.replace(/[\\/:*?"<>|]/g, '_').slice(0, 80)}_2DID_report.xlsx`;
+    downloadExcelWorkbook(wb, fileName);
+  } catch (error) {
+    console.error('Export Excel Report error:', error);
+    alert(`Excel Export 중 오류가 발생했습니다.
+
+${error?.message || error}`);
+  }
 }
 
 function download(filename, content, mime = 'application/json') {

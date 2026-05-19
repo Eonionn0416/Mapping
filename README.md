@@ -62,3 +62,9 @@ Mapping Sheet 규칙:
 - Merge 상태에서 같은 좌표에 여러 Unit이 겹치면 겹친 수량으로 표시됩니다.
 - Fail이 포함된 좌표는 빨간색으로 Highlight됩니다.
 - 2DID가 없는 위치는 Blank로 둡니다.
+
+
+## V8 Export Fix
+- GitHub Pages에서 `xlsx-js-style` CDN 404 또는 다운로드 차단처럼 보이는 문제를 줄이기 위해 CDN fallback을 추가했습니다.
+- `XLSX.writeFile()` 대신 Blob 다운로드 방식을 우선 사용하고, 실패 시 `writeFile()`로 fallback합니다.
+- Export 실패 시 이제 alert와 console에 실제 오류가 표시됩니다.

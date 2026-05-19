@@ -162,7 +162,13 @@
     </section>
   </main>
 
-  <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.min.js"></script>
+  <script>
+    // GitHub Pages/CDN 환경에서 첫 CDN이 막히거나 404가 날 때를 대비한 fallback입니다.
+    if (!window.XLSX) {
+      document.write('<script src="https://unpkg.com/xlsx-js-style@1.2.0/dist/xlsx.bundle.min.js"><\/script>');
+    }
+  </script>
   <script type="module" src="app.js"></script>
 </body>
 </html>
