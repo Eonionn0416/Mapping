@@ -45,3 +45,20 @@ allow read, write: if false;
 
 이 프로젝트는 정적 HTML/CSS/JS라서 GitHub Pages에 그대로 올릴 수 있습니다.
 단, Firestore Rules가 막혀 있으면 GitHub Pages에서도 Permission Denied가 발생합니다.
+
+## V7 - Excel Report Export
+
+Mapping Page의 **Export Excel Report** 버튼으로 현재 화면의 Strip/Wafer Mapping 결과를 `.xlsx`로 추출할 수 있습니다.
+
+생성 Sheet:
+- `2DID Information`: Title, FT Step, Fail Bin, Comment, Summary, Filter, X/Y 기준 정보
+- `Wafer_MERGE` 또는 `Strip_MERGE` 등 Mapping Sheet: B2부터 Map 시작, Row 1은 X축, Column A는 Y축
+- `2DID Information Detail`: 현재 Filter 포함 여부(Y/N)를 붙인 2DID 정보
+- `Raw Uploaded 2DID`: 업로드 또는 Firestore History에서 불러온 원본 2DID 정보
+
+Mapping Sheet 규칙:
+- B2가 첫 Mapping Cell입니다.
+- 2DID가 있는 위치는 `1`로 표시됩니다.
+- Merge 상태에서 같은 좌표에 여러 Unit이 겹치면 겹친 수량으로 표시됩니다.
+- Fail이 포함된 좌표는 빨간색으로 Highlight됩니다.
+- 2DID가 없는 위치는 Blank로 둡니다.

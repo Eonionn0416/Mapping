@@ -645,6 +645,253 @@ async function restoreHistoryToMapping(id, options = {}) {
   }
 }
 
+
+function toAoaRow(row, columns) {
+  return columns.map(col => row[col] ?? '');
+}
+
+function safeSheetName(name, fallback = 'Sheet') {
+  const clean = String(name || fallback)
+    .replace(/[\\/?*\[\]:]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 31);
+  return clean || fallback;
+}
+
+function uniqueSheetName(base, used) {
+  let name = safeSheetName(base);
+  if (!used.has(name)) {
+    used.add(name);
+    return name;
+  }
+  for (let i = 2; i < 1000; i++) {
+    const suffix = `_${i}`;
+    const candidate = safeSheetName(`${name.slice(0, 31 - suffix.length)}${suffix}`);
+    if (!used.has(candidate)) {
+      used.add(candidate);
+      return candidate;
+    }
+  }
+  return safeSheetName(`${base}_${Date.now()}`);
+}
+
+function styleCell(ws, ref, stylePatch = {}) {
+  if (!ws[ref]) ws[ref] = { t: 's', v: '' };
+  ws[ref].s = { ...(ws[ref].s || {}), ...stylePatch };
+}
+
+function applySheetStyle(ws, range, options = {}) {
+  if (!range) return;
+  const border = { style: 'thin', color: { rgb: 'D9E2F3' } };
+  const defaultCell = {
+    alignment: { horizontal: 'center', vertical: 'center' },
+    border: { top: border, bottom: border, left: border, right: border }
+  };
+  for (let r = range.s.r; r <= range.e.r; r++) {
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const ref = XLSX.utils.encode_cell({ r, c });
+      if (!ws[ref]) continue;
+      ws[ref].s = { ...defaultCell, ...(ws[ref].s || {}) };
+    }
+  }
+  if (options.headerRows) {
+    for (let r = 0; r < options.headerRows; r++) {
+      for (let c = range.s.c; c <= range.e.c; c++) {
+        const ref = XLSX.utils.encode_cell({ r, c });
+        if (!ws[ref]) continue;
+        ws[ref].s = {
+          ...(ws[ref].s || {}),
+          fill: { fgColor: { rgb: 'E8EEF9' } },
+          font: { bold: true, color: { rgb: '102033' } }
+        };
+      }
+    }
+  }
+}
+
+function getDisplayedMapConfigs() {
+  const { groupCol } = getMapColumns();
+  if (!state.rawRows.length) return [];
+  if (state.groupValue === 'MERGE') {
+    return [{ rows: state.rawRows, titleGroup: 'MERGE', isMerge: true }];
+  }
+  const groups = state.groupValue === 'ALL' ? uniqueValues(groupCol, state.rawRows) : [state.groupValue];
+  return groups.map(group => ({
+    rows: state.rawRows.filter(r => String(r[groupCol]) === String(group)),
+    titleGroup: group,
+    isMerge: false
+  })).filter(config => config.rows.length);
+}
+
+function buildMapWorksheet(config, filteredSet) {
+  const { groupCol, xCol, yCol, label } = getMapColumns();
+  const bounds = getGlobalBounds(state.rawRows, xCol, yCol);
+  if (!bounds) return XLSX.utils.aoa_to_sheet([['No map data']]);
+  const xValues = [];
+  const yValues = [];
+  for (let x = bounds.minX; x <= bounds.maxX; x++) xValues.push(x);
+  for (let y = bounds.minY; y <= bounds.maxY; y++) yValues.push(y);
+
+  const cellMap = buildCellMap(config.rows, xCol, yCol);
+  const aoa = [];
+  aoa.push([`${label} Y\\X`, ...xValues]);
+  yValues.forEach(y => {
+    const row = [y];
+    xValues.forEach(x => {
+      const rows = cellMap.get(`${x}|${y}`) || [];
+      row.push(rows.length ? rows.length : '');
+    });
+    aoa.push(row);
+  });
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const range = XLSX.utils.decode_range(ws['!ref']);
+  const title = `${label}: ${config.titleGroup}`;
+  ws['!cols'] = [{ wch: 8 }, ...xValues.map(() => ({ wch: 4 }))];
+  ws['!rows'] = aoa.map((_, idx) => ({ hpt: idx === 0 ? 20 : 16 }));
+  ws['!freeze'] = { xSplit: 1, ySplit: 1 };
+
+  const border = { style: 'thin', color: { rgb: 'D7E2F4' } };
+  const headerStyle = {
+    fill: { fgColor: { rgb: 'DDE8FA' } },
+    font: { bold: true, color: { rgb: '102033' } },
+    alignment: { horizontal: 'center', vertical: 'center' },
+    border: { top: border, bottom: border, left: border, right: border }
+  };
+  const normalStyle = {
+    fill: { fgColor: { rgb: 'DCEBFF' } },
+    font: { color: { rgb: '102033' } },
+    alignment: { horizontal: 'center', vertical: 'center' },
+    border: { top: border, bottom: border, left: border, right: border }
+  };
+  const failStyle = {
+    fill: { fgColor: { rgb: 'FF4D4F' } },
+    font: { bold: true, color: { rgb: 'FFFFFF' } },
+    alignment: { horizontal: 'center', vertical: 'center' },
+    border: { top: border, bottom: border, left: border, right: border }
+  };
+  const dimStyle = {
+    fill: { fgColor: { rgb: 'F3F4F6' } },
+    font: { color: { rgb: '9CA3AF' } },
+    alignment: { horizontal: 'center', vertical: 'center' },
+    border: { top: border, bottom: border, left: border, right: border }
+  };
+  const blankStyle = {
+    fill: { fgColor: { rgb: 'FFFFFF' } },
+    border: { top: border, bottom: border, left: border, right: border }
+  };
+
+  for (let c = range.s.c; c <= range.e.c; c++) styleCell(ws, XLSX.utils.encode_cell({ r: 0, c }), headerStyle);
+  for (let r = 0; r <= range.e.r; r++) styleCell(ws, XLSX.utils.encode_cell({ r, c: 0 }), headerStyle);
+
+  yValues.forEach((y, yIdx) => {
+    xValues.forEach((x, xIdx) => {
+      const ref = XLSX.utils.encode_cell({ r: yIdx + 1, c: xIdx + 1 });
+      const rows = cellMap.get(`${x}|${y}`) || [];
+      if (!rows.length) {
+        if (!ws[ref]) ws[ref] = { t: 's', v: '' };
+        ws[ref].s = blankStyle;
+        return;
+      }
+      const isFail = rows.some(row => Number(row.Fail) > 0);
+      const isFiltered = rows.some(row => filteredSet.has(row.__idx));
+      ws[ref].s = isFail ? failStyle : (isFiltered ? normalStyle : dimStyle);
+      if (rows.length > 1) {
+        ws[ref].s.font = { ...(ws[ref].s.font || {}), bold: true };
+      }
+    });
+  });
+
+  ws['!merges'] = [];
+  ws['!autofilter'] = { ref: XLSX.utils.encode_range(range) };
+  ws['A1'].c = [{ t: `B2 is the first mapping cell. ${title}; blank = no 2DID unit, number = unit count at that coordinate, red = Fail unit exists.` }];
+  return ws;
+}
+
+function makeSummaryWorksheet() {
+  const filteredRows = getFilteredRows();
+  const summary = summarizeRows(filteredRows);
+  const selectedBins = getSelectedBins();
+  const snapshot = currentSnapshot();
+  const filtersText = Object.entries(state.filters)
+    .filter(([, values]) => values && values.length)
+    .map(([key, values]) => `${key}: ${values.join(', ')}`)
+    .join(' / ') || 'No filter';
+  const info = [
+    ['2DID Mapping Report', ''],
+    ['Title', $('reqTitle').value.trim() || '-'],
+    ['FT Step', $('reqFt').value || '-'],
+    ['Fail Bin', selectedBins.join(', ') || '-'],
+    ['Comment', $('reqComment').value.trim() || '-'],
+    ['Source File', state.sourceFileName || '-'],
+    ['Map Type', state.mapType],
+    ['Group', state.groupValue],
+    ['Generated At', new Date().toLocaleString('ko-KR')],
+    ['Total 2DID', summary.total],
+    ['Filtered In Qty', summary.inQty],
+    ['Fail Qty', summary.failQty],
+    ['Fail Rate', `${summary.failRate.toFixed(4)}%`],
+    ['X Column', snapshot.mapInfo.xColumn],
+    ['Y Column', snapshot.mapInfo.yColumn],
+    ['Bounds', snapshot.mapInfo.bounds ? `X ${snapshot.mapInfo.bounds.minX}~${snapshot.mapInfo.bounds.maxX}, Y ${snapshot.mapInfo.bounds.minY}~${snapshot.mapInfo.bounds.maxY}` : '-'],
+    ['Filters', filtersText],
+    ['', ''],
+    ['Rule', 'Map starts at B2. X axis is row 1 from B column. Y axis is column A from row 2. Existing 2DID unit = 1. Merged coordinate = merged unit count. Blank = no unit. Red cell = Fail exists.']
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(info);
+  ws['!cols'] = [{ wch: 18 }, { wch: 90 }];
+  const range = XLSX.utils.decode_range(ws['!ref']);
+  applySheetStyle(ws, range, { headerRows: 1 });
+  styleCell(ws, 'A1', { fill: { fgColor: { rgb: '102033' } }, font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 14 } });
+  styleCell(ws, 'B1', { fill: { fgColor: { rgb: '102033' } } });
+  return ws;
+}
+
+function makeDataWorksheet(rows, name, filteredSet = null) {
+  const cols = filteredSet ? [...REQUIRED_COLUMNS, 'Included In Current Filter'] : REQUIRED_COLUMNS;
+  const aoa = [cols];
+  rows.forEach(row => {
+    const base = toAoaRow(row, REQUIRED_COLUMNS);
+    if (filteredSet) base.push(filteredSet.has(row.__idx) ? 'Y' : 'N');
+    aoa.push(base);
+  });
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = cols.map(col => ({ wch: Math.max(10, Math.min(22, String(col).length + 4)) }));
+  if (ws['!ref']) {
+    const range = XLSX.utils.decode_range(ws['!ref']);
+    applySheetStyle(ws, range, { headerRows: 1 });
+    ws['!autofilter'] = { ref: XLSX.utils.encode_range(range) };
+  }
+  return ws;
+}
+
+function exportExcelReport() {
+  if (!state.rawRows.length) {
+    alert('먼저 2DID Excel을 업로드하거나 Result History를 불러온 뒤 Export 하세요.');
+    return;
+  }
+  const wb = XLSX.utils.book_new();
+  const used = new Set();
+  const filteredRows = getFilteredRows();
+  const filteredSet = new Set(filteredRows.map(r => r.__idx));
+  const mapConfigs = getDisplayedMapConfigs();
+
+  XLSX.utils.book_append_sheet(wb, makeSummaryWorksheet(), uniqueSheetName('2DID Information', used));
+  mapConfigs.forEach((config, idx) => {
+    const { label } = getMapColumns();
+    const suffix = mapConfigs.length > 1 ? `${idx + 1}_${config.titleGroup}` : config.titleGroup;
+    const sheetName = uniqueSheetName(`${label}_${suffix}`, used);
+    XLSX.utils.book_append_sheet(wb, buildMapWorksheet(config, filteredSet), sheetName);
+  });
+  XLSX.utils.book_append_sheet(wb, makeDataWorksheet(state.rawRows, 'Raw 2DID', filteredSet), uniqueSheetName('2DID Information Detail', used));
+  XLSX.utils.book_append_sheet(wb, makeDataWorksheet(state.rawRows, 'Raw 2DID'), uniqueSheetName('Raw Uploaded 2DID', used));
+
+  const title = $('reqTitle').value.trim() || `${state.mapType}_${state.groupValue}_mapping`;
+  const fileName = `${title.replace(/[\\/:*?"<>|]/g, '_').slice(0, 80)}_2DID_report.xlsx`;
+  XLSX.writeFile(wb, fileName, { bookType: 'xlsx', cellStyles: true });
+}
+
 function download(filename, content, mime = 'application/json') {
   const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
@@ -687,6 +934,7 @@ $('cellSize').addEventListener('input', (e) => {
   state.cellSize = Number(e.target.value);
   renderAll();
 });
+$('exportExcelReport').addEventListener('click', exportExcelReport);
 $('showOnlyFail').addEventListener('change', (e) => {
   state.activeHistoryId = null;
   updateActiveHistoryLabel();

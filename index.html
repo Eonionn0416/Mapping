@@ -117,6 +117,7 @@
             <p>필터링 시 원본 map cell은 유지되고, 조건 밖 unit은 흐리게 표시됩니다. Merge는 모든 Strip/Wafer ID를 좌표 기준으로 겹쳐서 보여줍니다.</p>
           </div>
           <div class="toolbar-controls">
+            <button id="exportExcelReport" class="primary-btn" type="button">Export Excel Report</button>
             <label>Map Type
               <select id="mapType">
                 <option value="strip">Strip Map</option>
@@ -161,7 +162,7 @@
     </section>
   </main>
 
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
   <script type="module" src="app.js"></script>
 </body>
 </html>
