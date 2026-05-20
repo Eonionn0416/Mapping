@@ -608,7 +608,7 @@ function buildStatsGroups(rows, mapType = state.mapType) {
     return [
       { title: 'Batch 기준 Fail 집중도', rows: aggregateBy(withParsed.map(x => ({ ...x.row, __statKey: x.parsed.batch })), r => r.__statKey) },
       { title: 'Batch + Panel 기준 Fail 집중도', rows: aggregateBy(withParsed.map(x => ({ ...x.row, __statKey: `${x.parsed.batch} / Panel ${x.parsed.panel}` })), r => r.__statKey) },
-      { title: 'Strip ID 기준 Fail 집중도', rows: aggregateBy(rows, r => r['STRIP ID']) },
+      { title: 'Strip No 기준 Fail 집중도', rows: aggregateBy(withParsed.map(x => ({ ...x.row, __statKey: `Strip No ${x.parsed.stripNo}` })), r => r.__statKey) },
       { title: 'Strip 내 Y Row 기준 Fail 집중도', rows: aggregateBy(rows, r => `Strip Y Row ${r.Y}`) }
     ];
   }
@@ -634,7 +634,7 @@ function renderStats(filteredRows) {
     const withParsed = rows.map(row => ({ row, parsed: parseStripId(row['STRIP ID']) }));
     const byBatch = aggregateBy(withParsed.map(x => ({ ...x.row, __statKey: x.parsed.batch })), r => r.__statKey);
     const byPanel = aggregateBy(withParsed.map(x => ({ ...x.row, __statKey: `${x.parsed.batch} / Panel ${x.parsed.panel}` })), r => r.__statKey);
-    const byStrip = aggregateBy(rows, r => r['STRIP ID']);
+    const byStrip = aggregateBy(withParsed.map(x => ({ ...x.row, __statKey: `Strip No ${x.parsed.stripNo}` })), r => r.__statKey);
     const byRow = aggregateBy(rows, r => `Strip Y Row ${r.Y}`);
     const topStrip = byStrip.find(r => r.fail > 0);
     const topRow = byRow.find(r => r.fail > 0);
@@ -642,12 +642,12 @@ function renderStats(filteredRows) {
       <div class="stat-summary-line">
         <strong>Strip 집중도 분석</strong>
         <span>Filtered In ${summary.inQty.toLocaleString()} / Fail ${failQty.toLocaleString()} / Fail Rate ${formatRate(summary.failRate)}</span>
-        <span>${topStrip ? `가장 몰린 Strip: ${escapeHtml(topStrip.key)} (${topStrip.fail.toLocaleString()} Fail)` : 'Fail 집중 Strip 없음'}</span>
+        <span>${topStrip ? `가장 몰린 Strip No: ${escapeHtml(topStrip.key)} (${topStrip.fail.toLocaleString()} Fail)` : 'Fail 집중 Strip No 없음'}</span>
         <span>${topRow ? `가장 몰린 Row: ${escapeHtml(topRow.key)} (${topRow.fail.toLocaleString()} Fail)` : 'Fail 집중 Row 없음'}</span>
       </div>
       ${makeStatsTable('Batch 기준 Fail 집중도', byBatch)}
       ${makeStatsTable('Batch + Panel 기준 Fail 집중도', byPanel)}
-      ${makeStatsTable('Strip ID 기준 Fail 집중도', byStrip)}
+      ${makeStatsTable('Strip No 기준 Fail 집중도', byStrip)}
       ${makeStatsTable('Strip 내 Y Row 기준 Fail 집중도', byRow)}
     `;
   } else {
