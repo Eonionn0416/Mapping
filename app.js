@@ -1051,7 +1051,15 @@ function buildMapWorksheet(config, filteredSet) {
     const row = [y];
     xValues.forEach(x => {
       const rows = cellMap.get(`${x}|${y}`) || [];
-      row.push(rows.length ? rows.length : '');
+      if (!rows.length) {
+        row.push('');
+        return;
+      }
+      const failCount = rows.filter(unit => Number(unit.Fail) > 0).length;
+      // Export rule:
+      // - Normal die: duplicated unit count
+      // - Fail die: fail unit count / duplicated unit count
+      row.push(failCount > 0 ? `${failCount}/${rows.length}` : rows.length);
     });
     aoa.push(row);
   });
@@ -1059,7 +1067,7 @@ function buildMapWorksheet(config, filteredSet) {
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   const range = XLSX.utils.decode_range(ws['!ref']);
   const title = `${label}: ${config.titleGroup}`;
-  ws['!cols'] = [{ wch: 8 }, ...xValues.map(() => ({ wch: 4 }))];
+  ws['!cols'] = [{ wch: 8 }, ...xValues.map(() => ({ wch: 6 }))];
   ws['!rows'] = aoa.map((_, idx) => ({ hpt: idx === 0 ? 20 : 16 }));
   ws['!freeze'] = { xSplit: 1, ySplit: 1 };
 
@@ -1125,7 +1133,7 @@ function buildMapWorksheet(config, filteredSet) {
 
   ws['!merges'] = [];
   ws['!autofilter'] = { ref: XLSX.utils.encode_range(range) };
-  ws['A1'].c = [{ t: `B2 is the first mapping cell. ${title}; blank = no 2DID unit, number = unit count at that coordinate, red = Fail unit exists, orange = selected/filtered Fail unit.` }];
+  ws['A1'].c = [{ t: `B2 is the first mapping cell. ${title}; blank = no 2DID unit, normal number = duplicated unit count, fail cell = fail unit count / duplicated unit count, red = Fail unit exists, orange = selected/filtered Fail unit.` }];
   return ws;
 }
 
