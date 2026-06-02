@@ -539,6 +539,19 @@ function parseStripId(stripId) {
   };
 }
 
+
+function parseWaferId(waferId) {
+  const text = String(waferId || '').trim();
+  if (!text) return { runNo: '-', slice: '-', normalized: '-' };
+  const idx = text.lastIndexOf('-');
+  if (idx < 0) {
+    return { runNo: text, slice: '-', normalized: text };
+  }
+  const runNo = text.slice(0, idx).trim() || '-';
+  const slice = text.slice(idx + 1).trim() || '-';
+  return { runNo, slice, normalized: text };
+}
+
 function aggregateBy(rows, keyGetter) {
   const map = new Map();
   rows.forEach(row => {
@@ -612,8 +625,11 @@ function buildStatsGroups(rows, mapType = state.mapType) {
       { title: 'Strip 내 Y Row 기준 Fail 집중도', rows: aggregateBy(rows, r => `Strip Y Row ${r.Y}`) }
     ];
   }
+  const withParsedWafer = rows.map(row => ({ row, parsed: parseWaferId(row['WAFER ID']) }));
   return [
-    { title: 'Wafer ID 기준 Fail 집중도', rows: aggregateBy(rows, r => r['WAFER ID']) }
+    { title: 'Wafer ID 기준 Fail 집중도', rows: aggregateBy(rows, r => r['WAFER ID']) },
+    { title: 'Wafer Run No 기준 Fail 집중도', rows: aggregateBy(withParsedWafer.map(x => ({ ...x.row, __statKey: x.parsed.runNo })), r => r.__statKey) },
+    { title: 'Slice 기준 Fail 집중도', rows: aggregateBy(withParsedWafer.map(x => ({ ...x.row, __statKey: `Slice ${x.parsed.slice}` })), r => r.__statKey) }
   ];
 }
 
@@ -651,15 +667,24 @@ function renderStats(filteredRows) {
       ${makeStatsTable('Strip 내 Y Row 기준 Fail 집중도', byRow)}
     `;
   } else {
+    const withParsedWafer = rows.map(row => ({ row, parsed: parseWaferId(row['WAFER ID']) }));
     const byWafer = aggregateBy(rows, r => r['WAFER ID']);
+    const byRunNo = aggregateBy(withParsedWafer.map(x => ({ ...x.row, __statKey: x.parsed.runNo })), r => r.__statKey);
+    const bySlice = aggregateBy(withParsedWafer.map(x => ({ ...x.row, __statKey: `Slice ${x.parsed.slice}` })), r => r.__statKey);
     const topWafer = byWafer.find(r => r.fail > 0);
+    const topRunNo = byRunNo.find(r => r.fail > 0);
+    const topSlice = bySlice.find(r => r.fail > 0);
     panel.innerHTML = `
       <div class="stat-summary-line">
         <strong>Wafer 집중도 분석</strong>
         <span>Filtered In ${summary.inQty.toLocaleString()} / Fail ${failQty.toLocaleString()} / Fail Rate ${formatRate(summary.failRate)}</span>
         <span>${topWafer ? `가장 몰린 Wafer ID: ${escapeHtml(topWafer.key)} (${topWafer.fail.toLocaleString()} Fail)` : 'Fail 집중 Wafer 없음'}</span>
+        <span>${topRunNo ? `가장 몰린 Run No: ${escapeHtml(topRunNo.key)} (${topRunNo.fail.toLocaleString()} Fail)` : 'Fail 집중 Run No 없음'}</span>
+        <span>${topSlice ? `가장 몰린 Slice: ${escapeHtml(topSlice.key)} (${topSlice.fail.toLocaleString()} Fail)` : 'Fail 집중 Slice 없음'}</span>
       </div>
       ${makeStatsTable('Wafer ID 기준 Fail 집중도', byWafer, 12)}
+      ${makeStatsTable('Wafer Run No 기준 Fail 집중도', byRunNo, 12)}
+      ${makeStatsTable('Slice 기준 Fail 집중도', bySlice, 12)}
     `;
   }
 }
