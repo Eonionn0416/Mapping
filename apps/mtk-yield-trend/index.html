@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MTK Assy & OS & FT Yield Trend</title>
+  <link rel="icon" href="data:," />
+
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+
+  <link rel="stylesheet" href="mtk-yield-trend.css" />
+</head>
+<body>
+  <a class="qa-back-link" href="../../index.html">← QA Page</a>
+  <main class="page">
+    <section class="hero">
+      <div>
+        <p class="eyebrow">MTK FT OS trend analyser</p>
+        <h1>Assy Yield & OS Comparison Trend</h1>
+        <p class="subtitle">
+          Weekly Assy report와 OS comparison report를 계속 Drag & Drop 하면 Firestore Raw Data에 누적 저장하고,
+          저장된 전체 Data 기준으로 SOD Trend, OS INPUT_TIME Trend, Defect PPM Trend를 표시합니다.
+          삭제/수정 없이 Trend 확인용으로 쓰는 구조입니다.
+        </p>
+      </div>
+      <div class="hero-card">
+        <span id="firebaseStatus" class="status warning">Firebase connecting...</span>
+        <p>Assy 중복 기준</p>
+        <strong>SCK input Lot No + In Qty</strong>
+        <p>OS 중복 기준</p>
+        <strong>LOT_ID + TOTAL_QTY</strong>
+        <small id="authStatus">Auth 대기 중</small>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <h2>1. Report Upload</h2>
+          <p>
+            아래 영역에 Excel report를 Drag & Drop 하면 바로 읽고 Firebase에 저장합니다.
+            Assy report는 <b>YIELD SUMMARY TAP</b> 시트, OS report는 <b>MTK Assembly OS comparison</b> 시트를 자동 인식합니다.
+          </p>
+        </div>
+        <button id="refreshBtn" type="button" class="secondary">Firestore Refresh</button>
+      </div>
+
+      <div id="dropZone" class="drop-zone" role="button" tabindex="0">
+        <input id="excelFiles" type="file" accept=".xlsx,.xls" multiple />
+        <div class="drop-icon">⬇</div>
+        <span>Excel report를 여기에 Drag & Drop 하면 자동 Upload</span>
+        <small>또는 이 영역을 클릭해서 파일 선택 · 여러 개 한 번에 가능</small>
+      </div>
+
+      <div class="file-row">
+        <div>
+          <h3>Selected / Last Dropped Files</h3>
+          <ul id="selectedFileList" class="file-list">
+            <li class="empty-li">선택된 파일이 없습니다.</li>
+          </ul>
+        </div>
+        <div class="actions vertical">
+          <button id="uploadBtn" type="button" class="primary">Retry Upload to Firebase</button>
+          <button id="clearSelectionBtn" type="button" class="secondary">Selection Clear</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="grid seven">
+      <article class="metric-card">
+        <p>Selected Assy</p>
+        <strong id="selectedAssyRows">0</strong>
+      </article>
+      <article class="metric-card">
+        <p>Selected OS</p>
+        <strong id="selectedOsRows">0</strong>
+      </article>
+      <article class="metric-card">
+        <p>Inserted</p>
+        <strong id="insertedRows">0</strong>
+      </article>
+      <article class="metric-card">
+        <p>Skipped Duplicate</p>
+        <strong id="skippedRows">0</strong>
+      </article>
+      <article class="metric-card">
+        <p>Firestore Assy</p>
+        <strong id="firestoreAssyRows">0</strong>
+      </article>
+      <article class="metric-card">
+        <p>Firestore OS</p>
+        <strong id="firestoreOsRows">0</strong>
+      </article>
+      <article class="metric-card">
+        <p>Uploaded Files</p>
+        <strong id="uploadedFiles">0</strong>
+      </article>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <h2>2. Uploaded File List</h2>
+          <p>Firestore Raw Data의 <b>sourceFileName</b> 기준으로 표시합니다. 같은 report를 다시 넣으면 중복 row는 추가되지 않습니다.</p>
+        </div>
+      </div>
+      <div class="table-wrap compact">
+        <table>
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Source File</th>
+              <th>Rows in Firestore</th>
+              <th>SOD / In Date</th>
+              <th>Last Uploaded</th>
+            </tr>
+          </thead>
+          <tbody id="uploadedFilesBody">
+            <tr><td colspan="5" class="empty">아직 Upload된 파일이 없습니다.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <h2>3. Assy SOD Trend</h2>
+          <p>
+            Assy SOD별 In Qty, Ship Qty, Assy Yield만 표시합니다. Open/Short는 Weekly Assy report의 defect trend에서 확인합니다.
+          </p>
+        </div>
+        <button id="exportAssyBtn" type="button" class="secondary">Export Assy SOD Report</button>
+      </div>
+      <canvas id="yieldTrendChart" height="115"></canvas>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <h2>4. OS Comparison Trend by INPUT_TIME</h2>
+          <p>
+            OS comparison report의 <b>INPUT_TIME</b> 날짜 기준으로 TOTAL_QTY, TEST_QTY, OS_SS, TOTAL_OS_REJ, OPEN, SHORT,
+            REJECT_RATE, OPEN_RATE, SHORT_RATE를 표시합니다. 중복 기준은 <b>LOT_ID + TOTAL_QTY</b>입니다.
+          </p>
+        </div>
+        <button id="exportOsBtn" type="button" class="secondary">Export OS Report</button>
+      </div>
+      <canvas id="osTrendChart" height="115"></canvas>
+      <div class="table-wrap large mt">
+        <table>
+          <thead>
+            <tr>
+              <th>INPUT_TIME</th>
+              <th>Rows</th>
+              <th>TOTAL_QTY</th>
+              <th>TEST_QTY</th>
+              <th>OS_SS</th>
+              <th>TOTAL_OS_REJ</th>
+              <th>OPEN</th>
+              <th>SHORT</th>
+              <th>REJECT_RATE</th>
+              <th>OPEN_RATE</th>
+              <th>SHORT_RATE</th>
+            </tr>
+          </thead>
+          <tbody id="osTrendBody">
+            <tr><td colspan="11" class="empty">아직 OS Trend Data가 없습니다.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <h2>5. Defect PPM Trend</h2>
+          <p>TOP1~TOP5 defect의 QTY를 In Qty 기준으로 PPM 계산: <b>Defect QTY / In Qty × 1,000,000</b></p>
+        </div>
+        <label class="inline-control">
+          Chart Defects
+          <select id="defectLimitSelect">
+            <option value="5">Top 5</option>
+            <option value="10">Top 10</option>
+            <option value="15">Top 15</option>
+            <option value="all">All</option>
+          </select>
+        </label>
+      </div>
+      <canvas id="defectTrendChart" height="120"></canvas>
+
+      <div class="table-wrap large mt">
+        <table>
+          <thead>
+            <tr>
+              <th>SOD</th>
+              <th>Defect</th>
+              <th>Defect Qty</th>
+              <th>In Qty</th>
+              <th>PPM</th>
+            </tr>
+          </thead>
+          <tbody id="defectPpmBody">
+            <tr><td colspan="5" class="empty">아직 Defect Trend Data가 없습니다.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <h2>6. Assy Raw Data</h2>
+          <p>
+            Firestore에 누적 저장된 Assy Raw Data입니다. Overall Yield는 Assy Yield와 중복되어 제외했습니다.
+          </p>
+        </div>
+      </div>
+      <div class="table-wrap large">
+        <table>
+          <thead>
+            <tr>
+              <th>SOD</th>
+              <th>Project</th>
+              <th>Device</th>
+              <th>Stage</th>
+              <th>SCK input Lot No</th>
+              <th>Lot Base</th>
+              <th>In Qty</th>
+              <th>Ship Qty(K)</th>
+              <th>Assy Yield</th>
+              <th>TOP1</th><th>QTY1</th>
+              <th>TOP2</th><th>QTY2</th>
+              <th>TOP3</th><th>QTY3</th>
+              <th>TOP4</th><th>QTY4</th>
+              <th>TOP5</th><th>QTY5</th>
+              <th>Source File</th>
+            </tr>
+          </thead>
+          <tbody id="assyRawBody">
+            <tr><td colspan="21" class="empty">아직 Firestore Assy Data가 없습니다.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <h2>7. OS Raw Data</h2>
+          <p>Firestore에 누적 저장된 OS comparison Raw Data입니다.</p>
+        </div>
+      </div>
+      <div class="table-wrap large">
+        <table>
+          <thead>
+            <tr>
+              <th>In Date</th>
+              <th>LOT_ID</th>
+              <th>Lot Base</th>
+              <th>Customer</th>
+              <th>Device</th>
+              <th>TOTAL_QTY</th>
+              <th>TEST_QTY</th>
+              <th>OS_SS</th>
+              <th>TOTAL_OS_REJ</th>
+              <th>OPEN</th>
+              <th>SHORT</th>
+              <th>REJECT_RATE</th>
+              <th>OPEN_RATE</th>
+              <th>SHORT_RATE</th>
+              <th>INPUT_TIME</th>
+              <th>Source File</th>
+              <th>Dedupe Key</th>
+            </tr>
+          </thead>
+          <tbody id="osRawBody">
+            <tr><td colspan="17" class="empty">아직 Firestore OS Data가 없습니다.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel log-panel">
+      <h2>Log</h2>
+      <pre id="log">Ready.</pre>
+    </section>
+  </main>
+
+  <script type="module" src="mtk-yield-trend.js"></script>
+</body>
+</html>

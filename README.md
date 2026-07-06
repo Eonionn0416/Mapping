@@ -1,100 +1,45 @@
-# Wafer & Strip Mapping V5 - Firestore 적용
+# QA Page
 
-## 실행
-1. VS Code에서 이 폴더 열기
-2. Live Server로 `index.html` 실행
-3. 2DID Excel 업로드
-4. Mapping Page에서 Title / FT Step / Fail Bin / Comment 입력 후 Save
-5. Result History에서 저장 List 클릭 시 Firestore에 저장된 Row까지 다시 불러와 Mapping 상태 복원
+GitHub Pages용 QA Tools 통합 구조입니다.
 
-## Firestore 구조
+## Folder structure
 
-```text
-mappingHistories/{historyId}
-  title
-  ft
-  bins
-  comment
-  snapshot
-  createdAt
-  createdAtText
-  rowCount
-  rowChunkSize
-  rowChunkCount
-
-mappingHistories/{historyId}/rowChunks/{00000...}
-  index
-  rows[]
+```txt
+wafer_strip_mapping_app/
+├─ index.html                      # QA Page 시작 화면
+├─ README.md
+├─ firestore.rules
+├─ shared/
+│  ├─ firebase-config.js           # Firebase config 공통 관리
+│  └─ common.css                   # QA Page 공통 스타일
+└─ apps/
+   ├─ 2did-mapping/
+   │  ├─ index.html
+   │  ├─ mapping-app.js
+   │  ├─ mapping-style.css
+   │  └─ Raw data/
+   └─ mtk-yield-trend/
+      ├─ index.html
+      ├─ mtk-yield-trend.js
+      ├─ mtk-yield-trend.css
+      └─ README.md
 ```
 
-2DID 전체 row는 Firestore 문서 1MB 제한을 피하기 위해 `rowChunks` 서브컬렉션으로 나누어 저장합니다.
+## GitHub Pages URL
 
-## Firebase Rules
+Root `index.html`이 QA Page입니다.
 
-현재 Firebase Console에 아래처럼 되어 있으면 앱에서 저장/조회가 전부 막힙니다.
+- 2DID Mapping: `./apps/2did-mapping/`
+- MTK Assy & OS & FT Yield Trend: `./apps/mtk-yield-trend/`
 
-```js
-allow read, write: if false;
-```
+## Firebase config
 
-빠른 테스트용으로는 이 폴더의 `firestore.rules` 내용을 Firebase Console > Firestore Database > Rules에 붙여넣고 Publish 하세요.
+공통 config는 `shared/firebase-config.js`에 있습니다.
 
-주의: 테스트 Rules는 공개 읽기/쓰기입니다. GitHub Pages에 올리면 URL을 아는 사람이 데이터를 볼 수 있습니다. 운영용은 Firebase Auth 로그인 후 uid 기준 제한으로 바꾸는 걸 권장합니다.
+- `mappingFirebaseConfig`: 2DID Mapping용 Firebase project
+- `mtkYieldFirebaseConfig`: MTK Yield Trend용 Firebase project
 
-## GitHub Pages
+## Firestore rules
 
-이 프로젝트는 정적 HTML/CSS/JS라서 GitHub Pages에 그대로 올릴 수 있습니다.
-단, Firestore Rules가 막혀 있으면 GitHub Pages에서도 Permission Denied가 발생합니다.
-
-## V7 - Excel Report Export
-
-Mapping Page의 **Export Excel Report** 버튼으로 현재 화면의 Strip/Wafer Mapping 결과를 `.xlsx`로 추출할 수 있습니다.
-
-생성 Sheet:
-- `2DID Information`: Title, FT Step, Fail Bin, Comment, Summary, Filter, X/Y 기준 정보
-- `Wafer_MERGE` 또는 `Strip_MERGE` 등 Mapping Sheet: B2부터 Map 시작, Row 1은 X축, Column A는 Y축
-- `2DID Information Detail`: 현재 Filter 포함 여부(Y/N)를 붙인 2DID 정보
-- `Raw Uploaded 2DID`: 업로드 또는 Firestore History에서 불러온 원본 2DID 정보
-
-Mapping Sheet 규칙:
-- B2가 첫 Mapping Cell입니다.
-- 2DID가 있는 위치는 `1`로 표시됩니다.
-- Merge 상태에서 같은 좌표에 여러 Unit이 겹치면 겹친 수량으로 표시됩니다.
-- Fail이 포함된 좌표는 빨간색으로 Highlight됩니다.
-- 2DID가 없는 위치는 Blank로 둡니다.
-
-
-## V8 Export Fix
-- GitHub Pages에서 `xlsx-js-style` CDN 404 또는 다운로드 차단처럼 보이는 문제를 줄이기 위해 CDN fallback을 추가했습니다.
-- `XLSX.writeFile()` 대신 Blob 다운로드 방식을 우선 사용하고, 실패 시 `writeFile()`로 fallback합니다.
-- Export 실패 시 이제 alert와 console에 실제 오류가 표시됩니다.
-
-## V9 Export File Naming Rule
-
-Excel Report 파일명은 아래 규칙으로 저장됩니다.
-
-```text
-Lot#_(Wafer or Strip)_Mapping Type_YYYYMMDD.xlsx
-```
-
-예시:
-
-```text
-PEXL70.1_Wafer_MERGE_20260519.xlsx
-PEXL70.1_Strip_MS249028-12_0102_20260519.xlsx
-MULTI_LOT_2_Wafer_ALL_IDs_20260519.xlsx
-```
-
-## V11 Update
-- Filter UI를 checkbox + per-column search + per-column reset 형태로 강화했습니다.
-- 검색 후 checkbox를 클릭해도 기존 선택값은 유지되고 해당 item만 추가/해제됩니다.
-- Map cell 클릭 시 해당 cell 기준으로 관련 Lot/Strip/Wafer/좌표/Unit filter가 자동 추가됩니다.
-- Strip Map 기준 Batch / Panel / Strip ID / Strip Y Row fail 집중도 통계가 추가되었습니다.
-- Wafer Map 기준 Wafer ID fail 집중도 통계가 추가되었습니다.
-
-## V12 update
-- Filter search now renders only matched values, so searching inside each item shows the matching checkbox list directly.
-- Existing checked filters remain active while searching and adding another item.
-- Each filter item has Reset, and global Reset also clears search text.
-- Map cell events were changed from per-cell listeners to delegated events to reduce lag.
-- Clicking a merged map cell filters mainly by coordinate instead of pushing hundreds of Unit IDs into the filter state.
+`firestore.rules`에는 두 앱에서 사용하는 collection rule 예시를 같이 넣었습니다.
+실제 Firebase Console에서는 각 프로젝트에 맞는 rule을 Publish 해야 합니다.
