@@ -1,2 +1,7 @@
-wafer_strip_mapping_app v20
-- MTK Assy & OS page: added MTK BIN INFORMATION upload, Firestore storage, monthly BIN rate trend, and monthly merged BIN export.
+wafer_strip_mapping_app v21
+- MTK Assy Yield Trend: All chart plus Project별 charts rendered together.
+- MTK Assy OS Trend: All chart plus Lead별 charts rendered together.
+- MTK Defect PPM Trend: All chart plus Lead별 charts rendered together. Assy rows are mapped to Lead by matching OS/BIN Lot Base when available.
+- MNT Bump CPK/PPK Trend: Product selection remains; all Items under the selected Product render together as separate charts.
+- MNT Assy CPK/PPK Trend: Device selection remains; all Process / Characteristics trends under the selected Device render together as separate charts.
+- Removed requested Firestore Refresh, Retry Upload, Selection Clear, Permission Picker, Folder Picker, and Local Bridge upload buttons/code from upload panels.
