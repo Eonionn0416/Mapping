@@ -1,2 +1,0 @@
-wafer_strip_mapping_app v20
-- MTK Assy & OS page: added MTK BIN INFORMATION upload, Firestore storage, monthly BIN rate trend, and monthly merged BIN export.
