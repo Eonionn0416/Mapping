@@ -1186,13 +1186,14 @@ function destroyChartList(charts) {
   charts.length = 0;
 }
 
-function makeChartCard(container, title, height = 250) {
+function makeChartCard(container, title, height = 320) {
   const card = document.createElement("div");
   card.className = "chart-card";
   const heading = document.createElement("h3");
   heading.textContent = title;
   const canvas = document.createElement("canvas");
   canvas.height = height;
+  canvas.style.height = `${height}px`;
   card.appendChild(heading);
   card.appendChild(canvas);
   container.appendChild(card);
@@ -1217,7 +1218,7 @@ function groupRowsBy(rows, keyFn, titleFn) {
 function chartOptions(title, yTitle) {
   return {
     responsive: true,
-    maintainAspectRatio: true,
+    maintainAspectRatio: false,
     plugins: {
       title: { display: true, text: title },
       legend: { position: "bottom" },

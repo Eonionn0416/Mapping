@@ -119,7 +119,7 @@ p { color: var(--muted); margin-top: 6px; line-height: 1.45; }
 .chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(520px, 1fr)); gap: 16px; margin-top: 10px; }
 .chart-card { min-width: 0; border: 1px solid var(--line); border-radius: 18px; padding: 14px; background: rgba(255,255,255,.72); }
 .chart-card h3 { margin-bottom: 10px; color: #334155; }
-.chart-card canvas { width: 100% !important; max-height: 360px; }
+.chart-card canvas { width: 100% !important; height: 320px !important; max-height: none; display: block; }
 .chart-empty { border: 1px dashed var(--line); border-radius: 18px; padding: 28px; text-align: center; color: var(--muted); background: rgba(255,255,255,.55); }
 .file-row.single { grid-template-columns: 1fr; }
 .filters.three { grid-template-columns: 1fr 1.35fr .95fr; }

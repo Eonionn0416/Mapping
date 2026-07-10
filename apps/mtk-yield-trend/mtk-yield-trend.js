@@ -941,13 +941,14 @@ function buildLeadLookup(assyLeadSources = []) {
   return lookup;
 }
 
-function makeChartCard(container, title, height = 250) {
+function makeChartCard(container, title, height = 320) {
   const card = document.createElement("div");
   card.className = "chart-card";
   const heading = document.createElement("h3");
   heading.textContent = title;
   const canvas = document.createElement("canvas");
   canvas.height = height;
+  canvas.style.height = `${height}px`;
   card.appendChild(heading);
   card.appendChild(canvas);
   container.appendChild(card);
@@ -1269,6 +1270,7 @@ function makeYieldChartConfig(rows) {
     },
     options: {
       responsive: true,
+      maintainAspectRatio: false,
       interaction: { mode: "index", intersect: false },
       scales: {
         rateAxis: {
@@ -1354,6 +1356,7 @@ function makeOsChartConfig(rows) {
     },
     options: {
       responsive: true,
+      maintainAspectRatio: false,
       interaction: { mode: "index", intersect: false },
       scales: {
         rateAxis: {
@@ -1411,6 +1414,7 @@ function renderBinTrendChart() {
     data: { labels, datasets },
     options: {
       responsive: true,
+      maintainAspectRatio: false,
       interaction: { mode: "index", intersect: false },
       scales: {
         y: {
@@ -1463,6 +1467,7 @@ function makeDefectChartConfig(rows) {
     data: { labels, datasets },
     options: {
       responsive: true,
+      maintainAspectRatio: false,
       interaction: { mode: "index", intersect: false },
       scales: {
         y: {

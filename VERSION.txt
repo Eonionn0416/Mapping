@@ -1,7 +1,6 @@
-wafer_strip_mapping_app v21
-- MTK Assy Yield Trend: All chart plus Project별 charts rendered together.
-- MTK Assy OS Trend: All chart plus Lead별 charts rendered together.
-- MTK Defect PPM Trend: All chart plus Lead별 charts rendered together. Assy rows are mapped to Lead by matching OS/BIN Lot Base when available.
-- MNT Bump CPK/PPK Trend: Product selection remains; all Items under the selected Product render together as separate charts.
-- MNT Assy CPK/PPK Trend: Device selection remains; all Process / Characteristics trends under the selected Device render together as separate charts.
-- Removed requested Firestore Refresh, Retry Upload, Selection Clear, Permission Picker, Folder Picker, and Local Bridge upload buttons/code from upload panels.
+wafer_strip_mapping_app v22
+- 2DID Mapping: Strip fail concentration now includes Batch + Panel + Strip No Commonality (Strip ID) statistics.
+- 2DID Mapping: Added Daeduck Strip ID parsing rule. Example P0221810006S 013A => Batch P0221810006S / Panel 013 / Strip A.
+- 2DID Mapping: Excel export map sheets no longer include the heavy B2 mapping-cell comment.
+- 2DID Mapping: MERGE export now adds Strip_MERGE_CUST or Wafer_MERGE_CUST sheet. Normal/Input Qty values are removed; fail cells show Fail Qty only.
+- MTK Yield Trend and MNT CPK Trend: Chart canvases use fixed taller height with maintainAspectRatio disabled so the first always-visible trend chart y-axis is not squeezed/thin.

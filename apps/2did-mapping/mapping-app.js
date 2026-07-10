@@ -520,16 +520,39 @@ function applyMapCellFilter(rows) {
 
 function parseStripId(stripId) {
   const text = String(stripId || '').trim();
-  const match = text.match(/^(.+?)\s+(\d{2})(\d+)$/);
+  if (!text) return { batch: '-', panel: '-', stripNo: '-', normalized: '-' };
+
+  // Daeduck Strip ID rule: P0221810006S 013A
+  //   Batch = P0221810006S, Panel = 013, Strip = A~H
+  const daeduckMatch = text.match(/^(P\d{10}S)\s*(\d{3})([A-H])$/i);
+  if (daeduckMatch) {
+    return {
+      batch: daeduckMatch[1].toUpperCase(),
+      panel: daeduckMatch[2],
+      stripNo: daeduckMatch[3].toUpperCase(),
+      normalized: `${daeduckMatch[1].toUpperCase()} ${daeduckMatch[2]}${daeduckMatch[3].toUpperCase()}`
+    };
+  }
+
+  // Existing Simmtech/MS rule: last token is Panel + Strip No.
+  // Keep the previous 2-digit panel parsing so existing MS data is not changed.
+  const match = text.match(/^(.+?)\s+(\d{2})([A-Za-z0-9]+)$/);
   if (!match) {
-    return { batch: text || '-', panel: '-', stripNo: '-', normalized: text || '-' };
+    return { batch: text, panel: '-', stripNo: '-', normalized: text };
   }
   return {
     batch: match[1].trim(),
     panel: match[2],
-    stripNo: match[3],
+    stripNo: String(match[3]).toUpperCase(),
     normalized: text
   };
+}
+
+function formatStripIdCommonality(parsed) {
+  if (!parsed || parsed.batch === '-' || parsed.panel === '-' || parsed.stripNo === '-') {
+    return parsed?.normalized || '-';
+  }
+  return `${parsed.batch} / Panel ${parsed.panel} / Strip ${parsed.stripNo}`;
 }
 
 
@@ -615,6 +638,7 @@ function buildStatsGroups(rows, mapType = state.mapType) {
       { title: 'Batch 기준 Fail 집중도', rows: aggregateBy(withParsed.map(x => ({ ...x.row, __statKey: x.parsed.batch })), r => r.__statKey) },
       { title: 'Batch + Panel 기준 Fail 집중도', rows: aggregateBy(withParsed.map(x => ({ ...x.row, __statKey: `${x.parsed.batch} / Panel ${x.parsed.panel}` })), r => r.__statKey) },
       { title: 'Strip No 기준 Fail 집중도', rows: aggregateBy(withParsed.map(x => ({ ...x.row, __statKey: `Strip No ${x.parsed.stripNo}` })), r => r.__statKey) },
+      { title: 'Batch + Panel + Strip No Commonality (Strip ID) 기준 Fail 집중도', rows: aggregateBy(withParsed.map(x => ({ ...x.row, __statKey: formatStripIdCommonality(x.parsed) })), r => r.__statKey) },
       { title: 'Strip 내 Y Row 기준 Fail 집중도', rows: aggregateBy(rows, r => `Strip Y Row ${r.Y}`) }
     ];
   }
@@ -644,19 +668,23 @@ function renderStats(filteredRows) {
     const byBatch = aggregateBy(withParsed.map(x => ({ ...x.row, __statKey: x.parsed.batch })), r => r.__statKey);
     const byPanel = aggregateBy(withParsed.map(x => ({ ...x.row, __statKey: `${x.parsed.batch} / Panel ${x.parsed.panel}` })), r => r.__statKey);
     const byStrip = aggregateBy(withParsed.map(x => ({ ...x.row, __statKey: `Strip No ${x.parsed.stripNo}` })), r => r.__statKey);
+    const byStripId = aggregateBy(withParsed.map(x => ({ ...x.row, __statKey: formatStripIdCommonality(x.parsed) })), r => r.__statKey);
     const byRow = aggregateBy(rows, r => `Strip Y Row ${r.Y}`);
     const topStrip = byStrip.find(r => r.fail > 0);
+    const topStripId = byStripId.find(r => r.fail > 0);
     const topRow = byRow.find(r => r.fail > 0);
     panel.innerHTML = `
       <div class="stat-summary-line">
         <strong>Strip 집중도 분석</strong>
         <span>Filtered In ${summary.inQty.toLocaleString()} / Fail ${failQty.toLocaleString()} / Fail Rate ${formatRate(summary.failRate)}</span>
         <span>${topStrip ? `가장 몰린 Strip No: ${escapeHtml(topStrip.key)} (${topStrip.fail.toLocaleString()} Fail)` : 'Fail 집중 Strip No 없음'}</span>
+        <span>${topStripId ? `가장 몰린 Strip ID Commonality: ${escapeHtml(topStripId.key)} (${topStripId.fail.toLocaleString()} Fail)` : 'Fail 집중 Strip ID 없음'}</span>
         <span>${topRow ? `가장 몰린 Row: ${escapeHtml(topRow.key)} (${topRow.fail.toLocaleString()} Fail)` : 'Fail 집중 Row 없음'}</span>
       </div>
       ${makeStatsTable('Batch 기준 Fail 집중도', byBatch)}
       ${makeStatsTable('Batch + Panel 기준 Fail 집중도', byPanel)}
       ${makeStatsTable('Strip No 기준 Fail 집중도', byStrip)}
+      ${makeStatsTable('Batch + Panel + Strip No Commonality (Strip ID) 기준 Fail 집중도', byStripId)}
       ${makeStatsTable('Strip 내 Y Row 기준 Fail 집중도', byRow)}
     `;
   } else {
@@ -1053,8 +1081,9 @@ function getDisplayedMapConfigs() {
   })).filter(config => config.rows.length);
 }
 
-function buildMapWorksheet(config, filteredSet) {
-  const { groupCol, xCol, yCol, label } = getMapColumns();
+function buildMapWorksheet(config, filteredSet, options = {}) {
+  const { xCol, yCol, label } = getMapColumns();
+  const customDisplay = Boolean(options.customDisplay);
   const bounds = getGlobalBounds(state.rawRows, xCol, yCol);
   if (!bounds) return XLSX.utils.aoa_to_sheet([['No map data']]);
   const xValues = [];
@@ -1074,17 +1103,19 @@ function buildMapWorksheet(config, filteredSet) {
         return;
       }
       const failCount = rows.filter(unit => Number(unit.Fail) > 0).length;
-      // Export rule:
-      // - Normal die: duplicated unit count
-      // - Fail die: fail unit count / duplicated unit count
-      row.push(failCount > 0 ? `${failCount}/${rows.length}` : rows.length);
+      if (customDisplay) {
+        // Custom MERGE sheet: normal/Input Qty text is removed, fail cells keep Fail Qty only.
+        row.push(failCount > 0 ? failCount : '');
+      } else {
+        // Standard MERGE sheet: normal die = duplicated unit count, fail die = fail unit count / duplicated unit count.
+        row.push(failCount > 0 ? `${failCount}/${rows.length}` : rows.length);
+      }
     });
     aoa.push(row);
   });
 
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   const range = XLSX.utils.decode_range(ws['!ref']);
-  const title = `${label}: ${config.titleGroup}`;
   ws['!cols'] = [{ wch: 8 }, ...xValues.map(() => ({ wch: 6 }))];
   ws['!rows'] = aoa.map((_, idx) => ({ hpt: idx === 0 ? 20 : 16 }));
   ws['!freeze'] = { xSplit: 1, ySplit: 1 };
@@ -1137,6 +1168,7 @@ function buildMapWorksheet(config, filteredSet) {
         ws[ref].s = blankStyle;
         return;
       }
+      if (!ws[ref]) ws[ref] = { t: 's', v: '' };
       const isFail = rows.some(row => Number(row.Fail) > 0);
       const isFiltered = rows.some(row => filteredSet.has(row.__idx));
       const activeFilters = hasActiveFilters();
@@ -1151,7 +1183,6 @@ function buildMapWorksheet(config, filteredSet) {
 
   ws['!merges'] = [];
   ws['!autofilter'] = { ref: XLSX.utils.encode_range(range) };
-  ws['A1'].c = [{ t: `B2 is the first mapping cell. ${title}; blank = no 2DID unit, normal number = duplicated unit count, fail cell = fail unit count / duplicated unit count, red = Fail unit exists, orange = selected/filtered Fail unit.` }];
   return ws;
 }
 
@@ -1378,6 +1409,10 @@ function exportExcelReport() {
       const suffix = mapConfigs.length > 1 ? `${idx + 1}_${config.titleGroup}` : config.titleGroup;
       const sheetName = uniqueSheetName(`${label}_${suffix}`, used);
       XLSX_LIB.utils.book_append_sheet(wb, buildMapWorksheet(config, filteredSet), sheetName);
+      if (config.isMerge && String(config.titleGroup).toUpperCase() === 'MERGE') {
+        const customSheetName = uniqueSheetName(`${label}_${suffix}_CUST`, used);
+        XLSX_LIB.utils.book_append_sheet(wb, buildMapWorksheet(config, filteredSet, { customDisplay: true }), customSheetName);
+      }
     });
     XLSX_LIB.utils.book_append_sheet(wb, makeDataWorksheet(state.rawRows, 'Raw 2DID', filteredSet), uniqueSheetName('2DID Information Detail', used));
     XLSX_LIB.utils.book_append_sheet(wb, makeDataWorksheet(state.rawRows, 'Raw 2DID'), uniqueSheetName('Raw Uploaded 2DID', used));
