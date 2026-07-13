@@ -1,4 +1,5 @@
-wafer_strip_mapping_app v22
+wafer_strip_mapping_app v23
+- 2DID Mapping: Row import count rule changed. Rows are now kept when either STRIP ID or WAFER ID exists, so Strip mapping/statistics include units even when WAFER ID/COL/ROW are blank.
 - 2DID Mapping: Strip fail concentration now includes Batch + Panel + Strip No Commonality (Strip ID) statistics.
 - 2DID Mapping: Added Daeduck Strip ID parsing rule. Example P0221810006S 013A => Batch P0221810006S / Panel 013 / Strip A.
 - 2DID Mapping: Excel export map sheets no longer include the heavy B2 mapping-cell comment.

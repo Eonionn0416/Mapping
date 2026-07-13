@@ -72,6 +72,20 @@ function normalizeKey(key) {
   return String(key || '').replace(/\s+/g, ' ').trim().toUpperCase();
 }
 
+function hasValue(value) {
+  return value !== undefined && value !== null && String(value).trim() !== '';
+}
+
+function toFiniteNumberOrBlank(value) {
+  if (!hasValue(value)) return '';
+  const num = Number(value);
+  return Number.isFinite(num) ? num : '';
+}
+
+function rowHasAnyMapId(row) {
+  return hasValue(row['STRIP ID']) || hasValue(row['WAFER ID']);
+}
+
 function normalizeRows(rows) {
   return rows.map((row, idx) => {
     const normalized = { __idx: Number(row.__idx ?? idx) };
@@ -79,13 +93,17 @@ function normalizeRows(rows) {
       const cleanKey = REQUIRED_COLUMNS.find(col => normalizeKey(col) === normalizeKey(key)) || key;
       normalized[cleanKey] = row[key];
     });
-    normalized.X = Number(normalized.X);
-    normalized.Y = Number(normalized.Y);
-    normalized['WAFER COL'] = Number(normalized['WAFER COL']);
-    normalized['WAFER ROW'] = Number(normalized['WAFER ROW']);
-    normalized.Fail = Number(normalized.Fail || 0);
+
+    ['LOT ID', 'STRIP ID', 'UNIT ID', 'WAFER ID'].forEach(col => {
+      normalized[col] = hasValue(normalized[col]) ? String(normalized[col]).trim() : '';
+    });
+    normalized.X = toFiniteNumberOrBlank(normalized.X);
+    normalized.Y = toFiniteNumberOrBlank(normalized.Y);
+    normalized['WAFER COL'] = toFiniteNumberOrBlank(normalized['WAFER COL']);
+    normalized['WAFER ROW'] = toFiniteNumberOrBlank(normalized['WAFER ROW']);
+    normalized.Fail = hasValue(normalized.Fail) ? Number(normalized.Fail) || 0 : 0;
     return normalized;
-  }).filter(row => REQUIRED_COLUMNS.every(col => row[col] !== undefined && row[col] !== null && row[col] !== ''));
+  }).filter(rowHasAnyMapId);
 }
 
 function compactRow(row) {
@@ -93,12 +111,12 @@ function compactRow(row) {
     __idx: Number(row.__idx),
     'LOT ID': String(row['LOT ID'] ?? ''),
     'STRIP ID': String(row['STRIP ID'] ?? ''),
-    X: Number(row.X),
-    Y: Number(row.Y),
+    X: toFiniteNumberOrBlank(row.X),
+    Y: toFiniteNumberOrBlank(row.Y),
     'UNIT ID': String(row['UNIT ID'] ?? ''),
     'WAFER ID': String(row['WAFER ID'] ?? ''),
-    'WAFER COL': Number(row['WAFER COL']),
-    'WAFER ROW': Number(row['WAFER ROW']),
+    'WAFER COL': toFiniteNumberOrBlank(row['WAFER COL']),
+    'WAFER ROW': toFiniteNumberOrBlank(row['WAFER ROW']),
     Fail: Number(row.Fail || 0)
   };
 }
@@ -129,7 +147,7 @@ function readFile(file) {
 }
 
 function uniqueValues(col, rows = state.rawRows) {
-  return [...new Set(rows.map(r => String(r[col] ?? '')).filter(Boolean))]
+  return [...new Set(rows.map(r => r[col]).filter(hasValue).map(v => String(v).trim()))]
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
 
@@ -152,9 +170,14 @@ function getMapColumns(mapType = state.mapType) {
     : { groupCol: 'WAFER ID', xCol: 'WAFER COL', yCol: 'WAFER ROW', label: 'Wafer' };
 }
 
+function rowsForMapType(rows, mapType = state.mapType) {
+  const { groupCol } = getMapColumns(mapType);
+  return rows.filter(row => hasValue(row[groupCol]));
+}
+
 function getGlobalBounds(rows, xCol, yCol) {
-  const xs = rows.map(r => Number(r[xCol])).filter(Number.isFinite);
-  const ys = rows.map(r => Number(r[yCol])).filter(Number.isFinite);
+  const xs = rows.map(r => r[xCol]).filter(hasValue).map(Number).filter(Number.isFinite);
+  const ys = rows.map(r => r[yCol]).filter(hasValue).map(Number).filter(Number.isFinite);
   if (!xs.length || !ys.length) return null;
   const minX = Math.min(...xs) <= 0 ? Math.min(...xs) : 1;
   const minY = Math.min(...ys) <= 0 ? Math.min(...ys) : 1;
@@ -346,7 +369,11 @@ function renderSummary(filteredRows) {
 function buildCellMap(rows, xCol, yCol) {
   const cellMap = new Map();
   rows.forEach(row => {
-    const key = `${Number(row[xCol])}|${Number(row[yCol])}`;
+    if (!hasValue(row[xCol]) || !hasValue(row[yCol])) return;
+    const x = Number(row[xCol]);
+    const y = Number(row[yCol]);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    const key = `${x}|${y}`;
     if (!cellMap.has(key)) cellMap.set(key, []);
     cellMap.get(key).push(row);
   });
@@ -437,7 +464,7 @@ function renderMap(filteredRows) {
 
   if (state.groupValue === 'MERGE') {
     renderOneMap(container, {
-      rows: state.rawRows,
+      rows: rowsForMapType(state.rawRows),
       filteredSet,
       mapType: state.mapType,
       titleGroup: 'MERGE',
@@ -571,7 +598,8 @@ function parseWaferId(waferId) {
 function aggregateBy(rows, keyGetter) {
   const map = new Map();
   rows.forEach(row => {
-    const key = String(keyGetter(row) ?? '-');
+    const rawKey = keyGetter(row);
+    const key = hasValue(rawKey) ? String(rawKey).trim() : '-';
     if (!map.has(key)) map.set(key, { key, total: 0, fail: 0 });
     const item = map.get(key);
     item.total += 1;
@@ -658,7 +686,7 @@ function renderStats(filteredRows) {
     panel.textContent = 'Excel을 업로드하면 통계가 표시됩니다.';
     return;
   }
-  const rows = filteredRows;
+  const rows = rowsForMapType(filteredRows, state.mapType);
   const failQty = rows.filter(r => Number(r.Fail) > 0).length;
   const summary = summarizeRows(rows);
   panel.className = 'stats-panel';
@@ -752,7 +780,7 @@ function currentSnapshot() {
   const filteredRows = getFilteredRows();
   const summary = summarizeRows(filteredRows);
   const { groupCol, xCol, yCol } = getMapColumns();
-  const bounds = getGlobalBounds(state.rawRows, xCol, yCol);
+  const bounds = getGlobalBounds(rowsForMapType(state.rawRows), xCol, yCol);
   return {
     sourceFileName: state.sourceFileName,
     mapType: state.mapType,
@@ -1071,7 +1099,7 @@ function getDisplayedMapConfigs() {
   const { groupCol } = getMapColumns();
   if (!state.rawRows.length) return [];
   if (state.groupValue === 'MERGE') {
-    return [{ rows: state.rawRows, titleGroup: 'MERGE', isMerge: true }];
+    return [{ rows: rowsForMapType(state.rawRows), titleGroup: 'MERGE', isMerge: true }];
   }
   const groups = state.groupValue === 'ALL' ? uniqueValues(groupCol, state.rawRows) : [state.groupValue];
   return groups.map(group => ({
@@ -1084,7 +1112,7 @@ function getDisplayedMapConfigs() {
 function buildMapWorksheet(config, filteredSet, options = {}) {
   const { xCol, yCol, label } = getMapColumns();
   const customDisplay = Boolean(options.customDisplay);
-  const bounds = getGlobalBounds(state.rawRows, xCol, yCol);
+  const bounds = getGlobalBounds(rowsForMapType(state.rawRows), xCol, yCol);
   if (!bounds) return XLSX.utils.aoa_to_sheet([['No map data']]);
   const xValues = [];
   const yValues = [];
@@ -1245,8 +1273,9 @@ function makeDataWorksheet(rows, name, filteredSet = null) {
 
 
 function makeStatisticsWorksheet(rows) {
-  const summary = summarizeRows(rows);
-  const groups = buildStatsGroups(rows, state.mapType);
+  const statRows = rowsForMapType(rows, state.mapType);
+  const summary = summarizeRows(statRows);
+  const groups = buildStatsGroups(statRows, state.mapType);
   const aoa = [
     ['2DID Fail Concentration Statistics'],
     ['Map Type', state.mapType],
