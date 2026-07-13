@@ -171,14 +171,47 @@ function compactDateToLabel(value) {
 function compactDateToMonth(value) {
   const raw = normalizeText(value);
   if (/^\d{8}$/.test(raw)) return `${raw.slice(0, 4)}-${raw.slice(4, 6)}`;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw.slice(0, 7);
   const match = raw.match(/(20\d{2})[-/.]?(0?[1-9]|1[0-2])/);
   if (match) return `${match[1]}-${match[2].padStart(2, "0")}`;
+  return "";
+}
+
+function isValidDateParts(year, month, day) {
+  const y = Number(year);
+  const m = Number(month);
+  const d = Number(day);
+  if (!Number.isInteger(y) || !Number.isInteger(m) || !Number.isInteger(d)) return false;
+  const date = new Date(Date.UTC(y, m - 1, d));
+  return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
+}
+
+function makeDateKey(year, month, day) {
+  if (!isValidDateParts(year, month, day)) return "";
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function normalizeReportDate(value) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return makeDateKey(value.getFullYear(), value.getMonth() + 1, value.getDate());
+  }
+
+  const raw = normalizeText(value);
+  if (!raw) return "";
+
+  const exact = raw.match(/(?:^|[^0-9])(20\d{2})[-_. /]?(0[1-9]|1[0-2])[-_. /]?([0-3]\d)(?:[^0-9]|$)/);
+  if (exact) return makeDateKey(exact[1], exact[2], exact[3]);
+
+  const dashed = raw.match(/(?:^|[^0-9])(20\d{2})[-_. /](0?[1-9]|1[0-2])[-_. /](\d{1,2})(?:[^0-9]|$)/);
+  if (dashed) return makeDateKey(dashed[1], dashed[2], dashed[3]);
+
   return "";
 }
 
 function normalizeReportMonth(value) {
   const raw = normalizeText(value);
   if (/^\d{4}-\d{2}$/.test(raw)) return raw;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw.slice(0, 7);
   if (/^\d{6}$/.test(raw)) return `${raw.slice(0, 4)}-${raw.slice(4, 6)}`;
   if (/^\d{8}$/.test(raw)) return `${raw.slice(0, 4)}-${raw.slice(4, 6)}`;
 
@@ -198,7 +231,38 @@ function normalizeReportMonth(value) {
   return "";
 }
 
+function getWeekStartDateKey(dateKey) {
+  const normalized = normalizeReportDate(dateKey);
+  if (!normalized) return "";
+  const [yyyy, mm, dd] = normalized.split("-").map(Number);
+  const date = new Date(Date.UTC(yyyy, mm - 1, dd));
+  const mondayOffset = (date.getUTCDay() + 6) % 7;
+  date.setUTCDate(date.getUTCDate() - mondayOffset);
+  return makeDateKey(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
+}
+
+function reportWeekLabel(weekKey) {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(weekKey || "")) return `${weekKey} Wk`;
+  if (/^\d{4}-\d{2}$/.test(weekKey || "")) return `${monthLabel(weekKey)} (Monthly)`;
+  return weekKey || "";
+}
+
+function getReportDateFromFile(file) {
+  const byName = normalizeReportDate(file?.name || "");
+  if (byName) return byName;
+
+  if (file?.lastModified) {
+    const date = new Date(file.lastModified);
+    if (!Number.isNaN(date.getTime())) return makeDateKey(date.getFullYear(), date.getMonth() + 1, date.getDate());
+  }
+
+  return "";
+}
+
 function getReportMonthFromFile(file) {
+  const reportDate = getReportDateFromFile(file);
+  if (reportDate) return reportDate.slice(0, 7);
+
   const byName = normalizeReportMonth(file?.name || "");
   if (byName) return byName;
 
@@ -259,7 +323,7 @@ function getAvailableTrendMonths() {
     if (month) months.add(month);
   });
   binRows.forEach(row => {
-    const month = normalizeReportMonth(row.reportMonth);
+    const month = normalizeReportMonth(row.reportDate) || normalizeReportMonth(getBinReportWeek(row)) || normalizeReportMonth(row.reportMonth);
     if (month) months.add(month);
   });
   return Array.from(months).sort();
@@ -347,10 +411,29 @@ function makeOsDedupeKey(row) {
   return safeDocId(`OS__${lot}__${totalQty}`);
 }
 
+function getBinReportWeek(row) {
+  const storedWeek = normalizeReportDate(row?.reportWeek);
+  if (storedWeek) return getWeekStartDateKey(storedWeek);
+
+  const reportDate = normalizeReportDate(row?.reportDate) || normalizeReportDate(row?.sourceFileName);
+  if (reportDate) return getWeekStartDateKey(reportDate);
+
+  const reportMonth = normalizeReportMonth(row?.reportMonth);
+  return reportMonth || "NO_WEEK";
+}
+
+function getBinReportWeekLabel(row) {
+  return reportWeekLabel(getBinReportWeek(row));
+}
+
+function getBinReportPeriodKey(row) {
+  return getBinReportWeek(row) || normalizeReportMonth(row?.reportMonth) || "NO_WEEK";
+}
+
 function makeBinDedupeKey(row) {
   const keyParts = [
     "BIN",
-    row.reportMonth,
+    getBinReportPeriodKey(row),
     row.custId,
     row.pkgId,
     row.leadId,
@@ -431,10 +514,13 @@ function convertOsRow(rawRow, fileName) {
   return row;
 }
 
-function convertBinRow(rawRow, fileName, reportMonth) {
+function convertBinRow(rawRow, fileName, reportMonth, reportDate) {
+  const reportWeek = reportDate ? getWeekStartDateKey(reportDate) : reportMonth;
   const row = {
     sourceType: "BIN",
     reportMonth,
+    reportDate,
+    reportWeek,
     custId: normalizeText(rawRow["CUST_ID"]),
     pkgId: normalizeText(rawRow["PKG_ID"]),
     leadId: normalizeText(rawRow["LEAD_ID"]),
@@ -457,6 +543,7 @@ function convertBinRow(rawRow, fileName, reportMonth) {
   };
 
   row.reportMonthLabel = monthLabel(row.reportMonth);
+  row.reportWeekLabel = getBinReportWeekLabel(row);
   row.lotBase = normalizeLotBase(row.lotId);
   row.dedupeKey = makeBinDedupeKey(row);
   return row;
@@ -568,11 +655,13 @@ async function readReportFile(file) {
 
   const binSheet = findSheetRowsByHeaders(workbook, BIN_SHEET_NAME, BIN_REQUIRED_HEADERS);
   if (binSheet.rawRows.length) {
+    const reportDate = getReportDateFromFile(file);
     const reportMonth = getReportMonthFromFile(file);
+    const reportWeek = reportDate ? getWeekStartDateKey(reportDate) : reportMonth;
     result.binRows = binSheet.rawRows
-      .map(row => convertBinRow(row, file.name, reportMonth))
+      .map(row => convertBinRow(row, file.name, reportMonth, reportDate))
       .filter(isValidBinRow);
-    result.messages.push(`BIN ${result.binRows.length.toLocaleString()} row · ${monthLabel(reportMonth)} · ${binSheet.sheetName}`);
+    result.messages.push(`BIN ${result.binRows.length.toLocaleString()} row · ${reportWeekLabel(reportWeek)} · ${binSheet.sheetName}`);
   }
 
   if (!result.messages.length) {
@@ -664,8 +753,8 @@ async function loadFirestoreData() {
     try {
       binRows = await getCollectionRows(BIN_COLLECTION);
       binRows.sort((a, b) => {
-        const monthCompare = String(a.reportMonth || "").localeCompare(String(b.reportMonth || ""));
-        if (monthCompare !== 0) return monthCompare;
+        const weekCompare = String(getBinReportWeek(a) || "").localeCompare(String(getBinReportWeek(b) || ""));
+        if (weekCompare !== 0) return weekCompare;
         return String(a.lotId || "").localeCompare(String(b.lotId || ""));
       });
       log(`BIN Firestore Load 완료: ${binRows.length.toLocaleString()} row`);
@@ -798,7 +887,7 @@ function rebuildDerivedData() {
 
   const windowAssyRows = getWindowAssyRows();
   const windowOsRows = getWindowOsRows();
-  const windowBinRows = binRows.filter(row => isMonthInTrendWindow(normalizeReportMonth(row.reportMonth)));
+  const windowBinRows = binRows.filter(row => isMonthInTrendWindow(normalizeReportMonth(getBinReportWeek(row)) || normalizeReportMonth(row.reportMonth)));
 
   sodSummaryRows = buildSodSummary(windowAssyRows);
   osTrendRows = buildOsTrendRows(windowOsRows);
@@ -1020,15 +1109,18 @@ function buildBinTrendRows(rows) {
   const grouped = new Map();
 
   for (const row of rows) {
-    const reportMonth = normalizeReportMonth(row.reportMonth) || "NO_MONTH";
-    if (!grouped.has(reportMonth)) grouped.set(reportMonth, []);
-    grouped.get(reportMonth).push(row);
+    const reportWeek = getBinReportWeek(row);
+    if (!grouped.has(reportWeek)) grouped.set(reportWeek, []);
+    grouped.get(reportWeek).push(row);
   }
 
-  return Array.from(grouped.entries()).map(([reportMonth, items]) => {
+  return Array.from(grouped.entries()).map(([reportWeek, items]) => {
+    const first = items[0] || {};
     const item = {
-      reportMonth,
-      reportMonthLabel: monthLabel(reportMonth),
+      reportWeek,
+      reportWeekLabel: reportWeekLabel(reportWeek),
+      reportMonth: normalizeReportMonth(reportWeek) || normalizeReportMonth(first.reportMonth),
+      reportMonthLabel: monthLabel(normalizeReportMonth(reportWeek) || normalizeReportMonth(first.reportMonth)),
       rows: items.length,
       inQty: 0,
       outQty: 0,
@@ -1054,7 +1146,7 @@ function buildBinTrendRows(rows) {
     }
 
     return item;
-  }).sort((a, b) => String(a.reportMonth).localeCompare(String(b.reportMonth)));
+  }).sort((a, b) => String(a.reportWeek).localeCompare(String(b.reportWeek)));
 }
 
 function buildUploadedFileRows(assyItems, osItems, binItems) {
@@ -1077,7 +1169,7 @@ function buildUploadedFileRows(assyItems, osItems, binItems) {
     item.rows += 1;
     if (type === "ASSY" && row.sod) item.dateSet.add(compactDateToLabel(row.sod));
     if (type === "OS" && row.inputDate) item.dateSet.add(compactDateToLabel(row.inputDate));
-    if (type === "BIN" && row.reportMonth) item.dateSet.add(monthLabel(row.reportMonth));
+    if (type === "BIN" && (row.reportWeek || row.reportDate || row.reportMonth)) item.dateSet.add(getBinReportWeekLabel(row));
 
     const date = getDateFromFirestoreValue(row.uploadedAt) || getDateFromFirestoreValue(row.uploadedAtClient);
     if (date && (!item.latest || date > item.latest)) item.latest = date;
@@ -1397,7 +1489,7 @@ function getVisibleBinColumns() {
 
 function renderBinTrendChart() {
   if (!el.binTrendChart) return;
-  const labels = binTrendRows.map(row => row.reportMonthLabel || row.reportMonth);
+  const labels = binTrendRows.map(row => row.reportWeekLabel || row.reportWeek);
   const selectedBins = getVisibleBinColumns();
 
   const datasets = selectedBins.map(bin => ({
@@ -1437,7 +1529,7 @@ function renderBinTrendTable() {
 
   el.binTrendBody.innerHTML = binTrendRows.map(row => `
     <tr>
-      <td>${escapeHtml(row.reportMonthLabel || row.reportMonth)}</td>
+      <td>${escapeHtml(row.reportWeekLabel || row.reportWeek)}</td>
       <td>${formatNumber(row.rows)}</td>
       <td>${formatNumber(row.inQty)}</td>
       <td>${formatNumber(row.outQty)}</td>
@@ -1735,6 +1827,8 @@ function exportOsReport() {
 
 function makeBinExportRawRow(row) {
   return {
+    "Report Week": getBinReportWeekLabel(row),
+    "Report Date": row.reportDate || "",
     "Report Month": row.reportMonth,
     CUST_ID: row.custId,
     PKG_ID: row.pkgId,
@@ -1761,8 +1855,9 @@ function makeBinExportRawRow(row) {
 
 function makeBinExportTrendRow(row) {
   const output = {
+    "Report Week": row.reportWeek,
+    Week: row.reportWeekLabel,
     "Report Month": row.reportMonth,
-    Month: row.reportMonthLabel,
     Rows: row.rows,
     IN_QTY: row.inQty,
     OUT_QTY: row.outQty,
@@ -1785,26 +1880,26 @@ function exportBinReport() {
 
   const workbook = XLSX.utils.book_new();
   const allRows = [...binRows].sort((a, b) => {
-    const monthCompare = String(a.reportMonth || "").localeCompare(String(b.reportMonth || ""));
-    if (monthCompare !== 0) return monthCompare;
+    const weekCompare = String(getBinReportWeek(a) || "").localeCompare(String(getBinReportWeek(b) || ""));
+    if (weekCompare !== 0) return weekCompare;
     return String(a.lotId || "").localeCompare(String(b.lotId || ""));
   });
 
   const trendRows = buildBinTrendRows(allRows).map(makeBinExportTrendRow);
   const rawRows = allRows.map(makeBinExportRawRow);
 
-  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(trendRows), "BIN_Monthly_Trend");
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(trendRows), "BIN_Weekly_Trend");
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rawRows), "BIN_Merged_Raw");
 
-  const months = Array.from(new Set(allRows.map(row => row.reportMonth))).sort();
-  for (const month of months) {
-    const monthRows = allRows.filter(row => row.reportMonth === month).map(makeBinExportRawRow);
-    const sheetName = `BIN_${month.replace(/[^0-9A-Za-z]/g, "_")}`.slice(0, 31);
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(monthRows), sheetName);
+  const weeks = Array.from(new Set(allRows.map(row => getBinReportWeek(row)))).sort();
+  for (const week of weeks) {
+    const weekRows = allRows.filter(row => getBinReportWeek(row) === week).map(makeBinExportRawRow);
+    const sheetName = `BIN_${week.replace(/[^0-9A-Za-z]/g, "_")}`.slice(0, 31);
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(weekRows), sheetName);
   }
 
-  XLSX.writeFile(workbook, `MTK_BIN_Monthly_Merged_${todayStamp()}.xlsx`);
-  log("BIN Monthly Merge Report Export 완료");
+  XLSX.writeFile(workbook, `MTK_BIN_Weekly_Merged_${todayStamp()}.xlsx`);
+  log("BIN Weekly Merge Report Export 완료");
 }
 
 function setupEvents() {

@@ -1,4 +1,4 @@
-MTK Assy & OS & BIN Yield Trend v20
+MTK Assy & OS & BIN Yield Trend v22
 ===================================
 
 Run
@@ -21,8 +21,8 @@ Supported Excel reports
 3. MTK BIN INFORMATION attachment
    - Sheet: MTK BIN INFORMATION 또는 아래 header 자동 감지
    - Headers: CUST_ID, PKG_ID, LEAD_ID, CUST_DEVICE, NICK_NAME, LOT_ID, CUST_RUN_ID, SUBSTRATE_VENDOR, IN_QTY, OUT_QTY, FINAL YIELD, BIN1, BIN2, BIN3, BIN4, BIN5, BIN6, BIN36
-   - Report Month: 파일명에서 YYYYMMDD / YYYYMM / Jul'26 형식 자동 감지. 없으면 파일 modified month 사용.
-   - 중복 기준: Report Month + CUST_ID + PKG_ID + LEAD_ID + CUST_DEVICE + LOT_ID + CUST_RUN_ID + SUBSTRATE_VENDOR + IN_QTY + OUT_QTY
+   - Report Week: 파일명에서 YYYYMMDD 형식 날짜를 우선 자동 감지하고 Monday-start 주차로 집계합니다. 정확한 날짜가 없으면 파일 modified date를 사용하며, 기존 월 단위 데이터는 Monthly fallback으로 표시합니다.
+   - 중복 기준: Report Week + CUST_ID + PKG_ID + LEAD_ID + CUST_DEVICE + LOT_ID + CUST_RUN_ID + SUBSTRATE_VENDOR + IN_QTY + OUT_QTY
 
 Firebase
 --------
@@ -82,15 +82,15 @@ service cloud.firestore {
   }
 }
 
-v20 Changes
+v22 Changes
 -----------
 - MTK BIN INFORMATION 첨부 파일 업로드/Firestore 저장 추가.
-- BIN Rate Trend 별도 추가: 월별 merge 기준 BIN1~BIN6/BIN36 Rate 표시.
+- BIN Rate Trend: 주차별(Monday-start) merge 기준 BIN1~BIN6/BIN36 Rate 표시.
 - Chart Bins 옵션 추가: Fail Bins Only / All Bins / BIN1 Only.
-- Export BIN Monthly Merge 추가:
-  - BIN_Monthly_Trend: 월별 IN_QTY, OUT_QTY, FINAL YIELD, 각 BIN Qty/Rate.
+- Export BIN Weekly Merge:
+  - BIN_Weekly_Trend: 주차별 IN_QTY, OUT_QTY, FINAL YIELD, 각 BIN Qty/Rate.
   - BIN_Merged_Raw: 모든 월 raw row merge.
-  - BIN_YYYY_MM: 월별 raw row sheet 별도 생성.
+  - BIN_YYYY_MM_DD: 주차별 raw row sheet 별도 생성.
 - Export raw에는 첨부 파일의 CUST_ID, PKG_ID, LEAD_ID, CUST_DEVICE, NICK_NAME, LOT_ID, CUST_RUN_ID, SUBSTRATE_VENDOR, IN_QTY, OUT_QTY, FINAL YIELD, BIN1, BIN2, BIN3, BIN4, BIN5, BIN6, BIN36 모두 유지.
 
 Usage
@@ -99,4 +99,4 @@ Usage
 - 같은 report를 다시 넣으면 중복 row는 skipped 됩니다.
 - Export Assy SOD Report: Assy SOD Trend, Assy lot raw, Defect PPM을 xlsx로 다운로드합니다.
 - Export OS Report: OS INPUT_TIME Trend와 OS Raw를 xlsx로 다운로드합니다.
-- Export BIN Monthly Merge: 월별 BIN Rate Trend와 월별 merge raw를 xlsx로 다운로드합니다.
+- Export BIN Weekly Merge: 주차별 BIN Rate Trend와 주차별 merge raw를 xlsx로 다운로드합니다.

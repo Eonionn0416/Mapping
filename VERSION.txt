@@ -4,3 +4,4 @@ wafer_strip_mapping_app v22
 - 2DID Mapping: Excel export map sheets no longer include the heavy B2 mapping-cell comment.
 - 2DID Mapping: MERGE export now adds Strip_MERGE_CUST or Wafer_MERGE_CUST sheet. Normal/Input Qty values are removed; fail cells show Fail Qty only.
 - MTK Yield Trend and MNT CPK Trend: Chart canvases use fixed taller height with maintainAspectRatio disabled so the first always-visible trend chart y-axis is not squeezed/thin.
+- MTK BIN Rate Trend: Monthly merge를 Monday-start Weekly merge로 변경했습니다. BIN export도 BIN_Weekly_Trend / MTK_BIN_Weekly_Merged 형식으로 변경했습니다.

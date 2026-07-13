@@ -9,7 +9,7 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 
-  <link rel="stylesheet" href="mtk-yield-trend.css?v=21" />
+  <link rel="stylesheet" href="mtk-yield-trend.css?v=22" />
 </head>
 <body>
   <a class="qa-back-link" href="../../index.html">← QA Page</a>
@@ -30,7 +30,7 @@
         <p>OS 중복 기준</p>
         <strong>LOT_ID + TOTAL_QTY</strong>
         <p>BIN 중복 기준</p>
-        <strong>Report Month + LOT_ID + CUST_RUN_ID + IN_QTY</strong>
+        <strong>Report Week + LOT_ID + CUST_RUN_ID + IN_QTY</strong>
         <small id="authStatus">Auth 대기 중</small>
       </div>
     </section>
@@ -108,7 +108,7 @@
         <div>
           <h2>MTK BIN Rate Trend</h2>
           <p>
-            MTK BIN INFORMATION 첨부 파일의 <b>Report Month</b> 기준으로 BIN1~BIN6/BIN36 수량을 merge하고,
+            MTK BIN INFORMATION 첨부 파일의 <b>Report Week</b> 기준으로 BIN1~BIN6/BIN36 수량을 merge하고,
             <b>Bin Rate = BIN Qty / IN_QTY × 100</b> 으로 표시합니다.
           </p>
         </div>
@@ -121,7 +121,7 @@
               <option value="bin1">BIN1 Only</option>
             </select>
           </label>
-          <button id="exportBinBtn" type="button" class="secondary">Export BIN Monthly Merge</button>
+          <button id="exportBinBtn" type="button" class="secondary">Export BIN Weekly Merge</button>
         </div>
       </div>
       <canvas id="binTrendChart" height="115"></canvas>
@@ -129,7 +129,7 @@
         <table>
           <thead>
             <tr>
-              <th>Month</th>
+              <th>Week</th>
               <th>Rows</th>
               <th>IN_QTY</th>
               <th>OUT_QTY</th>
@@ -227,7 +227,7 @@
               <th>Type</th>
               <th>Source File</th>
               <th>Rows in Firestore</th>
-              <th>SOD / In Date / Report Month</th>
+              <th>SOD / In Date / Report Week</th>
               <th>Last Uploaded</th>
             </tr>
           </thead>
@@ -239,6 +239,6 @@
     </section>
   </main>
 
-  <script type="module" src="mtk-yield-trend.js?v=21"></script>
+  <script type="module" src="mtk-yield-trend.js?v=22"></script>
 </body>
 </html>
