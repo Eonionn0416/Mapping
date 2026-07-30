@@ -70,4 +70,4 @@ BUMP-MNT monthly report Excel files are parsed from sheets containing headers li
 
 Path: `apps/austin-ft-trend/`
 
-FT MERGE COMPLETION report의 `时间`, `原批号`, `BIN`, `数量`을 읽어 Date → 原批号 순으로 각 BIN 수량 Trend를 표시합니다. Raw rows are stored in Firestore collection `austinFtTrendRaw`; if the rule is not yet published, local preview mode still renders the uploaded data.
+FT MERGE COMPLETION report의 `时间`, `原批号`, `BIN`, `数量`을 읽어 Date → 原批号 순으로 각 BIN 수량 Trend를 표시합니다. Raw rows are first stored persistently in browser IndexedDB and are restored after refresh/restart. They are also synchronized to Firestore collection `austinFtTrendRaw` when Firebase permission and network are available.

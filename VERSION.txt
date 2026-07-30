@@ -1,6 +1,6 @@
-wafer_strip_mapping_app v24
-- QA Page: Added Austin FT Trend Chart as Tool 04.
-- Austin FT Trend: Reads MERGE REPORT headers 时间 / 原批号 / BIN / 数量 and plots each BIN quantity by Date → 原批号 order.
-- Austin FT Trend: Added Date, 原批号, BIN, 物料编码, 测试程序 filters, aggregated detail table, filtered Excel export, and uploaded-file summary.
-- Austin FT Trend: Added Firestore accumulation in austinFtTrendRaw with duplicate skip and local preview fallback when Firebase Rules are not yet published.
-- Firestore Rules: Added signed-in read/write validation for austinFtTrendRaw.
+wafer_strip_mapping_app v26
+- Austin FT Trend: Changed to true cumulative append/upsert storage. New cycle files preserve all previous dates.
+- Austin FT Trend: Stable key excludes quantity, so corrected quantity updates the existing Date/Lot/BIN row rather than double-counting.
+- Austin FT Trend: Added New / Updated / Same Skip counters and explicit "Reset Filter (Data 유지)" labeling.
+- Austin FT Trend: Migrates legacy quantity-based IndexedDB keys into cumulative stable keys without clearing history.
+- Austin FT Trend: Firestore load/upload deduplicates legacy records and uses cumulative upsert semantics.

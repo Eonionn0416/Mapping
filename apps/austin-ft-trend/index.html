@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Austin FT Trend Chart</title>
+  <link rel="icon" href="data:," />
+
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+
+  <link rel="stylesheet" href="austin-ft-trend.css?v=26" />
+</head>
+<body>
+  <a class="qa-back-link" href="../../index.html">← QA Page</a>
+
+  <main class="page">
+    <section class="hero">
+      <div>
+        <p class="eyebrow">Austin FT merge report analyser</p>
+        <h1>Austin FT Trend Chart</h1>
+        <p class="subtitle">
+          FT MERGE COMPLETION Excel의 <b>时间</b>, <b>原批号</b>, <b>BIN</b>, <b>数量</b>을 읽어
+          Date → 原批号 순서로 정렬하고 각 BIN별 数量 Trend를 표시합니다.
+          여러 날짜 파일을 계속 첨부하면 <b>기존 주기 Data를 유지한 채 신규 날짜만 누적</b>하고,
+          같은 Date / 原批号 / BIN의 수정본은 기존 값을 Update합니다.
+        </p>
+      </div>
+
+      <div class="hero-card">
+        <span id="firebaseStatus" class="status warning">Firebase connecting...</span>
+        <p>필수 Header</p>
+        <strong>时间 · 原批号 · BIN · 数量</strong>
+        <p>기본 Sheet</p>
+        <strong>MERGE REPORT</strong>
+        <small id="authStatus">Auth 대기 중</small>
+      </div>
+    </section>
+
+    <section class="grid six">
+      <article class="metric-card"><p>All Raw Rows</p><strong id="allRows">0</strong></article>
+      <article class="metric-card"><p>Filtered Rows</p><strong id="filteredRows">0</strong></article>
+      <article class="metric-card"><p>Date</p><strong id="dateCount">0</strong></article>
+      <article class="metric-card"><p>原批号</p><strong id="lotCount">0</strong></article>
+      <article class="metric-card"><p>BIN</p><strong id="binCount">0</strong></article>
+      <article class="metric-card"><p>数量 Total</p><strong id="qtyTotal">0</strong></article>
+    </section>
+
+    <section class="panel filter-panel">
+      <div class="panel-header">
+        <div>
+          <h2>Trend Filter</h2>
+          <p>선택 조건에 맞는 原批号와 BIN만 Chart 및 Detail Table에 표시합니다.</p>
+        </div>
+        <div class="actions">
+          <button id="resetFilterBtn" type="button" class="secondary">Reset Filter (Data 유지)</button>
+          <button id="exportBtn" type="button" class="primary">Export Filtered Data</button>
+        </div>
+      </div>
+
+      <div class="filters six-filters">
+        <label>
+          Date From
+          <span class="date-input-wrap"><input id="dateFrom" type="date" /></span>
+        </label>
+        <label>
+          Date To
+          <span class="date-input-wrap"><input id="dateTo" type="date" /></span>
+        </label>
+        <label>
+          原批号
+          <select id="lotFilter"><option value="ALL">All 原批号</option></select>
+        </label>
+        <label>
+          BIN
+          <select id="binFilter"><option value="ALL">All BIN</option></select>
+        </label>
+        <label>
+          物料编码
+          <select id="materialFilter"><option value="ALL">All 物料编码</option></select>
+        </label>
+        <label>
+          测试程序
+          <select id="programFilter"><option value="ALL">All 测试程序</option></select>
+        </label>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <h2>BIN 数量 Trend</h2>
+          <p>
+            X축은 <b>Date → 原批号</b> 순이며, 각 Line은 BIN입니다.
+            같은 Date / 原批号 / BIN이 여러 Row이면 数量을 합산합니다.
+          </p>
+        </div>
+        <div class="chart-summary">
+          <span id="chartPointSummary" class="status neutral">0 points</span>
+        </div>
+      </div>
+
+      <div id="chartEmpty" class="chart-empty">Excel 파일을 첨부하면 Trend Chart가 표시됩니다.</div>
+      <div id="chartScroller" class="chart-scroller hidden">
+        <div id="chartCanvasWrap" class="chart-canvas-wrap">
+          <canvas id="ftTrendChart"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <h2>Filtered Detail</h2>
+          <p>Date, 原批号, BIN 기준 합산 결과입니다. 최대 1,000 Row까지 화면에 표시합니다.</p>
+        </div>
+      </div>
+      <div class="table-wrap large">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>原批号</th>
+              <th>BIN</th>
+              <th>数量</th>
+              <th>OSAT</th>
+              <th>物料编码</th>
+              <th>工单号</th>
+              <th>原Marking</th>
+              <th>合批Marking</th>
+              <th>测试程序</th>
+            </tr>
+          </thead>
+          <tbody id="detailBody">
+            <tr><td colspan="10" class="empty">아직 Austin FT Data가 없습니다.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p id="tableNotice" class="table-notice"></p>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <h2>Report Upload</h2>
+          <p>
+            <b>MERGE REPORT</b> Sheet를 우선 읽고, 다른 Sheet에서도 필수 Header를 자동 탐색합니다.
+            기존 누적 Data는 절대 초기화하지 않으며, 신규 Row는 추가하고 동일 Key의 수정 数量은 Update합니다.
+          </p>
+        </div>
+      </div>
+
+      <div id="dropZone" class="drop-zone" role="button" tabindex="0">
+        <input id="excelFiles" type="file" accept=".xlsx,.xls" multiple />
+        <div class="drop-icon">⬇</div>
+        <span>FT MERGE COMPLETION Excel을 Drag & Drop</span>
+        <small>또는 이 영역을 클릭해서 파일 선택 · 여러 개 동시 첨부 가능</small>
+      </div>
+
+      <div class="upload-result-grid">
+        <article class="metric-card compact"><p>Selected Rows</p><strong id="selectedRows">0</strong></article>
+        <article class="metric-card compact"><p>Inserted New</p><strong id="insertedRows">0</strong></article>
+        <article class="metric-card compact"><p>Updated Existing</p><strong id="updatedRows">0</strong></article>
+        <article class="metric-card compact"><p>Skipped Same</p><strong id="skippedRows">0</strong></article>
+        <article class="metric-card compact"><p>Local Saved Rows</p><strong id="localRows">0</strong></article>
+        <article class="metric-card compact"><p>Firestore Rows</p><strong id="firestoreRows">0</strong></article>
+      </div>
+
+      <div class="file-row single">
+        <div>
+          <h3>Selected / Last Dropped Files</h3>
+          <ul id="selectedFileList" class="file-list"><li class="empty-li">선택된 파일이 없습니다.</li></ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <h2>Uploaded File List</h2>
+          <p>모든 주기 누적 Data를 sourceFileName 기준으로 요약합니다. 새 첨부가 들어와도 이전 File 이력은 유지됩니다.</p>
+        </div>
+      </div>
+      <div class="table-wrap compact">
+        <table>
+          <thead>
+            <tr>
+              <th>Source File</th>
+              <th>Rows</th>
+              <th>Date Range</th>
+              <th>原批号</th>
+              <th>BIN</th>
+              <th>数量 Total</th>
+              <th>Last Uploaded</th>
+            </tr>
+          </thead>
+          <tbody id="uploadedFilesBody">
+            <tr><td colspan="7" class="empty">아직 Upload된 파일이 없습니다.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel log-panel">
+      <div class="panel-header">
+        <div>
+          <h2>Process Log</h2>
+          <p>Excel parsing, Browser 영구 저장, 중복 처리, Firebase 동기화 상태를 표시합니다.</p>
+        </div>
+      </div>
+      <pre id="log">Austin FT Trend 준비 중...</pre>
+    </section>
+  </main>
+
+  <script type="module" src="austin-ft-trend.js?v=26"></script>
+</body>
+</html>
