@@ -65,3 +65,9 @@ BUMP-MNT monthly report Excel files are parsed from sheets containing headers li
 ## v9 update
 - MNT CPK Trend parser now ignores Excel Text Box / Shape / Drawing objects and falls back to direct XML parsing when needed.
 - MNT cache version updated to v9.
+
+## Austin FT Trend Chart
+
+Path: `apps/austin-ft-trend/`
+
+FT MERGE COMPLETION report의 `时间`, `原批号`, `BIN`, `数量`을 읽어 Date → 原批号 순으로 각 BIN 수량 Trend를 표시합니다. Raw rows are stored in Firestore collection `austinFtTrendRaw`; if the rule is not yet published, local preview mode still renders the uploaded data.

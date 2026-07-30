@@ -1,8 +1,6 @@
-wafer_strip_mapping_app v23
-- 2DID Mapping: Row import count rule changed. Rows are now kept when either STRIP ID or WAFER ID exists, so Strip mapping/statistics include units even when WAFER ID/COL/ROW are blank.
-- 2DID Mapping: Strip fail concentration now includes Batch + Panel + Strip No Commonality (Strip ID) statistics.
-- 2DID Mapping: Added Daeduck Strip ID parsing rule. Example P0221810006S 013A => Batch P0221810006S / Panel 013 / Strip A.
-- 2DID Mapping: Excel export map sheets no longer include the heavy B2 mapping-cell comment.
-- 2DID Mapping: MERGE export now adds Strip_MERGE_CUST or Wafer_MERGE_CUST sheet. Normal/Input Qty values are removed; fail cells show Fail Qty only.
-- MTK Yield Trend and MNT CPK Trend: Chart canvases use fixed taller height with maintainAspectRatio disabled so the first always-visible trend chart y-axis is not squeezed/thin.
-- MTK BIN Rate Trend: Monthly merge를 Monday-start Weekly merge로 변경했습니다. BIN export도 BIN_Weekly_Trend / MTK_BIN_Weekly_Merged 형식으로 변경했습니다.
+wafer_strip_mapping_app v24
+- QA Page: Added Austin FT Trend Chart as Tool 04.
+- Austin FT Trend: Reads MERGE REPORT headers 时间 / 原批号 / BIN / 数量 and plots each BIN quantity by Date → 原批号 order.
+- Austin FT Trend: Added Date, 原批号, BIN, 物料编码, 测试程序 filters, aggregated detail table, filtered Excel export, and uploaded-file summary.
+- Austin FT Trend: Added Firestore accumulation in austinFtTrendRaw with duplicate skip and local preview fallback when Firebase Rules are not yet published.
+- Firestore Rules: Added signed-in read/write validation for austinFtTrendRaw.

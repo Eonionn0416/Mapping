@@ -88,6 +88,25 @@ service cloud.firestore {
       allow delete: if signedIn();
     }
 
+
+    // Austin FT MERGE COMPLETION raw data.
+    match /austinFtTrendRaw/{docId} {
+      allow read: if signedIn();
+
+      allow create, update: if signedIn()
+        && request.resource.data.keys().hasAll([
+          'dateKey',
+          'originalLot',
+          'bin',
+          'qty',
+          'dedupeKey',
+          'uploadedAt'
+        ])
+        && request.resource.data.dedupeKey == docId;
+
+      allow delete: if signedIn();
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }
