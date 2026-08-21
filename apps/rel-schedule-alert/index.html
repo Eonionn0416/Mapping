@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>REL Schedule Alert</title>
+  <link rel="icon" href="data:," />
+
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+
+  <link rel="stylesheet" href="rel-schedule-alert.css?v=1" />
+</head>
+<body>
+  <a class="qa-back-link" href="../../index.html">← QA Page</a>
+
+  <!-- 우측 상단 알림 배너 -->
+  <div id="toastStack" class="toast-stack"></div>
+
+  <!-- Delay / D-2 팝업 -->
+  <div id="alertBackdrop" class="alert-backdrop" role="dialog" aria-modal="true" aria-labelledby="alertTitle">
+    <div class="alert-modal">
+      <header>
+        <span class="bell">🔔</span>
+        <div>
+          <h2 id="alertTitle">Reliability Schedule Alert</h2>
+          <p id="alertSubtitle">Date out 기준 D-2 예고 및 지연 항목입니다.</p>
+        </div>
+      </header>
+      <div class="modal-body" id="alertBody"></div>
+      <div class="modal-foot">
+        <span class="spacer" id="alertFootNote"></span>
+        <button type="button" class="secondary" id="snooze30">30분 뒤 다시</button>
+        <button type="button" class="secondary" id="snooze240">4시간 뒤 다시</button>
+        <button type="button" class="secondary" id="snoozeToday">오늘은 그만 보기</button>
+        <button type="button" class="primary" id="alertClose">확인</button>
+      </div>
+    </div>
+  </div>
+
+  <main class="page">
+    <section class="hero">
+      <div>
+        <p class="eyebrow">Reliability test plan tracker</p>
+        <h1>REL Schedule Alert</h1>
+        <p class="subtitle">
+          Reliability test plan Excel을 Drag &amp; Drop 하면 각 Sheet의 Criteria별 Rel item 일정을 Firestore에 누적 저장합니다.
+          알림 대상은 <b>각 Criteria에서 Status가 On going인 항목</b>이며(Status 미기재 행은 제외),
+          <b>2 ≥ (Date out − Today) ≥ 0</b> 이면 <b>Pre alarm</b>(시작일이 주말이면 직전 영업일부터),
+          <b>(Date out − Today) &lt; 0</b> 이면 <b>Delay session</b>으로 하루마다 <b>Delay +1</b>이 누적되고
+          <b>Done</b>으로 바뀔 때까지 계속 알림이 뜹니다.
+        </p>
+        <div class="legend">
+          <span><i style="background:#be123c"></i>Delay session (Date out 경과, Delay +N)</span>
+          <span><i style="background:#c2410c"></i>Pre alarm (D-Day ~ D-2, 주말이면 앞당김)</span>
+          <span><i style="background:#a16207"></i>On going (D-2 이전)</span>
+          <span><i style="background:#1d4ed8"></i>Planned</span>
+          <span><i style="background:#047857"></i>Done</span>
+        </div>
+      </div>
+      <div class="hero-card">
+        <span id="firebaseStatus" class="status warning">Firebase connecting...</span>
+        <p>오늘 (기준일)</p>
+        <strong id="todayLabel">-</strong>
+        <p>알림 대상</p>
+        <strong>Status = On going 구간<br>(Date out 지나면 다음 단계로 자동 전환)</strong>
+        <p>중복 기준</p>
+        <strong>Sheet + Criteria + Rel item + Condition + 순번</strong>
+        <small id="authStatus">Auth 대기 중</small>
+      </div>
+    </section>
+
+    <section id="alarmBar" class="alarm-bar quiet">
+      <b id="alarmBarText">알림 대상 항목이 없습니다.</b>
+      <span class="push">
+        <button type="button" class="secondary" id="showAlertBtn">알림 다시 보기</button>
+        <button type="button" class="secondary" id="recheckBtn">지금 다시 검사</button>
+      </span>
+    </section>
+
+    <section class="grid five">
+      <article class="metric-card alarm"><p>Delay session</p><strong id="mDelay">0</strong></article>
+      <article class="metric-card due"><p>Pre alarm</p><strong id="mPrealarm">0</strong></article>
+      <article class="metric-card soon"><p>On going (D-2 이전)</p><strong id="mWatch">0</strong></article>
+      <article class="metric-card"><p>Planned</p><strong id="mPlanned">0</strong></article>
+      <article class="metric-card done"><p>Done</p><strong id="mDone">0</strong></article>
+    </section>
+
+    <section class="grid six">
+      <article class="metric-card"><p>Total Items</p><strong id="mTotal">0</strong></article>
+      <article class="metric-card"><p>Plans (Sheets)</p><strong id="mPlans">0</strong></article>
+      <article class="metric-card"><p>Firestore Rows</p><strong id="mFirestore">0</strong></article>
+      <article class="metric-card"><p>New (직전 Upload)</p><strong id="mNew">0</strong></article>
+      <article class="metric-card"><p>Updated (직전 Upload)</p><strong id="mUpdated">0</strong></article>
+      <article class="metric-card"><p>변경 없음</p><strong id="mSame">0</strong></article>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <h2>Criteria별 Schedule &amp; Alert 현황</h2>
+          <p>
+            각 Sheet(Plan)의 Criteria &rarr; Rel item 순서입니다. Status에 <b>On going</b>이 적힌 항목만 알림 대상이고,
+            Status가 비어 있는 행은 알림에서 제외됩니다. Status가 세로 병합된 구간(예: UHAST96hrs + SAT)은
+            <b>Date out이 아직 지나지 않은 첫 단계</b>가 현재 진행 항목이며, Today가 그 Date out을 넘어서면
+            <b>자동으로 다음 단계(SAT)의 Date in / Date out으로 전환</b>됩니다.
+            Delay 컬럼은 <b>+N</b>이면 N일 지연, <b>(N)</b>이면 N일 빠름입니다.
+            Delay session에 들어가면 Delay 컬럼에 경과 일수가 <b>+N</b>으로 누적됩니다.
+            <b>Done</b>에 체크하면 해당 항목의 알림이 멈추고 Firestore에 상태가 저장됩니다.
+          </p>
+        </div>
+        <button id="exportBtn" type="button" class="secondary">Export Alert Report</button>
+      </div>
+
+      <div class="filters rel">
+        <label>
+          Plan (Sheet)
+          <select id="planSelect"></select>
+        </label>
+        <label>
+          Criteria
+          <select id="criteriaSelect"></select>
+        </label>
+        <label>
+          Alert Status
+          <select id="statusSelect"></select>
+        </label>
+        <label>
+          Search (Rel item / Condition / Lot)
+          <input id="searchInput" class="search-input" type="search" placeholder="예: uHAST, ET1, PFFY78" />
+        </label>
+      </div>
+
+      <div class="table-wrap large">
+        <table>
+          <thead>
+            <tr>
+              <th>Done</th>
+              <th>Alert</th>
+              <th>D-Day</th>
+              <th>Plan</th>
+              <th>Criteria</th>
+              <th>Rel item</th>
+              <th>Condition</th>
+              <th>Assy' lot#</th>
+              <th>FT lot#</th>
+              <th>Q'ty</th>
+              <th>Date in</th>
+              <th>Duration</th>
+              <th>Delay</th>
+              <th>Date out</th>
+              <th>Alarm from</th>
+              <th>Result</th>
+              <th>Status</th>
+              <th>Remark</th>
+            </tr>
+          </thead>
+          <tbody id="scheduleBody">
+            <tr><td colspan="18" class="empty">Reliability test plan Excel을 Upload 해주세요.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <h2>Plan Timeline (Date in → Date out)</h2>
+          <p>선택한 Plan의 Criteria별 일정 구간입니다. 빨간 세로선이 오늘입니다.</p>
+        </div>
+      </div>
+      <div class="gantt-wrap">
+        <canvas id="ganttChart" height="380"></canvas>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <h2>Reliability Test Plan Upload</h2>
+          <p>
+            <b>Cirteria / Rel item / Date in / Duration / Date out</b> header가 있는 Sheet와
+            <b>Test item / Duration / Date in / Date out</b> 형식(Tianchi 계열) Sheet를 모두 자동 인식합니다.
+            같은 Plan을 다시 넣으면 <b>바뀐 row만</b> 갱신합니다. 중복 판단에 파일명이 들어가지 않으므로
+            제목의 <b>WW</b>가 매주 바뀌어도 같은 항목으로 인식합니다.
+          </p>
+        </div>
+      </div>
+
+      <div id="dropZone" class="drop-zone" role="button" tabindex="0">
+        <input id="excelFiles" type="file" accept=".xlsx,.xls,.xlsm" multiple />
+        <div class="drop-icon">⬇</div>
+        <span>Reliability test plan을 여기에 Drag &amp; Drop 하면 자동 Upload</span>
+        <small>또는 이 영역을 클릭해서 파일 선택 · 여러 개 한 번에 가능</small>
+      </div>
+
+      <div class="file-row single">
+        <div>
+          <h3>Selected / Last Dropped Files</h3>
+          <ul id="selectedFileList" class="file-list"><li class="empty-li">선택된 파일이 없습니다.</li></ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <h2>Uploaded Plan List</h2>
+          <p>Firestore <b>relScheduleRaw</b> collection 기준입니다.</p>
+        </div>
+        <button id="reloadBtn" type="button" class="secondary">Firestore 새로고침</button>
+      </div>
+      <div class="table-wrap compact">
+        <table>
+          <thead>
+            <tr>
+              <th>Source File</th>
+              <th>Plan (Sheet)</th>
+              <th>Title</th>
+              <th>Rel.#</th>
+              <th>Items</th>
+              <th>Delayed</th>
+              <th>Last Date out</th>
+            </tr>
+          </thead>
+          <tbody id="uploadedBody">
+            <tr><td colspan="7" class="empty">아직 Upload된 Plan이 없습니다.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="rel-schedule-alert.js?v=1"></script>
+</body>
+</html>

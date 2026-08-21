@@ -107,6 +107,38 @@ service cloud.firestore {
       allow delete: if signedIn();
     }
 
+    // REL Schedule Alert - Reliability test plan raw schedule.
+    match /relScheduleRaw/{docId} {
+      allow read: if signedIn();
+
+      allow create, update: if signedIn()
+        && request.resource.data.keys().hasAll([
+          'sheetName',
+          'criteria',
+          'relItem',
+          'dedupeKey',
+          'uploadedAt'
+        ])
+        && request.resource.data.dedupeKey == docId;
+
+      allow delete: if signedIn();
+    }
+
+    // REL Schedule Alert - Done / Plan mute 상태.
+    match /relScheduleStatus/{docId} {
+      allow read: if signedIn();
+
+      allow create, update: if signedIn()
+        && request.resource.data.keys().hasAll([
+          'kind',
+          'dedupeKey',
+          'updatedAt'
+        ])
+        && request.resource.data.dedupeKey == docId;
+
+      allow delete: if signedIn();
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

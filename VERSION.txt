@@ -1,3 +1,22 @@
+wafer_strip_mapping_app v27
+- Added REL Schedule Alert app (apps/rel-schedule-alert): Reliability test plan Date out D-2 announce and repeating delay popup.
+- Parses both the standard Cirteria/Rel item layout and the legacy Tianchi Test item layout, carrying merged Criteria cells forward.
+- Template sheets (REL_여문석 and similar) are excluded from parsing, tables and alerts.
+- Only rows whose Status says On going are alarm targets; rows with a blank Status are ignored by the alert mechanism.
+- Within a merged Status range (e.g. UHAST96hrs + SAT) the current step is the first row whose Date out has not passed; once Today passes it, the tracker moves to the next step's Date in / Date out automatically and alarms from there.
+- Re-uploading a revised plan updates only the rows that actually changed and reports New / Updated / Unchanged. The dedupe key never uses the file name, so a changing WW in the title still matches the same items.
+- Ported the multi-strategy file reader (arrayBuffer / FileReader / chunked / dataURL / binaryString / stream) to survive NotReadableError on Windows and Edge.
+- Firestore permission errors now say that firestore.rules needs to be published, and the app keeps running on local storage.
+- Fixed a timezone bug that shifted every date one day earlier in Asia/Seoul (SheetJS cellDates uses the 1899 LMT offset +08:27:52). Dates are now converted from the Excel serial in UTC, with Mac 1904 date system support.
+- When a Criteria has more than one On going range, the last one is used.
+- Excel Delay values are read with accounting notation: a plain number is +N days late, (N) is N days early.
+- Alert target is the On going item of each Criteria: 2 >= (Date out - Today) >= 0 -> Pre alarm, below 0 -> Delay session with Delay +1 per day.
+- Pre alarm start date falls back to the previous business day (Friday) when it lands on a weekend; shown in the Alarm from column.
+- Delay items keep popping up until Done; snooze is capped at 4 hours while any delay remains.
+- Alert popup and toast titles show the item as "Criteria · Rel item Condition" (e.g. uHast · FT(uHAST96) ET2); clicking it jumps to that row in the schedule table and highlights it.
+- Stale plans (last Date out older than 90 days) are muted by default and can be toggled per plan.
+- Firestore collections relScheduleRaw / relScheduleStatus added to firestore.rules; shared design reused from QA Page common CSS.
+
 wafer_strip_mapping_app v26
 - Austin FT Trend: Changed to true cumulative append/upsert storage. New cycle files preserve all previous dates.
 - Austin FT Trend: Stable key excludes quantity, so corrected quantity updates the existing Date/Lot/BIN row rather than double-counting.

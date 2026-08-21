@@ -1,0 +1,1238 @@
+/**
+ * REL Schedule Alert
+ * - Reliability test plan Excel의 각 Sheet / Criteria / Rel item 일정을 Firestore에 누적
+ * - Date out D-2 예고 팝업, Date out 경과 & 미완료 시 완료될 때까지 반복 팝업
+ */
+import { relScheduleFirebaseConfig } from "../../shared/firebase-config.js";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
+import {
+  getFirestore,
+  collection,
+  doc,
+  getDocs,
+  setDoc,
+  writeBatch,
+  serverTimestamp
+} from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
+import {
+  getAuth,
+  signInAnonymously,
+  onAuthStateChanged
+} from "https://www.gstatic.com/firebasejs/10.12.4/firebase-auth.js";
+
+import {
+  ALERT_LEAD_DAYS,
+  parseSheetMatrix,
+  findHeader,
+  markOngoing,
+  isTemplateSheet,
+  evaluateAlert,
+  isAlerting,
+  formatDday,
+  todayIso,
+  dayDiff,
+  normalizeText,
+  normalizeNumber,
+  formatDelayValue,
+  makeDocId
+} from "./rel-parser.js";
+
+/* ============================================================
+   상수
+   ============================================================ */
+const APP_VERSION = "v1-rel-schedule-alert";
+const RAW_COLLECTION = "relScheduleRaw";
+const STATUS_COLLECTION = "relScheduleStatus";
+const BATCH_LIMIT = 450;
+const RECHECK_INTERVAL_MS = 60 * 1000;
+const TOAST_SNOOZE_MS = 30 * 60 * 1000;
+const DEFAULT_SNOOZE_MS = 30 * 60 * 1000;
+const DELAY_MAX_SNOOZE_MS = 4 * 60 * 60 * 1000;  // Delay 건은 최대 4시간까지만 숨김
+const STALE_PLAN_DAYS = 90;                       // 마지막 Date out이 90일 이상 지난 Plan은 기본 알림 보류
+
+const LS_ROWS = "relScheduleAlert.rows";
+const LS_STATUS = "relScheduleAlert.status";
+const LS_SNOOZE = "relScheduleAlert.snoozeUntil";
+
+/* ============================================================
+   상태
+   ============================================================ */
+let app = null;
+let db = null;
+let auth = null;
+let currentUser = null;
+
+let rawRows = [];                 // 파싱/Firestore raw records
+let statusMap = new Map();        // dedupeKey -> { manualDone, updatedAt }
+let planStatusMap = new Map();    // sheetName -> { muted }
+let viewRows = [];                // evaluate 결과가 붙은 rows
+let selectedFiles = [];
+let fileReadStatus = new Map();
+let ganttChart = null;
+let lastAlertSignature = "";
+let knownAlertKeys = new Set();
+let toastSnooze = new Map();      // dedupeKey -> timestamp
+let lastUploadDiff = { created: 0, updated: 0, unchanged: 0 };
+let today = todayIso();
+
+const el = id => document.getElementById(id);
+
+const ui = {
+  firebaseStatus: el("firebaseStatus"),
+  authStatus: el("authStatus"),
+  todayLabel: el("todayLabel"),
+  alarmBar: el("alarmBar"),
+  alarmBarText: el("alarmBarText"),
+  showAlertBtn: el("showAlertBtn"),
+  recheckBtn: el("recheckBtn"),
+  reloadBtn: el("reloadBtn"),
+  exportBtn: el("exportBtn"),
+  dropZone: el("dropZone"),
+  excelFiles: el("excelFiles"),
+  selectedFileList: el("selectedFileList"),
+  scheduleBody: el("scheduleBody"),
+  uploadedBody: el("uploadedBody"),
+  planSelect: el("planSelect"),
+  criteriaSelect: el("criteriaSelect"),
+  statusSelect: el("statusSelect"),
+  searchInput: el("searchInput"),
+  toastStack: el("toastStack"),
+  alertBackdrop: el("alertBackdrop"),
+  alertBody: el("alertBody"),
+  alertSubtitle: el("alertSubtitle"),
+  alertFootNote: el("alertFootNote"),
+  ganttChart: el("ganttChart"),
+  m: {
+    delay: el("mDelay"), prealarm: el("mPrealarm"), watch: el("mWatch"),
+    planned: el("mPlanned"), done: el("mDone"), total: el("mTotal"),
+    plans: el("mPlans"),
+    firestore: el("mFirestore"),
+    newRows: el("mNew"), updatedRows: el("mUpdated"), sameRows: el("mSame")
+  }
+};
+
+/* ============================================================
+   유틸
+   ============================================================ */
+function log(message) {
+  console.log(`[${new Date().toLocaleTimeString()}] ${message}`);
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+}
+
+function describeFirebaseError(error) {
+  const code = String((error && error.code) || "");
+  const message = String((error && error.message) || error || "");
+  if (code.includes("permission-denied") || /insufficient permissions/i.test(message)) {
+    return "Firestore 권한 없음 · firestore.rules 배포 필요 (지금은 브라우저 로컬 저장으로 동작 중)";
+  }
+  if (code.includes("unavailable") || /network/i.test(message)) {
+    return "Firestore 연결 불가 (로컬 저장으로 동작 중)";
+  }
+  return "";
+}
+
+function setFirebaseStatus(text, type = "warning") {
+  ui.firebaseStatus.textContent = text;
+  ui.firebaseStatus.classList.remove("warning", "success", "danger");
+  ui.firebaseStatus.classList.add(type);
+}
+
+function readLS(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch (error) { return fallback; }
+}
+
+function writeLS(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch (error) { /* quota */ }
+}
+
+function endOfTodayMs() {
+  const d = new Date();
+  d.setHours(23, 59, 59, 999);
+  return d.getTime();
+}
+
+/** "uHast With Precon" -> "uHast" 처럼 Criteria를 짧게 */
+function shortCriteria(criteria) {
+  return normalizeText(criteria)
+    .replace(/\s*with\s*out\s*precon/i, "")
+    .replace(/\s*with\s*precon/i, "")
+    .replace(/\s*w\/o\s*pre-?con/i, "")
+    .replace(/\s*w\/\s*MSL\d*/i, "")
+    .trim() || normalizeText(criteria);
+}
+
+/** 알림에 표시할 item 이름: 예) "uHast · FT(uHAST96) ET2", "HTST · T0 SAT" */
+function itemLabel(row) {
+  const condition = normalizeText(row.condition);
+  const detail = condition && condition !== "-" ? `${row.relItem} ${condition}` : row.relItem;
+  const head = shortCriteria(row.criteria);
+  const label = head && head !== row.relItem ? `${head} · ${detail}` : detail;
+  const block = row.block;
+  if (block && block.stepCount > 1) return `${label} [${block.stepIndex}/${block.stepCount} · ${block.from}~${block.to}]`;
+  return label;
+}
+
+/** On going 병합 구간 안에서 현재 몇 번째 단계인지 표시 */
+function blockTag(row) {
+  const block = row.block;
+  if (!block || block.stepCount <= 1) return "";
+  const title = `On going 병합 구간 ${block.from} ~ ${block.to} (${block.stepIndex}/${block.stepCount}단계)`
+    + ` · 구간 전체 ${block.dateIn || "-"} ~ ${block.dateOut || "-"}`
+    + (block.totalDuration !== null ? ` · Duration 합 ${block.totalDuration}` : "")
+    + (block.totalDelay !== null ? ` · Delay 합 ${block.totalDelay}` : "");
+  return ` <span class="block-to" title="${escapeHtml(title)}">${block.stepIndex}/${block.stepCount} → ${escapeHtml(block.to)}</span>`;
+}
+
+function planKeyId(sheetName) {
+  return makeDocId(`plan::${sheetName}`);
+}
+
+/* ============================================================
+   Excel 읽기
+   ============================================================ */
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function readFileWithFileReader(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error("FileReader failed"));
+    reader.onabort = () => reject(new Error("FileReader aborted"));
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+function base64ToArrayBuffer(base64) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i) & 0xff;
+  return bytes.buffer;
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || "");
+      const base64 = result.includes(",") ? result.split(",").pop() : "";
+      if (!base64) return reject(new Error("DataURL has no base64 payload"));
+      resolve(base64ToArrayBuffer(base64));
+    };
+    reader.onerror = () => reject(reader.error || new Error("FileReader dataURL failed"));
+    reader.onabort = () => reject(new Error("FileReader dataURL aborted"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function readFileAsBinaryString(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const binary = reader.result || "";
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i) & 0xff;
+      resolve(bytes.buffer);
+    };
+    reader.onerror = () => reject(reader.error || new Error("FileReader binaryString failed"));
+    reader.onabort = () => reject(new Error("FileReader binaryString aborted"));
+    if (!reader.readAsBinaryString) return reject(new Error("readAsBinaryString unavailable"));
+    reader.readAsBinaryString(file);
+  });
+}
+
+async function readBlobChunk(blob) {
+  if (blob.arrayBuffer) return await blob.arrayBuffer();
+  return await readFileWithFileReader(blob);
+}
+
+async function readFileByChunks(file, chunkSize = 16 * 1024) {
+  const chunks = [];
+  let total = 0;
+  for (let offset = 0; offset < file.size; offset += chunkSize) {
+    const end = Math.min(offset + chunkSize, file.size);
+    const buffer = await readBlobChunk(file.slice(offset, end));
+    chunks.push(new Uint8Array(buffer));
+    total += buffer.byteLength;
+    if (chunks.length % 8 === 0) await wait(0);
+  }
+  const merged = new Uint8Array(total);
+  let position = 0;
+  for (const chunk of chunks) { merged.set(chunk, position); position += chunk.length; }
+  return merged.buffer;
+}
+
+function isReadableZipBuffer(buffer) {
+  const bytes = new Uint8Array(buffer || []);
+  return bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b;
+}
+
+function formatFileError(error) {
+  if (!error) return "unknown";
+  return `${error.name || "Error"}: ${error.message || String(error)}`;
+}
+
+/**
+ * Windows/Edge/OneDrive 환경에서 자주 나는 NotReadableError 대응.
+ * 여러 read 방식을 순서대로 재시도합니다. (mnt-cpk-trend와 동일한 전략)
+ */
+async function readFileBuffer(file) {
+  if (!file || typeof file.size !== "number") throw new Error("유효한 File 객체가 아닙니다. 파일을 다시 선택해주세요.");
+  if (file.size === 0) throw new Error(`${file.name}: file size가 0 byte입니다. 원본을 다시 저장한 뒤 선택해주세요.`);
+  log(`Reading ${file.name} / ${(file.size / 1024).toFixed(1)} KB / modified ${file.lastModified ? new Date(file.lastModified).toLocaleString() : "unknown"}`);
+
+  const failures = [];
+  const readers = [
+    { name: "file-arrayBuffer", fn: () => (file.arrayBuffer ? file.arrayBuffer() : Promise.reject(new Error("arrayBuffer unavailable"))) },
+    { name: "FileReader-arrayBuffer", fn: () => readFileWithFileReader(file) },
+    { name: "chunked-slice", fn: () => readFileByChunks(file, 16 * 1024) },
+    { name: "FileReader-dataURL", fn: () => readFileAsDataUrl(file) },
+    { name: "FileReader-binaryString", fn: () => readFileAsBinaryString(file) },
+    { name: "file-stream", fn: () => (file.stream ? new Response(file.stream()).arrayBuffer() : Promise.reject(new Error("stream unavailable"))) }
+  ];
+
+  for (const reader of readers) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const buffer = await reader.fn();
+        if (!isReadableZipBuffer(buffer)) throw new Error(`${reader.name} returned non-xlsx buffer`);
+        if (reader.name !== "file-arrayBuffer") log(`${file.name}: ${reader.name} reader success (bytes=${buffer.byteLength}).`);
+        return buffer;
+      } catch (error) {
+        failures.push(`${reader.name} ${attempt}/2 -> ${formatFileError(error)}`);
+        await wait(150 * attempt);
+      }
+    }
+  }
+  throw new Error(`${file.name}: 브라우저가 파일 원본을 읽지 못했습니다(NotReadableError 계열). Excel에서 해당 파일을 완전히 닫고, OneDrive/네트워크 폴더가 아닌 로컬 폴더(C:\\Temp 등)에 새 이름으로 저장한 뒤 다시 시도해주세요. 실패 내역=${failures.join(" | ")}`);
+}
+
+/**
+ * Status 컬럼의 세로 병합을 펼치고, 각 행이 어느 병합 구간에 속하는지 map으로 돌려줍니다.
+ * (Date in / Duration / Date out 등 다른 컬럼은 원본 그대로 두어야 구간 합계가 중복되지 않습니다.)
+ *
+ * @returns {Map<number, number>} matrix row index -> 구간 시작 row index
+ */
+function expandStatusMerges(sheet, statusCol, rowOffset, colOffset) {
+  const blocks = new Map();
+  const merges = sheet["!merges"] || [];
+  const absCol = statusCol + colOffset;
+  merges.forEach(range => {
+    if (range.s.c > absCol || range.e.c < absCol) return;
+    const originAddr = XLSX.utils.encode_cell({ r: range.s.r, c: range.s.c });
+    const origin = sheet[originAddr];
+    const topIndex = range.s.r - rowOffset;
+    for (let r = range.s.r; r <= range.e.r; r++) {
+      blocks.set(r - rowOffset, topIndex);
+      if (r === range.s.r) continue;
+      if (!origin || origin.v === undefined || origin.v === null || origin.v === "") continue;
+      const addr = XLSX.utils.encode_cell({ r, c: absCol });
+      const cell = sheet[addr];
+      if (cell && cell.v !== undefined && cell.v !== null && cell.v !== "") continue;
+      sheet[addr] = { ...origin };
+    }
+  });
+  return blocks;
+}
+
+async function parseExcelFile(file) {
+  const buffer = await readFileBuffer(file);
+  // cellDates:true 로 만든 Date는 브라우저 timezone의 역사적 offset(예: Asia/Seoul 1899 LMT +08:27:52) 때문에
+  // 하루가 밀릴 수 있어, Excel serial 값을 그대로 받아 직접 UTC 기준으로 변환합니다.
+  const workbook = XLSX.read(new Uint8Array(buffer), { type: "array", cellDates: false });
+  const date1904 = Boolean(workbook.Workbook && workbook.Workbook.WBProps && workbook.Workbook.WBProps.date1904);
+  const records = [];
+  const skipped = [];
+  workbook.SheetNames.forEach(sheetName => {
+    const sheet = workbook.Sheets[sheetName];
+    if (!sheet) return;
+    // sheet !ref 가 A1이 아닌 경우(예: A2:JB123) 실제 Excel 행/열 번호를 맞춰줍니다.
+    const refStart = String(sheet["!ref"] || "A1").split(":")[0];
+    const origin = XLSX.utils.decode_cell(refStart);
+    const rowOffset = Math.max(0, origin.r || 0);
+    const colOffset = Math.max(0, origin.c || 0);
+
+    const readRows = () => XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: null, blankrows: true });
+    let rows = readRows();
+    const header = findHeader(rows);
+    let statusBlocks = null;
+    if (header && header.map.status !== undefined) {
+      statusBlocks = expandStatusMerges(sheet, header.map.status, rowOffset, colOffset);
+      rows = readRows();
+    }
+    const parsed = parseSheetMatrix(sheetName, rows, file.name, { rowOffset, statusBlocks, date1904 });
+    if (!parsed.header) { skipped.push(sheetName); return; }
+    parsed.records.forEach(record => {
+      record.schemaVersion = APP_VERSION;
+      records.push(record);
+    });
+  });
+  return { records, skipped, sheetCount: workbook.SheetNames.length };
+}
+
+async function handleFiles(files) {
+  const list = Array.from(files || []).filter(f => /\.(xlsx|xlsm|xls)$/i.test(f.name));
+  if (!list.length) return;
+  selectedFiles = list;
+  list.forEach(f => fileReadStatus.set(f.name, "읽는 중..."));
+  renderSelectedFileList();
+
+  let parsedAll = [];
+  for (const file of list) {
+    try {
+      const { records, skipped, sheetCount } = await parseExcelFile(file);
+      parsedAll = parsedAll.concat(records);
+      fileReadStatus.set(file.name, `${records.length} items / ${sheetCount - skipped.length} sheets`);
+      log(`${file.name}: ${records.length} items parsed (skipped sheets: ${skipped.join(", ") || "none"})`);
+    } catch (error) {
+      console.error(error);
+      fileReadStatus.set(file.name, `Read failed: ${error.message}`);
+    }
+    renderSelectedFileList();
+  }
+
+  if (!parsedAll.length) {
+    log("인식된 Rel schedule row가 없습니다.");
+    return;
+  }
+
+  const diff = diffRecords(parsedAll);
+  lastUploadDiff = { created: diff.created.length, updated: diff.updated.length, unchanged: diff.unchanged.length };
+  log(`변경 비교: New ${diff.created.length} / Updated ${diff.updated.length} / 변경없음 ${diff.unchanged.length}`);
+  diff.updated.slice(0, 20).forEach(row => {
+    log(`  ↻ ${row.sheetName} · ${row.criteria} · ${row.relItem} — ${(row.__changes || []).join(", ")}`);
+  });
+
+  mergeRows(parsedAll);
+  refreshAll({ forceAlert: true });
+
+  const changedOnly = diff.created.concat(diff.updated);
+  if (changedOnly.length) await uploadRows(changedOnly);
+  else log("변경된 row가 없어 Firestore 업로드를 생략했습니다.");
+  if (ui.excelFiles) ui.excelFiles.value = "";
+}
+
+function renderSelectedFileList() {
+  if (!selectedFiles.length) {
+    ui.selectedFileList.innerHTML = `<li class="empty-li">선택된 파일이 없습니다.</li>`;
+    return;
+  }
+  ui.selectedFileList.innerHTML = selectedFiles.map(file => {
+    const status = fileReadStatus.get(file.name) || "대기 중";
+    const cls = /fail|error/i.test(status) ? "danger-text" : "";
+    return `<li><span>${escapeHtml(file.name)}</span><b class="${cls}">${escapeHtml(status)}</b></li>`;
+  }).join("");
+}
+
+const COMPARE_FIELDS = [
+  "criteria", "relItem", "condition", "assyLot", "ftLot", "qty",
+  "dateIn", "duration", "delay", "dateOut", "result", "status", "remark", "failMode"
+];
+
+/**
+ * 같은 파일을 다시 넣었을 때 무엇이 바뀌었는지 비교합니다.
+ * dedupeKey에 파일명이 들어가지 않으므로 제목의 WW가 바뀌어도 같은 항목으로 인식합니다.
+ */
+function diffRecords(incoming) {
+  const existing = new Map(rawRows.map(row => [row.dedupeKey, row]));
+  const created = [];
+  const updated = [];
+  const unchanged = [];
+  incoming.forEach(row => {
+    const previous = existing.get(row.dedupeKey);
+    if (!previous) { created.push(row); return; }
+    const changes = COMPARE_FIELDS.filter(field => String(previous[field] ?? "") !== String(row[field] ?? ""));
+    if (changes.length) {
+      row.__changes = changes.map(field => `${field}: ${previous[field] ?? "-"} → ${row[field] ?? "-"}`);
+      updated.push(row);
+    } else {
+      unchanged.push(row);
+    }
+  });
+  return { created, updated, unchanged };
+}
+
+/** 같은 dedupeKey는 최신 값으로 교체 */
+function mergeRows(incoming) {
+  const map = new Map(rawRows.map(row => [row.dedupeKey, row]));
+  incoming.forEach(row => map.set(row.dedupeKey, { ...map.get(row.dedupeKey), ...row }));
+  rawRows = Array.from(map.values());
+  cacheRows();
+}
+
+function cacheRows() {
+  writeLS(LS_ROWS, rawRows.map(row => {
+    const copy = { ...row };
+    delete copy.uploadedAt;
+    return copy;
+  }));
+}
+
+function cacheStatus() {
+  writeLS(LS_STATUS, {
+    items: Array.from(statusMap.entries()),
+    plans: Array.from(planStatusMap.entries())
+  });
+}
+
+/* ============================================================
+   Firestore
+   ============================================================ */
+async function uploadRows(records) {
+  if (!db || !currentUser) { log("Firebase 준비 전이라 로컬에만 저장했습니다."); return; }
+  try {
+    let batch = writeBatch(db);
+    let count = 0;
+    for (const record of records) {
+      const payload = { ...record, uploadedAt: serverTimestamp() };
+      batch.set(doc(db, RAW_COLLECTION, record.dedupeKey), payload, { merge: true });
+      count++;
+      if (count >= BATCH_LIMIT) { await batch.commit(); batch = writeBatch(db); count = 0; }
+    }
+    if (count > 0) await batch.commit();
+    log(`Firestore upsert 완료: ${records.length} rows.`);
+    await loadFirestoreData();
+  } catch (error) {
+    console.error(error);
+    const hint = describeFirebaseError(error);
+    log(`Upload Error: ${error.message}${hint ? ` — ${hint}` : ""}`);
+    setFirebaseStatus(hint || "Firestore upload error", "danger");
+  }
+}
+
+async function loadFirestoreData() {
+  if (!db || !currentUser) return;
+  try {
+    const [rawSnap, statusSnap] = await Promise.all([
+      getDocs(collection(db, RAW_COLLECTION)),
+      getDocs(collection(db, STATUS_COLLECTION))
+    ]);
+
+    const rows = rawSnap.docs.map(d => ({ ...d.data(), dedupeKey: d.id }))
+      .filter(row => row && row.sheetName && (row.relItem || row.dateOut))
+      .filter(row => !isTemplateSheet(row.sheetName));
+    if (rows.length) rawRows = rows;
+
+    statusMap = new Map();
+    planStatusMap = new Map();
+    statusSnap.docs.forEach(d => {
+      const data = d.data() || {};
+      if (data.kind === "plan" && data.sheetName) planStatusMap.set(data.sheetName, data);
+      else statusMap.set(d.id, data);
+    });
+
+    cacheRows();
+    cacheStatus();
+    ui.m.firestore.textContent = rows.length.toLocaleString();
+    log(`Firestore loaded: ${rows.length} rows / ${statusSnap.size} status docs.`);
+    refreshAll({ forceAlert: true });
+  } catch (error) {
+    console.error(error);
+    const hint = describeFirebaseError(error);
+    log(`Firestore Load Error: ${error.message}${hint ? ` — ${hint}` : ""}`);
+    setFirebaseStatus(hint || "Firestore read error", "danger");
+  }
+}
+
+async function saveItemStatus(dedupeKey, manualDone) {
+  const payload = {
+    kind: "item",
+    dedupeKey,
+    manualDone,
+    doneAt: manualDone ? new Date().toISOString() : "",
+    updatedAt: new Date().toISOString()
+  };
+  statusMap.set(dedupeKey, payload);
+  cacheStatus();
+  if (!db || !currentUser) return;
+  try {
+    await setDoc(doc(db, STATUS_COLLECTION, dedupeKey), { ...payload, updatedAt: serverTimestamp() }, { merge: true });
+  } catch (error) {
+    console.error(error);
+    log(`Status 저장 실패: ${error.message}`);
+  }
+}
+
+async function savePlanStatus(sheetName, muted) {
+  const id = planKeyId(sheetName);
+  const payload = { kind: "plan", sheetName, muted, dedupeKey: id, updatedAt: new Date().toISOString() };
+  planStatusMap.set(sheetName, payload);
+  cacheStatus();
+  if (!db || !currentUser) return;
+  try {
+    await setDoc(doc(db, STATUS_COLLECTION, id), { ...payload, updatedAt: serverTimestamp() }, { merge: true });
+  } catch (error) {
+    console.error(error);
+    log(`Plan 알림 설정 저장 실패: ${error.message}`);
+  }
+}
+
+/* ============================================================
+   평가 (Alert 판정)
+   ============================================================ */
+function planIsStale(sheetName) {
+  const outs = rawRows.filter(r => r.sheetName === sheetName && r.dateOut).map(r => r.dateOut);
+  if (!outs.length) return false;
+  const last = outs.sort().at(-1);
+  const diff = dayDiff(last, today);
+  return diff !== null && diff < -STALE_PLAN_DAYS;
+}
+
+function planMuted(sheetName) {
+  const explicit = planStatusMap.get(sheetName);
+  if (explicit && typeof explicit.muted === "boolean") return explicit.muted;
+  return planIsStale(sheetName);
+}
+
+function evaluateRows() {
+  today = todayIso();
+  ui.todayLabel.textContent = today;
+  // 현재 진행 단계는 오늘 날짜에 따라 자동으로 다음 단계로 넘어갑니다.
+  const ongoingMap = markOngoing(rawRows, statusMap, today);
+  viewRows = rawRows.filter(row => !isTemplateSheet(row.sheetName)).map(row => {
+    const ongoing = ongoingMap.get(row.dedupeKey) || null;
+    const state = evaluateAlert(
+      row, statusMap.get(row.dedupeKey) || null, today, ALERT_LEAD_DAYS, ongoing ? ongoing.type : ""
+    );
+    return { ...row, block: ongoing ? ongoing.block : null, state, muted: planMuted(row.sheetName) };
+  });
+  viewRows.sort((a, b) => {
+    const order = { delay: 0, prealarm: 1, watch: 2, planned: 3, pending: 4, none: 5, done: 6 };
+    const byCode = order[a.state.code] - order[b.state.code];
+    if (byCode) return byCode;
+    return String(a.dateOut || "9999").localeCompare(String(b.dateOut || "9999"))
+      || String(a.sheetName).localeCompare(String(b.sheetName))
+      || a.rowNumber - b.rowNumber;
+  });
+  return viewRows;
+}
+
+function activeAlerts() {
+  return viewRows.filter(row => !row.muted && isAlerting(row.state.code));
+}
+
+/* ============================================================
+   Metric / Table 렌더
+   ============================================================ */
+function renderMetrics() {
+  const counts = { delay: 0, prealarm: 0, watch: 0, planned: 0, pending: 0, done: 0, none: 0 };
+  viewRows.forEach(row => { counts[row.state.code]++; });
+  const alerts = activeAlerts();
+  const alertCounts = { delay: 0, prealarm: 0 };
+  alerts.forEach(row => alertCounts[row.state.code]++);
+
+  ui.m.delay.textContent = alertCounts.delay;
+  ui.m.prealarm.textContent = alertCounts.prealarm;
+  ui.m.watch.textContent = viewRows.filter(r => !r.muted && r.state.code === "watch").length;
+  ui.m.planned.textContent = counts.planned;
+  ui.m.done.textContent = counts.done;
+  ui.m.total.textContent = viewRows.length.toLocaleString();
+  ui.m.plans.textContent = new Set(viewRows.map(r => r.sheetName)).size;
+  if (ui.m.newRows) ui.m.newRows.textContent = lastUploadDiff.created.toLocaleString();
+  if (ui.m.updatedRows) ui.m.updatedRows.textContent = lastUploadDiff.updated.toLocaleString();
+  if (ui.m.sameRows) ui.m.sameRows.textContent = lastUploadDiff.unchanged.toLocaleString();
+}
+
+function fillSelect(select, values, allLabel) {
+  const previous = select.value;
+  select.innerHTML = [`<option value="">${allLabel}</option>`]
+    .concat(values.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`)).join("");
+  if (previous && values.includes(previous)) select.value = previous;
+}
+
+function refreshFilters() {
+  const plans = Array.from(new Set(viewRows.map(r => r.sheetName))).sort();
+  fillSelect(ui.planSelect, plans, "전체 Plan");
+  const plan = ui.planSelect.value;
+  const criteria = Array.from(new Set(viewRows.filter(r => !plan || r.sheetName === plan).map(r => r.criteria))).sort();
+  fillSelect(ui.criteriaSelect, criteria, "전체 Criteria");
+  if (!ui.statusSelect.options.length) {
+    ui.statusSelect.innerHTML = `
+      <option value="alert">알림 대상만 (Delay + Pre alarm)</option>
+      <option value="alertAll">알림 대상 + Muted Plan 포함</option>
+      <option value="ongoing">On going 항목 전체</option>
+      <option value="">전체</option>
+      <option value="delay">Delay session</option>
+      <option value="prealarm">Pre alarm</option>
+      <option value="watch">On going (D-2 이전)</option>
+      <option value="planned">Planned</option>
+      <option value="pending">Pending (미표기 경과)</option>
+      <option value="done">Done</option>
+      <option value="none">No date out</option>`;
+    ui.statusSelect.value = "alert";
+  }
+}
+
+function filteredRows() {
+  const plan = ui.planSelect.value;
+  const criteria = ui.criteriaSelect.value;
+  const status = ui.statusSelect.value;
+  const term = normalizeText(ui.searchInput.value).toLowerCase();
+  return viewRows.filter(row => {
+    if (plan && row.sheetName !== plan) return false;
+    if (criteria && row.criteria !== criteria) return false;
+    if (status === "alert" && (row.muted || !isAlerting(row.state.code))) return false;
+    if (status === "alertAll" && !isAlerting(row.state.code)) return false;
+    if (status === "ongoing" && !row.state.ongoing) return false;
+    if (status && !["alert", "alertAll", "ongoing"].includes(status) && row.state.code !== status) return false;
+    if (term) {
+      const hay = `${row.relItem} ${row.condition} ${row.assyLot} ${row.ftLot} ${row.criteria} ${row.remark} ${row.planTitle} ${row.relNo}`.toLowerCase();
+      if (!hay.includes(term)) return false;
+    }
+    return true;
+  });
+}
+
+function ddayCell(state) {
+  if (state.dday === null) return `<span class="dday">-</span>`;
+  const cls = state.dday < 0 ? "minus" : state.dday === 0 ? "zero" : "plus";
+  return `<span class="dday ${cls}">${escapeHtml(formatDday(state.dday))}</span>`;
+}
+
+const PILL_CLASS = {
+  delay: "delayed", prealarm: "due", watch: "soon",
+  planned: "planned", pending: "none", done: "done", none: "none"
+};
+
+function pill(row) {
+  const cls = PILL_CLASS[row.state.code] || "none";
+  const tags = [];
+  if (row.state.ongoing === "explicit") tags.push(`<span class="st-pill soon">On going</span>`);
+  if (row.muted && isAlerting(row.state.code)) tags.push(`<span class="st-pill none">Muted</span>`);
+  return `<span class="st-pill ${cls}">${escapeHtml(row.state.label)}</span> ${tags.join(" ")}`;
+}
+
+function renderTable() {
+  const rows = filteredRows();
+  if (!rows.length) {
+    ui.scheduleBody.innerHTML = `<tr><td colspan="18" class="empty">조건에 맞는 항목이 없습니다.</td></tr>`;
+    return;
+  }
+  ui.scheduleBody.innerHTML = rows.slice(0, 600).map(row => {
+    const rowCls = row.state.code === "delay" ? "row-delayed"
+      : row.state.code === "prealarm" ? "row-due"
+      : row.state.code === "watch" ? "row-soon"
+      : row.state.code === "done" ? "row-done" : "";
+    const excelDelay = normalizeNumber(row.delay);
+    const excelDelayHtml = excelDelay === null ? ""
+      : excelDelay < 0
+        ? `<span class="early-text" title="예정보다 ${Math.abs(excelDelay)}일 빠름">${escapeHtml(formatDelayValue(excelDelay))}</span>`
+        : `<span class="${excelDelay > 0 ? "danger-text" : ""}">${escapeHtml(formatDelayValue(excelDelay))}</span>`;
+    const delayCell = row.state.delayDays
+      ? `<b class="danger-text" title="Date out 경과 일수">+${row.state.delayDays}</b>${excelDelayHtml ? ` <small>${excelDelayHtml}</small>` : ""}`
+      : excelDelayHtml;
+    return `<tr class="${rowCls}" data-key="${escapeHtml(row.dedupeKey)}">
+      <td><input type="checkbox" class="done-check" data-key="${escapeHtml(row.dedupeKey)}" ${row.state.done ? "checked" : ""} /></td>
+      <td>${pill(row)}</td>
+      <td>${ddayCell(row.state)}</td>
+      <td>${escapeHtml(row.sheetName)}</td>
+      <td class="criteria-cell">${escapeHtml(row.criteria)}</td>
+      <td>${escapeHtml(row.relItem)}${blockTag(row)}</td>
+      <td>${escapeHtml(row.condition)}</td>
+      <td>${escapeHtml(row.assyLot)}</td>
+      <td>${escapeHtml(row.ftLot)}</td>
+      <td class="number">${row.qty ?? ""}</td>
+      <td class="date-cell">${escapeHtml(row.dateIn)}</td>
+      <td class="number">${row.duration ?? ""}</td>
+      <td class="number">${delayCell}</td>
+      <td class="date-cell">${escapeHtml(row.dateOut)}</td>
+      <td class="date-cell">${escapeHtml(row.state.alarmFrom || "")}</td>
+      <td>${escapeHtml(row.result)}</td>
+      <td>${escapeHtml(row.status)}</td>
+      <td>${escapeHtml(row.remark)}</td>
+    </tr>`;
+  }).join("") + (rows.length > 600
+    ? `<tr><td colspan="18" class="empty">상위 600건만 표시했습니다. (전체 ${rows.length.toLocaleString()}건 · 필터를 좁혀주세요)</td></tr>`
+    : "");
+}
+
+/** 알림에서 클릭한 항목을 표에서 찾아 이동 + 강조합니다. */
+function focusRow(dedupeKey) {
+  const row = viewRows.find(item => item.dedupeKey === dedupeKey);
+  if (!row) { log("해당 항목을 표에서 찾지 못했습니다."); return; }
+
+  closeAlertModal();
+  ui.searchInput.value = "";
+  ui.planSelect.value = row.sheetName;
+  refreshFilters();
+  ui.criteriaSelect.value = row.criteria;
+  ui.statusSelect.value = "";
+  renderTable();
+  renderGantt();
+
+  requestAnimationFrame(() => {
+    const target = Array.from(ui.scheduleBody.rows).find(tr => tr.dataset.key === dedupeKey);
+    if (!target) return;
+    document.querySelectorAll("tr.row-flash").forEach(tr => tr.classList.remove("row-flash"));
+    target.classList.add("row-flash");
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    setTimeout(() => target.classList.remove("row-flash"), 4000);
+  });
+}
+
+function renderPlanList() {
+  const map = new Map();
+  viewRows.forEach(row => {
+    const key = `${row.sourceFileName || "(local)"}|${row.sheetName}`;
+    if (!map.has(key)) {
+      map.set(key, {
+        sourceFileName: row.sourceFileName || "(local)",
+        sheetName: row.sheetName,
+        title: row.planTitle || "",
+        relNo: row.relNo || "",
+        count: 0, delayed: 0, lastOut: ""
+      });
+    }
+    const item = map.get(key);
+    item.count++;
+    if (row.state.code === "delay") item.delayed++;
+    if (row.dateOut && row.dateOut > item.lastOut) item.lastOut = row.dateOut;
+  });
+
+  const list = Array.from(map.values()).sort((a, b) => b.delayed - a.delayed || a.sheetName.localeCompare(b.sheetName));
+  if (!list.length) {
+    ui.uploadedBody.innerHTML = `<tr><td colspan="7" class="empty">아직 Upload된 Plan이 없습니다.</td></tr>`;
+    return;
+  }
+  ui.uploadedBody.innerHTML = list.map(item => {
+    const muted = planMuted(item.sheetName);
+    return `<tr>
+      <td>${escapeHtml(item.sourceFileName)}</td>
+      <td class="criteria-cell">${escapeHtml(item.sheetName)}
+        <button type="button" class="secondary plan-mute" data-sheet="${escapeHtml(item.sheetName)}"
+          style="margin-left:8px;padding:4px 9px;font-size:11px;border-radius:9px">
+          ${muted ? "알림 OFF" : "알림 ON"}
+        </button>
+      </td>
+      <td>${escapeHtml(item.title)}</td>
+      <td>${escapeHtml(item.relNo)}</td>
+      <td class="number">${item.count}</td>
+      <td class="number">${item.delayed ? `<b class="danger-text">${item.delayed}</b>` : 0}</td>
+      <td class="date-cell">${escapeHtml(item.lastOut)}</td>
+    </tr>`;
+  }).join("");
+}
+
+/* ============================================================
+   Gantt
+   ============================================================ */
+const todayLinePlugin = {
+  id: "todayLine",
+  afterDatasetsDraw(chart) {
+    const x = chart.scales.x;
+    if (!x) return;
+    const ms = Date.UTC(...today.split("-").map((v, i) => (i === 1 ? Number(v) - 1 : Number(v))));
+    if (ms < x.min || ms > x.max) return;
+    const px = x.getPixelForValue(ms);
+    const ctx = chart.ctx;
+    ctx.save();
+    ctx.strokeStyle = "#e11d48";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath();
+    ctx.moveTo(px, chart.chartArea.top);
+    ctx.lineTo(px, chart.chartArea.bottom);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = "#e11d48";
+    ctx.font = "bold 11px Arial";
+    ctx.fillText("Today", px + 5, chart.chartArea.top + 12);
+    ctx.restore();
+  }
+};
+
+const CODE_COLOR = {
+  delay: "#e11d48", prealarm: "#f97316", watch: "#eab308",
+  planned: "#2563ff", pending: "#94a3b8", done: "#10b981", none: "#cbd5e1"
+};
+
+function renderGantt() {
+  if (typeof Chart === "undefined" || !ui.ganttChart) return;
+  const plan = ui.planSelect.value || (viewRows[0] && viewRows[0].sheetName) || "";
+  const rows = viewRows
+    .filter(r => r.sheetName === plan && r.dateIn && r.dateOut)
+    .sort((a, b) => String(a.dateIn).localeCompare(String(b.dateIn)) || a.rowNumber - b.rowNumber)
+    .slice(0, 45);
+
+  if (ganttChart) { ganttChart.destroy(); ganttChart = null; }
+  if (!rows.length) return;
+
+  const toMs = iso => Date.UTC(...iso.split("-").map((v, i) => (i === 1 ? Number(v) - 1 : Number(v))));
+  ganttChart = new Chart(ui.ganttChart.getContext("2d"), {
+    type: "bar",
+    data: {
+      labels: rows.map(r => `${r.criteria} · ${r.relItem}`.slice(0, 52)),
+      datasets: [{
+        label: "Date in → Date out",
+        data: rows.map(r => [toMs(r.dateIn), toMs(r.dateOut)]),
+        backgroundColor: rows.map(r => CODE_COLOR[r.state.code]),
+        borderRadius: 5,
+        borderSkipped: false,
+        barThickness: 12
+      }]
+    },
+    options: {
+      indexAxis: "y",
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => {
+              const row = rows[ctx.dataIndex];
+              return `${row.dateIn} → ${row.dateOut} (${row.duration ?? "-"}d) · ${row.state.label}`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          type: "linear",
+          ticks: {
+            maxTicksLimit: 10,
+            callback: value => new Date(value).toISOString().slice(0, 10)
+          },
+          grid: { color: "rgba(148,163,184,.2)" }
+        },
+        y: { ticks: { font: { size: 10 } }, grid: { display: false } }
+      }
+    },
+    plugins: [todayLinePlugin]
+  });
+}
+
+/* ============================================================
+   Alert 팝업 / 배너
+   ============================================================ */
+function getSnoozeUntil() { return Number(readLS(LS_SNOOZE, 0)) || 0; }
+
+function setSnooze(ms, hasDelayed) {
+  const capped = hasDelayed ? Math.min(ms, DELAY_MAX_SNOOZE_MS) : ms;
+  writeLS(LS_SNOOZE, Date.now() + capped);
+  return capped;
+}
+
+function alertSignature(alerts) {
+  return alerts.map(r => `${r.dedupeKey}:${r.state.code}`).sort().join("|");
+}
+
+function groupAlerts(alerts) {
+  return {
+    delay: alerts.filter(r => r.state.code === "delay").sort((a, b) => a.state.dday - b.state.dday),
+    prealarm: alerts.filter(r => r.state.code === "prealarm").sort((a, b) => a.state.dday - b.state.dday)
+  };
+}
+
+function alertItemHtml(row) {
+  const cls = row.state.code === "delay" ? "delayed" : "due";
+  const big = row.state.code === "delay"
+    ? `Delay +${row.state.delayDays}`
+    : (row.state.dday === 0 ? "오늘 Date out" : `D-${row.state.dday}`);
+  const sub = [
+    row.sheetName,
+    "On going",
+    row.assyLot, row.ftLot, row.dateIn ? `In ${row.dateIn}` : ""
+  ].filter(Boolean).join(" · ");
+  return `<div class="alert-item ${cls}">
+    <input type="checkbox" class="done-check" data-key="${escapeHtml(row.dedupeKey)}" title="Done 처리" />
+    <div class="ai-main">
+      <a class="ai-title go-row" href="#" data-goto="${escapeHtml(row.dedupeKey)}" title="표에서 이 항목으로 이동">
+        ${escapeHtml(itemLabel(row))} <span class="go-arrow">↗</span>
+      </a>
+      <div class="ai-sub">${escapeHtml(sub || row.planTitle || "")}</div>
+    </div>
+    <div class="ai-right"><span class="big">${escapeHtml(big)}</span>Date out ${escapeHtml(row.dateOut)}</div>
+  </div>`;
+}
+
+function openAlertModal(alerts) {
+  const groups = groupAlerts(alerts);
+  const section = (title, cls, items) => items.length
+    ? `<div class="alert-group">
+         <h3>${title} <span class="count st-pill ${cls}">${items.length}</span></h3>
+         ${items.map(alertItemHtml).join("")}
+       </div>` : "";
+
+  ui.alertBody.innerHTML =
+    section("🚨 Delay session · Date out 경과 (Done 전까지 계속 알림)", "delayed", groups.delay) +
+    section(`🔔 Pre alarm · ${ALERT_LEAD_DAYS} > Date out − Today ≥ 0`, "due", groups.prealarm);
+
+  ui.alertSubtitle.textContent =
+    `오늘 ${today} 기준 · Delay ${groups.delay.length}건 / Pre alarm ${groups.prealarm.length}건 (각 Criteria의 On going 항목)`;
+  ui.alertFootNote.textContent = groups.delay.length
+    ? `Delay 건이 있어 최대 4시간까지만 숨겨집니다. 완료된 항목은 왼쪽 체크박스로 Done 처리하세요.`
+    : `완료된 항목은 왼쪽 체크박스로 Done 처리하세요.`;
+  ui.alertBackdrop.classList.add("open");
+}
+
+function closeAlertModal() { ui.alertBackdrop.classList.remove("open"); }
+
+function renderToasts(alerts) {
+  const now = Date.now();
+  const candidates = alerts
+    .filter(r => (toastSnooze.get(r.dedupeKey) || 0) < now)
+    .slice(0, 3);
+
+  ui.toastStack.innerHTML = candidates.map(row => {
+    const title = row.state.code === "delay"
+      ? `🚨 Delay +${row.state.delayDays}`
+      : (row.state.dday === 0 ? "🔔 Pre alarm · 오늘 Date out" : `🔔 Pre alarm · D-${row.state.dday}`);
+    return `<div class="toast ${row.state.code === "delay" ? "delayed" : "due"}">
+      <div class="t-head">
+        <b>${escapeHtml(title)}</b>
+        <button type="button" class="t-close" data-toast-close="${escapeHtml(row.dedupeKey)}">✕</button>
+      </div>
+      <p><a class="go-row" href="#" data-goto="${escapeHtml(row.dedupeKey)}" title="표에서 이 항목으로 이동"><b>${escapeHtml(itemLabel(row))}</b> <span class="go-arrow">↗</span></a><br>
+        ${escapeHtml(row.sheetName)} · Date out ${escapeHtml(row.dateOut)}</p>
+      <div class="t-actions">
+        <button type="button" class="primary" data-toast-done="${escapeHtml(row.dedupeKey)}">Done 처리</button>
+        <button type="button" class="secondary" data-goto="${escapeHtml(row.dedupeKey)}">이동</button>
+        <button type="button" class="secondary" data-toast-close="${escapeHtml(row.dedupeKey)}">30분 뒤</button>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function renderAlarmBar(alerts) {
+  const groups = groupAlerts(alerts);
+  const hasAlert = alerts.length > 0;
+  ui.alarmBar.classList.toggle("quiet", !hasAlert);
+  ui.alarmBarText.innerHTML = hasAlert
+    ? `🔔 <b>Delay session ${groups.delay.length}건</b> · Pre alarm ${groups.prealarm.length}건 <span style="color:#64748b;font-weight:800">(On going 기준 · 기준일 ${escapeHtml(today)})</span>`
+    : `✅ 오늘 ${escapeHtml(today)} 기준 On going 항목 중 Delay / Pre alarm 대상이 없습니다.`;
+  ui.showAlertBtn.disabled = !hasAlert;
+  document.title = hasAlert ? `(${alerts.length}) REL Schedule Alert` : "REL Schedule Alert";
+}
+
+function runAlertCycle({ forceAlert = false } = {}) {
+  const alerts = activeAlerts();
+  renderAlarmBar(alerts);
+  renderToasts(alerts);
+
+  // 새로 알림 상태로 진입한 항목이 있으면 snooze 중이어도 즉시 다시 알립니다.
+  const currentKeys = new Set(alerts.map(row => `${row.dedupeKey}:${row.state.code}`));
+  const hasNewAlert = Array.from(currentKeys).some(key => !knownAlertKeys.has(key));
+  knownAlertKeys = currentKeys;
+  lastAlertSignature = alertSignature(alerts);
+
+  if (!alerts.length) { closeAlertModal(); return; }
+
+  const isOpen = ui.alertBackdrop.classList.contains("open");
+  if (forceAlert || hasNewAlert) { openAlertModal(alerts); return; }
+  if (isOpen) return;   // 이미 열려 있으면 목록을 다시 그리지 않습니다 (체크 중 화면 튐 방지)
+  if (Date.now() >= getSnoozeUntil()) openAlertModal(alerts);
+}
+
+/* ============================================================
+   전체 새로고침
+   ============================================================ */
+function refreshAll(options = {}) {
+  evaluateRows();
+  refreshFilters();
+  renderMetrics();
+  renderTable();
+  renderPlanList();
+  renderGantt();
+  runAlertCycle(options);
+}
+
+/* ============================================================
+   Export
+   ============================================================ */
+function exportReport() {
+  const rows = filteredRows();
+  if (!rows.length) { log("Export할 row가 없습니다."); return; }
+  const data = rows.map(row => ({
+    "Alert": row.state.label,
+    "On going": row.state.ongoing ? "Y" : "",
+    "D-Day": formatDday(row.state.dday),
+    "Delay(alarm)": row.state.delayDays || "",
+    "Delay(Excel)": formatDelayValue(row.delay),
+    "Plan(Sheet)": row.sheetName,
+    "Title": row.planTitle,
+    "Rel.#": row.relNo,
+    "Criteria": row.criteria,
+    "Rel item": row.relItem,
+    "Condition": row.condition,
+    "Assy' lot#": row.assyLot,
+    "FT lot#": row.ftLot,
+    "Q'ty": row.qty ?? "",
+    "Date in": row.dateIn,
+    "Duration": row.duration ?? "",
+    "Date out": row.dateOut,
+    "Alarm from": row.state.alarmFrom || "",
+    "Result": row.result,
+    "Status": row.status,
+    "Done": row.state.done ? "Y" : "",
+    "Remark": row.remark,
+    "Fail mode": row.failMode,
+    "Source File": row.sourceFileName || ""
+  }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), "REL Alert");
+  XLSX.writeFile(wb, `REL_Schedule_Alert_${today}.xlsx`);
+  log(`Export 완료: ${rows.length} rows.`);
+}
+
+/* ============================================================
+   이벤트
+   ============================================================ */
+function setupEvents() {
+  ui.dropZone.addEventListener("click", event => { event.preventDefault(); event.stopPropagation(); ui.excelFiles.click(); });
+  ui.dropZone.addEventListener("keydown", event => {
+    if (event.key === "Enter" || event.key === " ") { event.preventDefault(); ui.excelFiles.click(); }
+  });
+  ui.excelFiles.addEventListener("click", event => event.stopPropagation());
+  ui.excelFiles.addEventListener("change", event => handleFiles(event.target.files));
+  ["dragenter", "dragover"].forEach(name => {
+    ui.dropZone.addEventListener(name, event => { event.preventDefault(); ui.dropZone.classList.add("active"); });
+  });
+  ["dragleave", "drop"].forEach(name => {
+    ui.dropZone.addEventListener(name, event => { event.preventDefault(); ui.dropZone.classList.remove("active"); });
+  });
+  ui.dropZone.addEventListener("drop", event => handleFiles(event.dataTransfer?.files));
+
+  [ui.planSelect, ui.criteriaSelect, ui.statusSelect].forEach(select => {
+    select.addEventListener("change", () => { refreshFilters(); renderTable(); renderGantt(); });
+  });
+  ui.searchInput.addEventListener("input", renderTable);
+  ui.exportBtn.addEventListener("click", exportReport);
+  ui.reloadBtn.addEventListener("click", loadFirestoreData);
+  ui.recheckBtn.addEventListener("click", () => refreshAll({ forceAlert: true }));
+  ui.showAlertBtn.addEventListener("click", () => openAlertModal(activeAlerts()));
+
+  el("alertClose").addEventListener("click", () => {
+    const hasDelayed = activeAlerts().some(r => r.state.code === "delay");
+    setSnooze(DEFAULT_SNOOZE_MS, hasDelayed);
+    closeAlertModal();
+  });
+  el("snooze30").addEventListener("click", () => {
+    setSnooze(30 * 60 * 1000, false); closeAlertModal();
+  });
+  el("snooze240").addEventListener("click", () => {
+    setSnooze(4 * 60 * 60 * 1000, false); closeAlertModal();
+  });
+  el("snoozeToday").addEventListener("click", () => {
+    const hasDelayed = activeAlerts().some(r => r.state.code === "delay");
+    const ms = Math.max(endOfTodayMs() - Date.now(), 60 * 1000);
+    const applied = setSnooze(ms, hasDelayed);
+    closeAlertModal();
+    if (hasDelayed && applied < ms) log("Delay 건이 있어 4시간 후 다시 알림이 표시됩니다.");
+  });
+  ui.alertBackdrop.addEventListener("click", event => {
+    if (event.target === ui.alertBackdrop) {
+      const hasDelayed = activeAlerts().some(r => r.state.code === "delay");
+      setSnooze(DEFAULT_SNOOZE_MS, hasDelayed);
+      closeAlertModal();
+    }
+  });
+  document.addEventListener("keydown", event => {
+    if (event.key === "Escape" && ui.alertBackdrop.classList.contains("open")) {
+      const hasDelayed = activeAlerts().some(r => r.state.code === "delay");
+      setSnooze(DEFAULT_SNOOZE_MS, hasDelayed);
+      closeAlertModal();
+    }
+  });
+
+  // Done 체크 (표 + 팝업 공통)
+  document.addEventListener("change", async event => {
+    const target = event.target;
+    if (!target.classList || !target.classList.contains("done-check")) return;
+    const key = target.dataset.key;
+    if (!key) return;
+    const modalItem = target.closest(".alert-item");
+    if (modalItem) modalItem.classList.toggle("resolved", target.checked);
+    await saveItemStatus(key, target.checked);
+    refreshAll();
+  });
+
+  // 알림 -> 해당 item으로 이동 (모달 / 토스트 공통)
+  document.addEventListener("click", event => {
+    const trigger = event.target.closest ? event.target.closest("[data-goto]") : null;
+    if (!trigger) return;
+    event.preventDefault();
+    focusRow(trigger.dataset.goto);
+  });
+
+  // Toast 버튼
+  ui.toastStack.addEventListener("click", async event => {
+    const closeKey = event.target.dataset?.toastClose;
+    const doneKey = event.target.dataset?.toastDone;
+    if (closeKey) {
+      toastSnooze.set(closeKey, Date.now() + TOAST_SNOOZE_MS);
+      renderToasts(activeAlerts());
+    } else if (doneKey) {
+      await saveItemStatus(doneKey, true);
+      refreshAll();
+    }
+  });
+
+  // Plan 알림 ON/OFF
+  ui.uploadedBody.addEventListener("click", async event => {
+    const sheet = event.target.dataset?.sheet;
+    if (!sheet) return;
+    await savePlanStatus(sheet, !planMuted(sheet));
+    refreshAll();
+  });
+
+  // 주기 재검사 + 탭 복귀 시 재검사 (Delay 건 반복 알림)
+  setInterval(() => refreshAll(), RECHECK_INTERVAL_MS);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") refreshAll();
+  });
+}
+
+/* ============================================================
+   초기화
+   ============================================================ */
+function restoreCache() {
+  const rows = readLS(LS_ROWS, []);
+  if (Array.isArray(rows) && rows.length) rawRows = rows;
+  const cached = readLS(LS_STATUS, null);
+  if (cached) {
+    statusMap = new Map(cached.items || []);
+    planStatusMap = new Map(cached.plans || []);
+  }
+}
+
+function initFirebase() {
+  try {
+    app = initializeApp(relScheduleFirebaseConfig, "rel-schedule-alert");
+    db = getFirestore(app);
+    auth = getAuth(app);
+    onAuthStateChanged(auth, async user => {
+      currentUser = user;
+      if (user) {
+        ui.authStatus.textContent = `Anonymous Auth OK: ${user.uid.slice(0, 8)}...`;
+        setFirebaseStatus("Firebase connected", "success");
+        await loadFirestoreData();
+      } else {
+        ui.authStatus.textContent = "Auth 필요";
+        setFirebaseStatus("Auth required", "warning");
+      }
+    });
+    signInAnonymously(auth).catch(error => {
+      console.error(error);
+      setFirebaseStatus("Anonymous Auth error (로컬 저장만 사용)", "danger");
+      log(`Anonymous Auth Error: ${error.message}`);
+    });
+  } catch (error) {
+    console.error(error);
+    setFirebaseStatus("Firebase init error (로컬 저장만 사용)", "danger");
+    log(`Firebase Init Error: ${error.message}`);
+  }
+}
+
+setupEvents();
+restoreCache();
+refreshAll({ forceAlert: true });
+initFirebase();
