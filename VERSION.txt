@@ -14,6 +14,8 @@ wafer_strip_mapping_app v27
 - Pre alarm start date falls back to the previous business day (Friday) when it lands on a weekend; shown in the Alarm from column.
 - Delay items keep popping up until Done; snooze is capped at 4 hours while any delay remains.
 - Alert popup and toast titles show the item as "Criteria · Rel item Condition" (e.g. uHast · FT(uHAST96) ET2); clicking it jumps to that row in the schedule table and highlights it.
+- Fixed the Plan Timeline axis: the bar scale no longer starts at epoch 0 (1970), so the Gantt fits the selected plan's date range; today is only included when it is near that range.
+- Plan Timeline now groups rows by Criteria in sheet order, sizes itself to the row count, labels Delay / Pre alarm bars directly, and shows a status legend with counts.
 - Stale plans (last Date out older than 90 days) are muted by default and can be toggled per plan.
 - Firestore collections relScheduleRaw / relScheduleStatus added to firestore.rules; shared design reused from QA Page common CSS.
 

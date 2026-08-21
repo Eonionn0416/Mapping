@@ -166,11 +166,13 @@
       <div class="panel-header">
         <div>
           <h2>Plan Timeline (Date in → Date out)</h2>
-          <p>선택한 Plan의 Criteria별 일정 구간입니다. 빨간 세로선이 오늘입니다.</p>
+          <p>선택한 Plan의 Criteria &rarr; Rel item 순서로 각 단계의 일정 구간을 표시합니다. 빨간 점선이 오늘이고,
+            Delay / Pre alarm 항목은 막대 끝에 남은 일수를 같이 적습니다.</p>
         </div>
       </div>
+      <div class="legend" id="ganttLegend"></div>
       <div class="gantt-wrap">
-        <canvas id="ganttChart" height="380"></canvas>
+        <canvas id="ganttChart"></canvas>
       </div>
     </section>
 

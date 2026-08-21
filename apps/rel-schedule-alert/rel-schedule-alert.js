@@ -102,6 +102,7 @@ const ui = {
   alertSubtitle: el("alertSubtitle"),
   alertFootNote: el("alertFootNote"),
   ganttChart: el("ganttChart"),
+  ganttLegend: el("ganttLegend"),
   m: {
     delay: el("mDelay"), prealarm: el("mPrealarm"), watch: el("mWatch"),
     planned: el("mPlanned"), done: el("mDone"), total: el("mTotal"),
@@ -825,13 +826,31 @@ function renderPlanList() {
 /* ============================================================
    Gantt
    ============================================================ */
+const ONE_DAY = 86400000;
+
+function isoToMs(iso) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso || "")) return null;
+  const [y, m, d] = iso.split("-").map(Number);
+  return Date.UTC(y, m - 1, d);
+}
+
+function msToIso(ms) {
+  const d = new Date(ms);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+}
+
+function msToShort(ms) {
+  const d = new Date(ms);
+  return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
+}
+
+/** 오늘 위치에 세로선 */
 const todayLinePlugin = {
   id: "todayLine",
   afterDatasetsDraw(chart) {
     const x = chart.scales.x;
-    if (!x) return;
-    const ms = Date.UTC(...today.split("-").map((v, i) => (i === 1 ? Number(v) - 1 : Number(v))));
-    if (ms < x.min || ms > x.max) return;
+    const ms = isoToMs(today);
+    if (!x || ms === null || ms < x.min || ms > x.max) return;
     const px = x.getPixelForValue(ms);
     const ctx = chart.ctx;
     ctx.save();
@@ -844,52 +863,147 @@ const todayLinePlugin = {
     ctx.stroke();
     ctx.setLineDash([]);
     ctx.fillStyle = "#e11d48";
-    ctx.font = "bold 11px Arial";
-    ctx.fillText("Today", px + 5, chart.chartArea.top + 12);
+    ctx.font = "900 11px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText(`Today ${today.slice(5)}`, px, chart.chartArea.top - 4);
     ctx.restore();
   }
 };
 
-const CODE_COLOR = {
-  delay: "#e11d48", prealarm: "#f97316", watch: "#eab308",
-  planned: "#2563ff", pending: "#94a3b8", done: "#10b981", none: "#cbd5e1"
+/** 알림 대상 막대 끝에 D-Day / Delay 직접 표기 (색만으로 상태를 구분하지 않기 위함) */
+const barLabelPlugin = {
+  id: "barLabel",
+  afterDatasetsDraw(chart) {
+    const meta = chart.getDatasetMeta(0);
+    const rows = chart.$relRows || [];
+    const ctx = chart.ctx;
+    ctx.save();
+    ctx.font = "900 10px Arial";
+    ctx.textBaseline = "middle";
+    meta.data.forEach((bar, index) => {
+      const row = rows[index];
+      if (!row || !row.state) return;
+      if (!["delay", "prealarm"].includes(row.state.code)) return;
+      const text = row.state.code === "delay" ? `+${row.state.delayDays}d` : (row.state.dday === 0 ? "D-Day" : `D-${row.state.dday}`);
+      const right = bar.x + bar.width / 2;
+      ctx.fillStyle = row.state.code === "delay" ? "#be123c" : "#c2410c";
+      ctx.textAlign = "left";
+      if (right + 46 > chart.chartArea.right) {
+        ctx.textAlign = "right";
+        ctx.fillText(text, bar.x - bar.width / 2 - 6, bar.y);
+      } else {
+        ctx.fillText(text, right + 6, bar.y);
+      }
+    });
+    ctx.restore();
+  }
 };
+
+// 상태(status) 색 - QA Page CSS 토큰과 동일. 색만으로 구분하지 않도록 legend + 직접 표기를 함께 씁니다.
+const CODE_COLOR = {
+  delay: "#be123c", prealarm: "#c2410c", watch: "#a16207",
+  planned: "#1d4ed8", pending: "#64748b", done: "#047857", none: "#cbd5e1"
+};
+const CODE_LABEL = {
+  delay: "Delay session", prealarm: "Pre alarm", watch: "On going",
+  planned: "Planned", pending: "Pending", done: "Done", none: "-"
+};
+
+function renderGanttLegend(rows) {
+  if (!ui.ganttLegend) return;
+  const used = [];
+  ["delay", "prealarm", "watch", "planned", "pending", "done"].forEach(code => {
+    const count = rows.filter(row => row.state.code === code).length;
+    if (count) used.push(`<span><i style="background:${CODE_COLOR[code]}"></i>${escapeHtml(CODE_LABEL[code])} ${count}</span>`);
+  });
+  ui.ganttLegend.innerHTML = used.join("") || `<span>표시할 일정이 없습니다.</span>`;
+}
 
 function renderGantt() {
   if (typeof Chart === "undefined" || !ui.ganttChart) return;
   const plan = ui.planSelect.value || (viewRows[0] && viewRows[0].sheetName) || "";
+
+  // Criteria를 Sheet에 나온 순서(첫 행 번호)대로 묶고, 그 안에서는 Sheet 행 순서대로
+  const firstRowByCriteria = new Map();
+  viewRows.filter(r => r.sheetName === plan).forEach(r => {
+    const current = firstRowByCriteria.get(r.criteria);
+    if (current === undefined || (r.rowNumber || 0) < current) firstRowByCriteria.set(r.criteria, r.rowNumber || 0);
+  });
+  const criteriaOrder = Array.from(firstRowByCriteria.entries())
+    .sort((a, b) => a[1] - b[1])
+    .map(entry => entry[0]);
+
   const rows = viewRows
-    .filter(r => r.sheetName === plan && r.dateIn && r.dateOut)
-    .sort((a, b) => String(a.dateIn).localeCompare(String(b.dateIn)) || a.rowNumber - b.rowNumber)
-    .slice(0, 45);
+    .filter(r => r.sheetName === plan && isoToMs(r.dateIn) !== null && isoToMs(r.dateOut) !== null)
+    .sort((a, b) =>
+      criteriaOrder.indexOf(a.criteria) - criteriaOrder.indexOf(b.criteria) ||
+      (a.rowNumber || 0) - (b.rowNumber || 0))
+    .slice(0, 60);
 
   if (ganttChart) { ganttChart.destroy(); ganttChart = null; }
-  if (!rows.length) return;
+  renderGanttLegend(rows);
+  if (!rows.length) {
+    ui.ganttChart.height = 120;
+    return;
+  }
 
-  const toMs = iso => Date.UTC(...iso.split("-").map((v, i) => (i === 1 ? Number(v) - 1 : Number(v))));
+  const starts = rows.map(r => isoToMs(r.dateIn));
+  const ends = rows.map(r => isoToMs(r.dateOut));
+  const todayMs = isoToMs(today);
+
+  // 일정 구간에 맞춰 축을 잡습니다. 오늘이 일정에서 너무 멀면(과거 Plan 등) 축을 늘리지 않습니다.
+  let min = Math.min(...starts);
+  let max = Math.max(...ends);
+  const span = Math.max(max - min, ONE_DAY);
+  if (todayMs >= min - span * 0.5 && todayMs <= max + span * 0.5) {
+    min = Math.min(min, todayMs);
+    max = Math.max(max, todayMs);
+  }
+  const pad = Math.max((max - min) * 0.04, ONE_DAY * 2);
+  min -= pad;
+  max += pad;
+
+  // 화면 높이를 행 수에 맞춰 조정 (막대가 겹쳐 보이지 않도록)
+  ui.ganttChart.style.height = `${Math.max(220, rows.length * 22 + 70)}px`;
+
+  const surface = "#ffffff";
   ganttChart = new Chart(ui.ganttChart.getContext("2d"), {
     type: "bar",
     data: {
-      labels: rows.map(r => `${r.criteria} · ${r.relItem}`.slice(0, 52)),
+      labels: rows.map(r => {
+        const head = shortCriteria(r.criteria);
+        const tail = [r.relItem, normalizeText(r.condition) && r.condition !== "-" ? r.condition : ""].filter(Boolean).join(" ");
+        return `${head} · ${tail}`.slice(0, 46);
+      }),
       datasets: [{
         label: "Date in → Date out",
-        data: rows.map(r => [toMs(r.dateIn), toMs(r.dateOut)]),
-        backgroundColor: rows.map(r => CODE_COLOR[r.state.code]),
-        borderRadius: 5,
+        data: rows.map((r, i) => [starts[i], Math.max(ends[i], starts[i] + ONE_DAY * 0.4)]),
+        backgroundColor: rows.map(r => CODE_COLOR[r.state.code] || CODE_COLOR.none),
+        borderColor: surface,
+        borderWidth: { top: 0, bottom: 0, left: 1, right: 1 },
+        borderRadius: 4,
         borderSkipped: false,
-        barThickness: 12
+        barThickness: 11
       }]
     },
     options: {
       indexAxis: "y",
       maintainAspectRatio: false,
+      responsive: true,
+      layout: { padding: { top: 18, right: 54 } },
       plugins: {
         legend: { display: false },
         tooltip: {
+          displayColors: false,
           callbacks: {
+            title: ctx => rows[ctx[0].dataIndex].criteria,
             label: ctx => {
               const row = rows[ctx.dataIndex];
-              return `${row.dateIn} → ${row.dateOut} (${row.duration ?? "-"}d) · ${row.state.label}`;
+              return [
+                `${row.relItem}${row.condition && row.condition !== "-" ? ` · ${row.condition}` : ""}`,
+                `${row.dateIn} → ${row.dateOut} (${row.duration ?? "-"}일)`,
+                `${CODE_LABEL[row.state.code]}${row.state.dday !== null ? ` · ${formatDday(row.state.dday)}` : ""}`
+              ];
             }
           }
         }
@@ -897,17 +1011,30 @@ function renderGantt() {
       scales: {
         x: {
           type: "linear",
+          bounds: "data",
+          beginAtZero: false,
+          min,
+          max,
           ticks: {
-            maxTicksLimit: 10,
-            callback: value => new Date(value).toISOString().slice(0, 10)
+            maxTicksLimit: 9,
+            autoSkip: true,
+            color: "#64748b",
+            font: { size: 11 },
+            callback: value => msToShort(value)
           },
-          grid: { color: "rgba(148,163,184,.2)" }
+          grid: { color: "rgba(148,163,184,.18)" },
+          border: { display: false }
         },
-        y: { ticks: { font: { size: 10 } }, grid: { display: false } }
+        y: {
+          ticks: { color: "#475569", font: { size: 10 }, autoSkip: false },
+          grid: { display: false },
+          border: { display: false }
+        }
       }
     },
-    plugins: [todayLinePlugin]
+    plugins: [todayLinePlugin, barLabelPlugin]
   });
+  ganttChart.$relRows = rows;
 }
 
 /* ============================================================

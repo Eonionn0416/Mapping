@@ -118,6 +118,15 @@ Reliability test plan Excel(예: `Reliability test plan for MNT_2634.xlsx`)의 *
 - 마지막 `Date out`이 90일 이상 지난 오래된 Plan(Sheet)은 기본적으로 알림이 보류되며,
   Uploaded Plan List에서 **알림 ON/OFF** 버튼으로 언제든 변경할 수 있습니다.
 
+### Plan Timeline (Gantt)
+
+선택한 Plan의 Criteria &rarr; Rel item 순서로 각 단계의 `Date in ~ Date out` 구간을 가로 막대로 그립니다.
+
+- 축은 **그 Plan의 일정 범위에만** 맞춥니다. (Chart.js bar 축이 0=1970-01-01부터 시작해 timeline이 57년으로 늘어나던 문제를 수정)
+- 오늘이 일정에서 너무 멀면(과거 Plan) 축을 오늘까지 늘리지 않고 일정 구간만 표시합니다.
+- 빨간 점선 = 오늘, 막대 색 = 상태, **Delay / Pre alarm 막대 끝에는 `+3d` / `D-2` 를 직접 표기**하여 색만으로 상태를 구분하지 않게 했습니다.
+- 상단에 상태별 건수 legend가 표시되고, 막대에 마우스를 올리면 Date in / Date out / Duration / D-Day가 나옵니다.
+
 ### 같은 파일을 다시 넣을 때 (WW 갱신)
 
 중복 판단 기준(dedupeKey)에 **파일명이 들어가지 않습니다**. 제목의 `WW`가 매주 바뀌어도 같은 항목으로 인식하므로,
