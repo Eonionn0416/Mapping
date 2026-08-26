@@ -72,7 +72,7 @@ let ganttChart = null;
 let lastAlertSignature = "";
 let knownAlertKeys = new Set();
 let toastSnooze = new Map();      // dedupeKey -> timestamp
-let lastUploadDiff = { created: 0, updated: 0, unchanged: 0 };
+let lastUploadDiff = { created: 0, updated: 0, unchanged: 0, removed: 0 };
 let today = todayIso();
 
 const el = id => document.getElementById(id);
@@ -86,6 +86,7 @@ const ui = {
   showAlertBtn: el("showAlertBtn"),
   recheckBtn: el("recheckBtn"),
   reloadBtn: el("reloadBtn"),
+  clearAllBtn: el("clearAllBtn"),
   exportBtn: el("exportBtn"),
   dropZone: el("dropZone"),
   excelFiles: el("excelFiles"),
@@ -108,7 +109,7 @@ const ui = {
     planned: el("mPlanned"), done: el("mDone"), total: el("mTotal"),
     plans: el("mPlans"),
     firestore: el("mFirestore"),
-    newRows: el("mNew"), updatedRows: el("mUpdated"), sameRows: el("mSame")
+    newRows: el("mNew"), updatedRows: el("mUpdated"), sameRows: el("mSame"), removedRows: el("mRemoved")
   }
 };
 
@@ -407,18 +408,25 @@ async function handleFiles(files) {
   }
 
   const diff = diffRecords(parsedAll);
-  lastUploadDiff = { created: diff.created.length, updated: diff.updated.length, unchanged: diff.unchanged.length };
-  log(`변경 비교: New ${diff.created.length} / Updated ${diff.updated.length} / 변경없음 ${diff.unchanged.length}`);
+  const removedRows = mergeRows(parsedAll);
+  lastUploadDiff = {
+    created: diff.created.length,
+    updated: diff.updated.length,
+    unchanged: diff.unchanged.length,
+    removed: removedRows.length
+  };
+  log(`변경 비교: New ${diff.created.length} / Updated ${diff.updated.length} / 변경없음 ${diff.unchanged.length} / 삭제됨 ${removedRows.length}`);
   diff.updated.slice(0, 20).forEach(row => {
     log(`  ↻ ${row.sheetName} · ${row.criteria} · ${row.relItem} — ${(row.__changes || []).join(", ")}`);
   });
 
-  mergeRows(parsedAll);
   refreshAll({ forceAlert: true });
 
   const changedOnly = diff.created.concat(diff.updated);
   if (changedOnly.length) await uploadRows(changedOnly);
   else log("변경된 row가 없어 Firestore 업로드를 생략했습니다.");
+
+  if (removedRows.length) await deleteRemovedRows(removedRows);
   if (ui.excelFiles) ui.excelFiles.value = "";
 }
 
@@ -462,12 +470,61 @@ function diffRecords(incoming) {
   return { created, updated, unchanged };
 }
 
-/** 같은 dedupeKey는 최신 값으로 교체 */
+/**
+ * 같은 dedupeKey는 최신 값으로 교체하고, 이번에 Upload된 Sheet 안에서
+ * 더 이상 나오지 않는(=Excel에서 지워진) 예전 row는 함께 제거합니다.
+ * (파일명은 WW만 바뀔 뿐 Sheet 구조는 유지된다는 전제 — 이번 배치에 등장한
+ *  sheetName만 "전체 교체" 대상으로 보고, 등장하지 않은 다른 Sheet의 기존 데이터는 그대로 둡니다.)
+ *
+ * @returns {Array} 이번 배치에서 사라진(더 이상 존재하지 않는) 기존 row 목록
+ */
 function mergeRows(incoming) {
-  const map = new Map(rawRows.map(row => [row.dedupeKey, row]));
-  incoming.forEach(row => map.set(row.dedupeKey, { ...map.get(row.dedupeKey), ...row }));
+  const incomingSheets = new Set(incoming.map(row => row.sheetName));
+  const incomingKeys = new Set(incoming.map(row => row.dedupeKey));
+  const removed = rawRows.filter(row => incomingSheets.has(row.sheetName) && !incomingKeys.has(row.dedupeKey));
+  const survivors = rawRows.filter(row => !incomingSheets.has(row.sheetName));
+
+  const map = new Map(survivors.map(row => [row.dedupeKey, row]));
+  incoming.forEach(row => map.set(row.dedupeKey, row));
   rawRows = Array.from(map.values());
   cacheRows();
+  return removed;
+}
+
+/**
+ * Sheet 내에서 사라진(=지워진) row를 Local status + Firestore(relScheduleRaw/relScheduleStatus)에서 정리합니다.
+ * 그대로 두면 Excel에서 지워진 row가 영원히 누적되어 Storage 용량을 계속 갉아먹기 때문입니다.
+ */
+async function deleteRemovedRows(rows) {
+  if (!rows.length) return;
+
+  let statusChanged = false;
+  rows.forEach(row => { if (statusMap.delete(row.dedupeKey)) statusChanged = true; });
+  if (statusChanged) cacheStatus();
+
+  const bySheet = new Map();
+  rows.forEach(row => bySheet.set(row.sheetName, (bySheet.get(row.sheetName) || 0) + 1));
+  const summary = Array.from(bySheet.entries()).map(([sheet, count]) => `${sheet}(${count})`).join(", ");
+  log(`Sheet 내에서 사라진 row ${rows.length}건 정리: ${summary}`);
+
+  if (!db || !currentUser) { log("Firebase 준비 전이라 Local에서만 정리했습니다."); return; }
+  try {
+    let batch = writeBatch(db);
+    let count = 0;
+    for (const row of rows) {
+      batch.delete(doc(db, RAW_COLLECTION, row.dedupeKey));
+      batch.delete(doc(db, STATUS_COLLECTION, row.dedupeKey));
+      count += 2;
+      if (count >= BATCH_LIMIT) { await batch.commit(); batch = writeBatch(db); count = 0; }
+    }
+    if (count > 0) await batch.commit();
+    log(`Firestore 정리 완료: ${rows.length} rows 삭제.`);
+  } catch (error) {
+    console.error(error);
+    const hint = describeFirebaseError(error);
+    log(`정리 삭제 실패: ${error.message}${hint ? ` — ${hint}` : ""}`);
+    setFirebaseStatus(hint || "Firestore delete error", "danger");
+  }
 }
 
 function cacheRows() {
@@ -542,6 +599,75 @@ async function loadFirestoreData() {
     log(`Firestore Load Error: ${error.message}${hint ? ` — ${hint}` : ""}`);
     setFirebaseStatus(hint || "Firestore read error", "danger");
   }
+}
+
+/** Firestore collection의 모든 문서를 batch로 삭제합니다. (BATCH_LIMIT 단위로 분할) */
+async function deleteAllDocsInCollection(collectionName) {
+  const snap = await getDocs(collection(db, collectionName));
+  if (snap.empty) return 0;
+  const docs = snap.docs;
+  for (let i = 0; i < docs.length; i += BATCH_LIMIT) {
+    const chunk = docs.slice(i, i + BATCH_LIMIT);
+    const batch = writeBatch(db);
+    chunk.forEach(d => batch.delete(d.ref));
+    await batch.commit();
+  }
+  return docs.length;
+}
+
+/** Uploaded Plan List 전체를 Local(localStorage) + Firestore에서 삭제합니다. */
+async function clearAllUploadedData() {
+  const total = rawRows.length;
+  if (!total && !statusMap.size && !planStatusMap.size) {
+    log("삭제할 Upload 데이터가 없습니다.");
+    return;
+  }
+  const confirmed = window.confirm(
+    `Uploaded Plan List 전체(${total.toLocaleString()} rows)를 Local과 Firestore에서 모두 삭제하시겠습니까?\n` +
+    `이 작업은 되돌릴 수 없습니다.`
+  );
+  if (!confirmed) return;
+
+  if (ui.clearAllBtn) { ui.clearAllBtn.disabled = true; ui.clearAllBtn.textContent = "삭제 중..."; }
+
+  let firestoreOk = true;
+  if (db && currentUser) {
+    try {
+      const [rawDeleted, statusDeleted] = await Promise.all([
+        deleteAllDocsInCollection(RAW_COLLECTION),
+        deleteAllDocsInCollection(STATUS_COLLECTION)
+      ]);
+      log(`Firestore 삭제 완료: ${RAW_COLLECTION} ${rawDeleted}건 / ${STATUS_COLLECTION} ${statusDeleted}건.`);
+    } catch (error) {
+      firestoreOk = false;
+      console.error(error);
+      const hint = describeFirebaseError(error);
+      log(`Firestore 삭제 실패: ${error.message}${hint ? ` — ${hint}` : ""}`);
+      setFirebaseStatus(hint || "Firestore delete error", "danger");
+    }
+  } else {
+    firestoreOk = false;
+    log("Firebase 준비 전이라 Local 데이터만 삭제했습니다.");
+  }
+
+  // Local 상태 초기화
+  rawRows = [];
+  statusMap = new Map();
+  planStatusMap = new Map();
+  viewRows = [];
+  lastUploadDiff = { created: 0, updated: 0, unchanged: 0, removed: 0 };
+  knownAlertKeys = new Set();
+  toastSnooze = new Map();
+  try { localStorage.removeItem(LS_ROWS); } catch (error) { /* ignore */ }
+  try { localStorage.removeItem(LS_STATUS); } catch (error) { /* ignore */ }
+  if (ui.m.firestore) ui.m.firestore.textContent = "0";
+
+  refreshAll({ forceAlert: true });
+  log(firestoreOk
+    ? "Uploaded Plan List를 Local + Firestore에서 모두 삭제했습니다."
+    : "Local Upload 데이터를 삭제했습니다. (Firestore는 삭제하지 못했으니 위 오류를 확인해주세요)");
+
+  if (ui.clearAllBtn) { ui.clearAllBtn.disabled = false; ui.clearAllBtn.textContent = "전체 삭제 (Local+Firestore)"; }
 }
 
 async function saveItemStatus(dedupeKey, manualDone) {
@@ -641,6 +767,7 @@ function renderMetrics() {
   if (ui.m.newRows) ui.m.newRows.textContent = lastUploadDiff.created.toLocaleString();
   if (ui.m.updatedRows) ui.m.updatedRows.textContent = lastUploadDiff.updated.toLocaleString();
   if (ui.m.sameRows) ui.m.sameRows.textContent = lastUploadDiff.unchanged.toLocaleString();
+  if (ui.m.removedRows) ui.m.removedRows.textContent = lastUploadDiff.removed.toLocaleString();
 }
 
 function fillSelect(select, values, allLabel) {
@@ -1234,6 +1361,7 @@ function setupEvents() {
   ui.searchInput.addEventListener("input", renderTable);
   ui.exportBtn.addEventListener("click", exportReport);
   ui.reloadBtn.addEventListener("click", loadFirestoreData);
+  if (ui.clearAllBtn) ui.clearAllBtn.addEventListener("click", clearAllUploadedData);
   ui.recheckBtn.addEventListener("click", () => refreshAll({ forceAlert: true }));
   ui.showAlertBtn.addEventListener("click", () => openAlertModal(activeAlerts()));
 

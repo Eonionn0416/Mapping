@@ -139,6 +139,7 @@ button:hover:not(:disabled) { transform: translateY(-1px); }
 button:disabled { opacity: .55; cursor: not-allowed; transform: none; }
 button.primary { background: var(--primary); color: #fff; box-shadow: 0 10px 24px rgba(37,99,255,.24); }
 button.secondary { background: var(--primary-soft); color: var(--primary); }
+button.danger { background: var(--danger-bg); color: var(--danger-text); }
 
 .inline-control, label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; font-weight: 900; }
 .inline-control { min-width: 210px; }

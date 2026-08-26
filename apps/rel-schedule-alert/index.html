@@ -93,6 +93,7 @@
       <article class="metric-card"><p>New (직전 Upload)</p><strong id="mNew">0</strong></article>
       <article class="metric-card"><p>Updated (직전 Upload)</p><strong id="mUpdated">0</strong></article>
       <article class="metric-card"><p>변경 없음</p><strong id="mSame">0</strong></article>
+      <article class="metric-card"><p>삭제됨 (Sheet 내 제거, 직전 Upload)</p><strong id="mRemoved">0</strong></article>
     </section>
 
     <section class="panel">
@@ -210,7 +211,10 @@
           <h2>Uploaded Plan List</h2>
           <p>Firestore <b>relScheduleRaw</b> collection 기준입니다.</p>
         </div>
-        <button id="reloadBtn" type="button" class="secondary">Firestore 새로고침</button>
+        <div style="display:flex;gap:8px">
+          <button id="reloadBtn" type="button" class="secondary">Firestore 새로고침</button>
+          <button id="clearAllBtn" type="button" class="danger">전체 삭제 (Local+Firestore)</button>
+        </div>
       </div>
       <div class="table-wrap compact">
         <table>
