@@ -477,3 +477,39 @@ export const ALERT_CODES = ["delay", "prealarm"];
 export function isAlerting(code) {
   return ALERT_CODES.includes(code);
 }
+
+/* ---------------- Rel team 샘플 수령 확인 ---------------- */
+
+/**
+ * 각 Sheet(Plan)에서 가장 먼저 나오는 행(Precon 체인의 시작 행, 보통 T0 SAT)의
+ * Remark가 비어 있고 Receive date가 이미 지났으면, "Test된 T0 Sample이 아직
+ * Rel team으로 전달되지 않았을 수 있다"고 보고 확인 알림 대상으로 표시합니다.
+ *
+ *  - 대상 행: Sheet 안에서 rowNumber가 가장 작은(=Excel에서 가장 위에 있는) 행 1개
+ *  - 조건: Remark가 비어 있고, Today() >= Receive date() (Receive date를 모르면 판단 보류)
+ *  - Remark에 무엇이든 적히면(재업로드 시) 전달 확인이 끝난 것으로 보고 알림에서 빠집니다.
+ *  - 표/팝업의 Done 체크박스로 수동 처리(manualDone=true)해도 알림에서 빠집니다.
+ *
+ * @returns {Map<string, {receiveDate:string}>} dedupeKey -> 알림 정보
+ */
+export function markSampleReceiptCheck(records, statusMap = new Map(), today = todayIso()) {
+  const firstBySheet = new Map();
+  records.forEach(record => {
+    if (isTemplateSheet(record.sheetName)) return;
+    const current = firstBySheet.get(record.sheetName);
+    if (!current || (record.rowNumber || 0) < (current.rowNumber || 0)) {
+      firstBySheet.set(record.sheetName, record);
+    }
+  });
+
+  const flagged = new Map();
+  firstBySheet.forEach(record => {
+    if (normalizeText(record.remark)) return;
+    if (!record.receiveDate) return;
+    if (dayDiff(today, record.receiveDate) < 0) return;
+    const statusDoc = statusMap.get(record.dedupeKey) || null;
+    if (statusDoc && statusDoc.manualDone === true) return;
+    flagged.set(record.dedupeKey, { receiveDate: record.receiveDate });
+  });
+  return flagged;
+}

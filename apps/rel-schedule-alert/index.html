@@ -49,6 +49,9 @@
           <b>2 ≥ (Date out − Today) ≥ 0</b> 이면 <b>Pre alarm</b>(시작일이 주말이면 직전 영업일부터),
           <b>(Date out − Today) &lt; 0</b> 이면 <b>Delay session</b>으로 하루마다 <b>Delay +1</b>이 누적되고
           <b>Done</b>으로 바뀔 때까지 계속 알림이 뜹니다.
+          Pre alarm은 팝업 없이 아래 <b>Criteria별 Schedule &amp; Alert 현황</b> 표에서만 표시됩니다.
+          또한 각 Sheet의 <b>맨 첫 행(T0 SAT 등)</b>의 <b>Remark가 비어 있고 Receive date가 지났으면</b>
+          <b>Rel team 샘플 수령확인</b> 알림이 Delay와 함께 팝업으로 뜹니다(Remark를 채워 재업로드하면 해제).
         </p>
         <div class="legend">
           <span><i style="background:#be123c"></i>Delay session (Date out 경과, Delay +N)</span>
@@ -56,6 +59,7 @@
           <span><i style="background:#a16207"></i>On going (D-2 이전)</span>
           <span><i style="background:#1d4ed8"></i>Planned</span>
           <span><i style="background:#047857"></i>Done</span>
+          <span><i style="background:#6d28d9"></i>Rel team 수령확인 필요</span>
         </div>
       </div>
       <div class="hero-card">
@@ -84,6 +88,7 @@
       <article class="metric-card soon"><p>On going (D-2 이전)</p><strong id="mWatch">0</strong></article>
       <article class="metric-card"><p>Planned</p><strong id="mPlanned">0</strong></article>
       <article class="metric-card done"><p>Done</p><strong id="mDone">0</strong></article>
+      <article class="metric-card recv"><p>Rel team 수령확인 필요</p><strong id="mRecv">0</strong></article>
     </section>
 
     <section class="grid six">
