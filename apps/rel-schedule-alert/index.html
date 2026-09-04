@@ -44,21 +44,6 @@
         <p class="eyebrow">Reliability test plan tracker</p>
         <h1>REL Schedule Alert</h1>
         <p class="subtitle">
-          Reliability test plan Excel을 Drag &amp; Drop 하면 각 Sheet의 Criteria별 Rel item 일정을 Firestore에 누적 저장합니다.
-          알림 대상은 <b>각 Criteria에서 Status가 On going인 항목</b>이며(Status 미기재 행은 제외),
-          <b>2 ≥ (Date out − Today) ≥ 0</b> 이면 <b>Pre alarm</b>(시작일이 주말이면 직전 영업일부터),
-          <b>(Date out − Today) &lt; 0</b> 이면 <b>Delay session</b>으로 하루마다 <b>Delay +1</b>이 누적되고
-          <b>Done</b>으로 바뀔 때까지 계속 알림이 뜹니다.
-          우측 <b>Toast는 Delay session만</b> 뜨고, 중앙 <b>Reliability Schedule Alert 모달은
-          Delay + to Rel/to FT 전달확인(critical)</b>을 함께 보여줍니다. Pre alarm과 수령확인은
-          팝업 없이 아래 <b>Criteria별 Schedule &amp; Alert 현황</b> 표(및 상단 배너·카드)에서만 표시됩니다.
-          각 Sheet의 <b>맨 첫 행(T0 SAT 등)</b>의 <b>Remark가 비어 있고 Receive date가 지났으면</b>
-          <b>Rel team 샘플 수령확인</b>이, 각 <b>Status 병합 구간(2행 이상)의 맨 마지막 행</b> Remark가
-          비어 있고 그 구간의 Date out이 지났으면 <b>to Rel / to FT 전달확인</b>이(마지막 행의 Rel item에
-          FT가 들어있으면 <b>to Rel</b>, Bake/T0 SAT/SAT/Soak/Reflow/Post MSL SAT 등이면 <b>to FT</b>)
-          표시됩니다(Remark를 채워 재업로드하거나 Done 체크하면 해제). to Rel/to FT는 자재 이동
-          확인이 안 된 critical 항목이라 표에서 <b>파란색 행</b>으로 강조되고, Pre alarm보다도 위에
-          정렬됩니다.
         </p>
         <div class="legend">
           <span><i style="background:#be123c"></i>Delay session (Date out 경과, Delay +N) · Toast+모달 대상</span>
