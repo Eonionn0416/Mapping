@@ -139,6 +139,20 @@ service cloud.firestore {
       allow delete: if signedIn();
     }
 
+    // REL Schedule Alert - 업로드한 원본 Excel 파일 다운로드 링크 메타데이터.
+    match /relScheduleFiles/{docId} {
+      allow read: if signedIn();
+
+      allow create, update: if signedIn()
+        && request.resource.data.keys().hasAll([
+          'fileName',
+          'downloadURL',
+          'uploadedAt'
+        ]);
+
+      allow delete: if signedIn();
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }
