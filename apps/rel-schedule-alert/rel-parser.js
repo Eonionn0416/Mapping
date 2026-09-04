@@ -525,6 +525,49 @@ function isFtRelItem(relItem) {
   return /ft/i.test(normalizeText(relItem));
 }
 
+/** Condition에서 "ET숫자" 패턴을 뽑아냅니다. (ET1, ET2, ET 2 등) 없으면 null. */
+function parseEtNumber(condition) {
+  const m = normalizeText(condition).match(/ET\s*(\d+)/i);
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * MNT/MTK 형식은 같은 (Sheet, Criteria, Rel item)을 ET1 → ET2로 반복 시험합니다(ET2를 안 하는
+ * 경우도 있음). 이때는 가장 큰 ET 번호 구간만 확인 대상으로 남기고 이전 ET 구간은 제외합니다.
+ * BDR 형식은 ET가 바뀔 때 Rel item도 함께 바뀌므로(ET1은 A 항목, ET2는 B 항목) 같은
+ * (Criteria, Rel item) 조합으로 묶이는 ET 구간이 애초에 하나뿐이라 이 필터가 아무것도 제외하지
+ * 않습니다 — 그래서 파일 종류를 따로 구분하지 않아도 두 형식 모두에 안전하게 적용됩니다.
+ *
+ * Condition 값은 Date out과 마찬가지로 병합 구간의 첫 행에만 적혀 있고 나머지 행(특히 마지막 행)은
+ * 비어 있는 경우가 많으므로, 구간의 ET 번호는 마지막 행 하나만 보지 않고 구간 전체 행을 훑어서
+ * 찾아냅니다.
+ *
+ * @param {{key:string, sorted:object[], lastRow:object}[]} blocks
+ * @returns {Set<string>} 제외할 block key
+ */
+function excludeEarlierEtBlocks(blocks) {
+  const byGroup = new Map();
+  blocks.forEach(({ key, sorted, lastRow }) => {
+    let etNum = null;
+    for (const row of sorted) {
+      etNum = parseEtNumber(row.condition);
+      if (etNum !== null) break;
+    }
+    if (etNum === null) return;
+    const groupKey = `${lastRow.sheetName}|${lastRow.criteria}|${lastRow.relItem}`;
+    if (!byGroup.has(groupKey)) byGroup.set(groupKey, []);
+    byGroup.get(groupKey).push({ key, etNum });
+  });
+
+  const excluded = new Set();
+  byGroup.forEach(entries => {
+    if (entries.length < 2) return;   // 같은 조합에 ET가 하나뿐이면 제외할 게 없음(=BDR 형식 포함)
+    const maxEt = Math.max(...entries.map(e => e.etNum));
+    entries.forEach(e => { if (e.etNum < maxEt) excluded.add(e.key); });
+  });
+  return excluded;
+}
+
 /**
  * 각 Criteria 안에서 Status 컬럼이 실제로 세로 병합된 구간(예: Bake+Soak+Reflow+Post MSL SAT,
  * 또는 같은 FT(MSL TC)/FT(MSL uHAST)/FT(MSL HTST) 묶음)마다, 그 구간의 **맨 마지막 행** Remark가
@@ -532,6 +575,7 @@ function isFtRelItem(relItem) {
  * 표시합니다.
  *
  *  - 대상: Status 병합 셀 1개(=병합 행이 2개 이상인 구간)의 맨 마지막 행
+ *  - 같은 (Criteria, Rel item)이 ET1 → ET2로 반복되면(MNT/MTK 형식) 가장 큰 ET 구간만 확인합니다.
  *  - 방향 판정: 그 마지막 행의 Rel item에 "FT"가 들어있으면 → FT 시험이 끝난 뒤이므로 "to Rel"
  *    (Rel team에게 돌려보냈는지) 확인, 그 외(Bake/T0 SAT/SAT/Soak/Reflow/Post MSL SAT 등)면
  *    → "to FT" (FT팀에게 넘겼는지) 확인.
@@ -550,11 +594,17 @@ export function markHandoffCheck(records, statusMap = new Map(), today = todayIs
     groups.get(key).push(record);
   });
 
+  const blocks = Array.from(groups.entries())
+    .filter(([, members]) => members.length >= 2)
+    .map(([key, members]) => {
+      const sorted = members.slice().sort((a, b) => (a.rowNumber || 0) - (b.rowNumber || 0));
+      return { key, sorted, lastRow: sorted[sorted.length - 1] };
+    });
+  const excludedKeys = excludeEarlierEtBlocks(blocks);
+
   const flagged = new Map();
-  groups.forEach(members => {
-    if (members.length < 2) return;   // 실제로 병합된(2행 이상) 구간만 대상
-    const sorted = members.slice().sort((a, b) => (a.rowNumber || 0) - (b.rowNumber || 0));
-    const lastRow = sorted[sorted.length - 1];
+  blocks.forEach(({ key, sorted, lastRow }) => {
+    if (excludedKeys.has(key)) return;
     if (normalizeText(lastRow.remark)) return;
 
     const dated = sorted.filter(row => row.dateOut);

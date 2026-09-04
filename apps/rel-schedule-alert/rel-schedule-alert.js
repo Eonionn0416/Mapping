@@ -747,10 +747,11 @@ function evaluateRows() {
       handoff: handoffMap.get(row.dedupeKey) || null
     };
   });
+  // 정렬 기준은 Delay > Pre alarm > On going > ... 순서를 항상 최우선으로 둡니다.
+  // (수령확인 / to Rel·to FT 전달확인은 표 위쪽으로 끌어올리지 않고, 원래 순서 안에서
+  // pill 태그 + 전용 Alert Status 필터로만 구분합니다 — Pop up(#1: Delay만)과 표(#2)가
+  // 서로 다른 항목을 최상단에 보여주던 불일치를 없애기 위함입니다.)
   viewRows.sort((a, b) => {
-    const aFlag = (a.recvCheck || a.handoff) ? 0 : 1;
-    const bFlag = (b.recvCheck || b.handoff) ? 0 : 1;
-    if (aFlag !== bFlag) return aFlag - bFlag;
     const order = { delay: 0, prealarm: 1, watch: 2, planned: 3, pending: 4, none: 5, done: 6 };
     const byCode = order[a.state.code] - order[b.state.code];
     if (byCode) return byCode;
@@ -777,10 +778,11 @@ function handoffAlerts() {
 
 /**
  * 실제로 팝업(Toast + 자동 모달)을 띄울 대상만 모읍니다.
- * Pre alarm은 "Criteria별 Schedule & Alert 현황" 표에서 바로 확인할 수 있어 팝업에서는 뺍니다.
+ * Pre alarm, Rel team 수령확인, to Rel/to FT 전달확인은 모두 "Criteria별 Schedule & Alert 현황"
+ * 표(및 상단 배너/카드)에서 바로 확인할 수 있으므로 팝업(Toast·자동 모달)에는 Delay만 띄웁니다.
  */
 function popupAlerts() {
-  return viewRows.filter(row => !row.muted && (row.state.code === "delay" || row.recvCheck || row.handoff));
+  return viewRows.filter(row => !row.muted && row.state.code === "delay");
 }
 
 /* ============================================================
@@ -1237,31 +1239,20 @@ function groupAlerts(alerts) {
 
 /**
  * 실제 팝업(Toast + 자동 모달)에 들어가는 항목만 묶습니다.
- * Pre alarm은 표에서 볼 수 있으므로 여기엔 포함하지 않습니다.
+ * Pre alarm, 수령확인, 전달확인(to Rel/to FT)은 모두 표/배너/카드에서 볼 수 있으므로
+ * 팝업에는 Delay만 남깁니다.
  */
 function popupGroups(alerts) {
   return {
-    delay: alerts.filter(r => r.state.code === "delay").sort((a, b) => a.state.dday - b.state.dday),
-    recv: alerts.filter(r => r.recvCheck).sort((a, b) => String(a.sheetName).localeCompare(String(b.sheetName))),
-    handoff: alerts.filter(r => r.handoff).sort((a, b) => String(a.sheetName).localeCompare(String(b.sheetName)))
+    delay: alerts.filter(r => r.state.code === "delay").sort((a, b) => a.state.dday - b.state.dday)
   };
 }
 
 function alertItemHtml(row) {
-  const cls = (row.recvCheck || row.handoff) ? "recv" : (row.state.code === "delay" ? "delayed" : "due");
-  const big = row.recvCheck
-    ? "수령확인"
-    : row.handoff
-      ? (row.handoff.kind === "toRel" ? "to Rel" : "to FT")
-      : row.state.code === "delay"
-        ? `Delay +${row.state.delayDays}`
-        : (row.state.dday === 0 ? "오늘 Date out" : `D-${row.state.dday}`);
-  const sub = row.recvCheck
-    ? [row.sheetName, `Receive date ${row.recvCheck.receiveDate}`, "Remark 미기재"].filter(Boolean).join(" · ")
-    : row.handoff
-      ? [row.sheetName, `Date out ${row.handoff.dateOut}`, row.handoff.kind === "toRel" ? "Rel team 전달 여부 미기재" : "FT팀 전달 여부 미기재"].filter(Boolean).join(" · ")
-      : [row.sheetName, "On going", row.assyLot, row.ftLot, row.dateIn ? `In ${row.dateIn}` : ""].filter(Boolean).join(" · ");
-  const rightSub = row.recvCheck ? `Receive ${row.recvCheck.receiveDate}` : row.handoff ? `Date out ${row.handoff.dateOut}` : `Date out ${row.dateOut}`;
+  const cls = "delayed";
+  const big = `Delay +${row.state.delayDays}`;
+  const sub = [row.sheetName, "On going", row.assyLot, row.ftLot, row.dateIn ? `In ${row.dateIn}` : ""].filter(Boolean).join(" · ");
+  const rightSub = `Date out ${row.dateOut}`;
   return `<div class="alert-item ${cls}">
     <input type="checkbox" class="done-check" data-key="${escapeHtml(row.dedupeKey)}" title="Done 처리" />
     <div class="ai-main">
@@ -1283,15 +1274,13 @@ function openAlertModal(alerts) {
        </div>` : "";
 
   ui.alertBody.innerHTML =
-    section("🚨 Delay session · Date out 경과 (Done 전까지 계속 알림)", "delayed", groups.delay) +
-    section("📦 Rel team 샘플 수령확인 필요 (T0 Sample 전달 여부 미기재)", "recv", groups.recv) +
-    section("📤 to Rel / to FT 전달확인 필요 (구간 마지막 행 Remark 미기재)", "recv", groups.handoff);
+    section("🚨 Delay session · Date out 경과 (Done 전까지 계속 알림)", "delayed", groups.delay);
 
   ui.alertSubtitle.textContent =
-    `오늘 ${today} 기준 · Delay ${groups.delay.length}건 / 수령확인 ${groups.recv.length}건 / 전달확인 ${groups.handoff.length}건 ` +
-    `(Pre alarm은 위 Criteria별 Schedule & Alert 현황 표에서 확인해주세요)`;
-  ui.alertFootNote.textContent = groups.delay.length || groups.recv.length || groups.handoff.length
-    ? `Delay·확인 건이 있어 최대 4시간까지만 숨겨집니다. 완료된 항목은 왼쪽 체크박스로 Done 처리하세요.`
+    `오늘 ${today} 기준 · Delay ${groups.delay.length}건 ` +
+    `(Pre alarm / 수령확인 / 전달확인은 위 Criteria별 Schedule & Alert 현황 표에서 확인해주세요)`;
+  ui.alertFootNote.textContent = groups.delay.length
+    ? `Delay 건이 있어 최대 4시간까지만 숨겨집니다. 완료된 항목은 왼쪽 체크박스로 Done 처리하세요.`
     : `완료된 항목은 왼쪽 체크박스로 Done 처리하세요.`;
   ui.alertBackdrop.classList.add("open");
 }
@@ -1305,19 +1294,9 @@ function renderToasts(alerts) {
     .slice(0, 3);
 
   ui.toastStack.innerHTML = candidates.map(row => {
-    const cls = (row.recvCheck || row.handoff) ? "recv" : (row.state.code === "delay" ? "delayed" : "due");
-    const title = row.recvCheck
-      ? "📦 Rel team 수령확인 필요"
-      : row.handoff
-        ? (row.handoff.kind === "toRel" ? "📤 to Rel 확인 필요" : "📤 to FT 확인 필요")
-        : row.state.code === "delay"
-          ? `🚨 Delay +${row.state.delayDays}`
-          : (row.state.dday === 0 ? "🔔 Pre alarm · 오늘 Date out" : `🔔 Pre alarm · D-${row.state.dday}`);
-    const metaLine = row.recvCheck
-      ? `${escapeHtml(row.sheetName)} · Receive date ${escapeHtml(row.recvCheck.receiveDate)}`
-      : row.handoff
-        ? `${escapeHtml(row.sheetName)} · Date out ${escapeHtml(row.handoff.dateOut)}`
-        : `${escapeHtml(row.sheetName)} · Date out ${escapeHtml(row.dateOut)}`;
+    const cls = "delayed";
+    const title = `🚨 Delay +${row.state.delayDays}`;
+    const metaLine = `${escapeHtml(row.sheetName)} · Date out ${escapeHtml(row.dateOut)}`;
     return `<div class="toast ${cls}">
       <div class="t-head">
         <b>${escapeHtml(title)}</b>
@@ -1354,13 +1333,14 @@ function runAlertCycle({ forceAlert = false } = {}) {
   const handoffAlertsList = handoffAlerts();
   renderAlarmBar(scheduleAlerts, recvAlerts, handoffAlertsList);
 
-  // 실제 팝업(Toast + 자동 모달)은 Delay + 수령확인 + 전달확인만 대상입니다.
-  // Pre alarm은 위 Criteria별 Schedule & Alert 현황 표에서 바로 볼 수 있어 팝업을 띄우지 않습니다.
+  // 실제 팝업(Toast + 자동 모달)은 Delay만 대상입니다.
+  // Pre alarm / 수령확인 / 전달확인은 위 Criteria별 Schedule & Alert 현황 표(및 배너·카드)에서
+  // 바로 볼 수 있어 팝업을 띄우지 않습니다.
   const popupQueue = popupAlerts();
   renderToasts(popupQueue);
 
   // 새로 알림 상태로 진입한 항목이 있으면 snooze 중이어도 즉시 다시 알립니다.
-  const currentKeys = new Set(popupQueue.map(row => `${row.dedupeKey}:${row.state.code}:${row.recvCheck ? "recv" : row.handoff ? `handoff-${row.handoff.kind}` : "sched"}`));
+  const currentKeys = new Set(popupQueue.map(row => `${row.dedupeKey}:${row.state.code}`));
   const hasNewAlert = Array.from(currentKeys).some(key => !knownAlertKeys.has(key));
   knownAlertKeys = currentKeys;
   lastAlertSignature = alertSignature(popupQueue);
@@ -1453,7 +1433,7 @@ function setupEvents() {
   ui.showAlertBtn.addEventListener("click", () => openAlertModal(popupAlerts()));
 
   el("alertClose").addEventListener("click", () => {
-    const hasUrgent = popupAlerts().some(r => r.state.code === "delay" || r.recvCheck || r.handoff);
+    const hasUrgent = popupAlerts().length > 0;
     setSnooze(DEFAULT_SNOOZE_MS, hasUrgent);
     closeAlertModal();
   });
@@ -1464,22 +1444,22 @@ function setupEvents() {
     setSnooze(4 * 60 * 60 * 1000, false); closeAlertModal();
   });
   el("snoozeToday").addEventListener("click", () => {
-    const hasUrgent = popupAlerts().some(r => r.state.code === "delay" || r.recvCheck || r.handoff);
+    const hasUrgent = popupAlerts().length > 0;
     const ms = Math.max(endOfTodayMs() - Date.now(), 60 * 1000);
     const applied = setSnooze(ms, hasUrgent);
     closeAlertModal();
-    if (hasUrgent && applied < ms) log("Delay·수령확인 건이 있어 4시간 후 다시 알림이 표시됩니다.");
+    if (hasUrgent && applied < ms) log("Delay 건이 있어 4시간 후 다시 알림이 표시됩니다.");
   });
   ui.alertBackdrop.addEventListener("click", event => {
     if (event.target === ui.alertBackdrop) {
-      const hasUrgent = popupAlerts().some(r => r.state.code === "delay" || r.recvCheck || r.handoff);
+      const hasUrgent = popupAlerts().length > 0;
       setSnooze(DEFAULT_SNOOZE_MS, hasUrgent);
       closeAlertModal();
     }
   });
   document.addEventListener("keydown", event => {
     if (event.key === "Escape" && ui.alertBackdrop.classList.contains("open")) {
-      const hasUrgent = popupAlerts().some(r => r.state.code === "delay" || r.recvCheck || r.handoff);
+      const hasUrgent = popupAlerts().length > 0;
       setSnooze(DEFAULT_SNOOZE_MS, hasUrgent);
       closeAlertModal();
     }

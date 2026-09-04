@@ -49,20 +49,21 @@
           <b>2 ≥ (Date out − Today) ≥ 0</b> 이면 <b>Pre alarm</b>(시작일이 주말이면 직전 영업일부터),
           <b>(Date out − Today) &lt; 0</b> 이면 <b>Delay session</b>으로 하루마다 <b>Delay +1</b>이 누적되고
           <b>Done</b>으로 바뀔 때까지 계속 알림이 뜹니다.
-          Pre alarm은 팝업 없이 아래 <b>Criteria별 Schedule &amp; Alert 현황</b> 표에서만 표시됩니다.
-          또한 각 Sheet의 <b>맨 첫 행(T0 SAT 등)</b>의 <b>Remark가 비어 있고 Receive date가 지났으면</b>
-          <b>Rel team 샘플 수령확인</b> 알림이, 각 <b>Status 병합 구간(2행 이상)의 맨 마지막 행</b> Remark가
-          비어 있고 그 구간의 Date out이 지났으면 <b>to Rel / to FT 전달확인</b> 알림이(마지막 행의 Rel item에
+          <b>Pop up(Toast/자동 모달)은 Delay session만</b> 뜨고, Pre alarm 및 아래 두 확인 알림은
+          팝업 없이 아래 <b>Criteria별 Schedule &amp; Alert 현황</b> 표(및 상단 배너·카드)에서만 표시됩니다.
+          각 Sheet의 <b>맨 첫 행(T0 SAT 등)</b>의 <b>Remark가 비어 있고 Receive date가 지났으면</b>
+          <b>Rel team 샘플 수령확인</b>이, 각 <b>Status 병합 구간(2행 이상)의 맨 마지막 행</b> Remark가
+          비어 있고 그 구간의 Date out이 지났으면 <b>to Rel / to FT 전달확인</b>이(마지막 행의 Rel item에
           FT가 들어있으면 <b>to Rel</b>, Bake/T0 SAT/SAT/Soak/Reflow/Post MSL SAT 등이면 <b>to FT</b>)
-          Delay와 함께 팝업으로 뜹니다(Remark를 채워 재업로드하거나 Done 체크하면 해제).
+          표에 표시됩니다(Remark를 채워 재업로드하거나 Done 체크하면 해제).
         </p>
         <div class="legend">
-          <span><i style="background:#be123c"></i>Delay session (Date out 경과, Delay +N)</span>
-          <span><i style="background:#c2410c"></i>Pre alarm (D-Day ~ D-2, 주말이면 앞당김)</span>
+          <span><i style="background:#be123c"></i>Delay session (Date out 경과, Delay +N) · Pop up 대상</span>
+          <span><i style="background:#c2410c"></i>Pre alarm (D-Day ~ D-2, 주말이면 앞당김) · 표에서만</span>
           <span><i style="background:#a16207"></i>On going (D-2 이전)</span>
           <span><i style="background:#1d4ed8"></i>Planned</span>
           <span><i style="background:#047857"></i>Done</span>
-          <span><i style="background:#6d28d9"></i>Rel team 수령확인 / to Rel · to FT 전달확인 필요</span>
+          <span><i style="background:#6d28d9"></i>Rel team 수령확인 / to Rel · to FT 전달확인 필요 · 표에서만</span>
         </div>
       </div>
       <div class="hero-card">
