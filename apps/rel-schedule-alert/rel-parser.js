@@ -10,9 +10,13 @@
 // 단, Pre alarm 시작일(Date out - 2일)이 주말이면 직전 영업일(금요일)로 당겨서 시작합니다.
 export const ALERT_LEAD_DAYS = 2;
 
-/** 실제 Plan이 아닌 양식/Template sheet. 파싱·알림에서 완전히 제외합니다. */
+/**
+ * 실제 Plan이 아닌 양식/Template sheet. 파싱·알림에서 완전히 제외합니다.
+ * "REL_<담당자 한글 이름>"은 MNT/MTK/BDR 등 파일마다 담당자 이름만 바뀌는 빈 양식 Sheet라서
+ * (예: REL_여문석, REL_오명욱, REL_이효열) 이름 부분을 한글 패턴으로 일반화해서 매칭합니다.
+ */
 export const TEMPLATE_SHEET_PATTERNS = [
-  /^REL[_\s]*여문석$/i,
+  /^REL[_\s]*[가-힣]{2,10}$/i,
   /^(template|form|sample|양식|서식)$/i,
   /\b(template|양식)\b/i
 ];
@@ -510,6 +514,59 @@ export function markSampleReceiptCheck(records, statusMap = new Map(), today = t
     const statusDoc = statusMap.get(record.dedupeKey) || null;
     if (statusDoc && statusDoc.manualDone === true) return;
     flagged.set(record.dedupeKey, { receiveDate: record.receiveDate });
+  });
+  return flagged;
+}
+
+/* ---------------- Rel team ↔ FT 전달(hand-off) 확인 ---------------- */
+
+/** Rel item이 FT 계열(FT(500X), FT(MSL TC) 등)인지 */
+function isFtRelItem(relItem) {
+  return /ft/i.test(normalizeText(relItem));
+}
+
+/**
+ * 각 Criteria 안에서 Status 컬럼이 실제로 세로 병합된 구간(예: Bake+Soak+Reflow+Post MSL SAT,
+ * 또는 같은 FT(MSL TC)/FT(MSL uHAST)/FT(MSL HTST) 묶음)마다, 그 구간의 **맨 마지막 행** Remark가
+ * 비어 있고 그 구간이 이미 끝났으면(Today가 구간의 마지막 Date out을 지났으면) 전달 확인 알림 대상으로
+ * 표시합니다.
+ *
+ *  - 대상: Status 병합 셀 1개(=병합 행이 2개 이상인 구간)의 맨 마지막 행
+ *  - 방향 판정: 그 마지막 행의 Rel item에 "FT"가 들어있으면 → FT 시험이 끝난 뒤이므로 "to Rel"
+ *    (Rel team에게 돌려보냈는지) 확인, 그 외(Bake/T0 SAT/SAT/Soak/Reflow/Post MSL SAT 등)면
+ *    → "to FT" (FT팀에게 넘겼는지) 확인.
+ *  - 조건: Remark가 비어 있고, Today() >= 그 구간의 마지막 Date out (Date out을 모르면 판단 보류)
+ *  - Remark에 무엇이든 적히면(재업로드 시) 전달 확인이 끝난 것으로 보고 알림에서 빠지고,
+ *    Done 체크박스로 수동 처리(manualDone=true)해도 알림에서 빠집니다.
+ *
+ * @returns {Map<string, {kind:"toRel"|"toFT", dateOut:string}>} dedupeKey -> 알림 정보
+ */
+export function markHandoffCheck(records, statusMap = new Map(), today = todayIso()) {
+  const groups = new Map();
+  records.forEach(record => {
+    if (isTemplateSheet(record.sheetName)) return;
+    const key = `${record.sheetName}|${record.statusBlock ?? record.rowNumber}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(record);
+  });
+
+  const flagged = new Map();
+  groups.forEach(members => {
+    if (members.length < 2) return;   // 실제로 병합된(2행 이상) 구간만 대상
+    const sorted = members.slice().sort((a, b) => (a.rowNumber || 0) - (b.rowNumber || 0));
+    const lastRow = sorted[sorted.length - 1];
+    if (normalizeText(lastRow.remark)) return;
+
+    const dated = sorted.filter(row => row.dateOut);
+    if (!dated.length) return;
+    const effectiveDateOut = dated[dated.length - 1].dateOut;
+    if (dayDiff(today, effectiveDateOut) < 0) return;
+
+    const statusDoc = statusMap.get(lastRow.dedupeKey) || null;
+    if (statusDoc && statusDoc.manualDone === true) return;
+
+    const kind = isFtRelItem(lastRow.relItem) ? "toRel" : "toFT";
+    flagged.set(lastRow.dedupeKey, { kind, dateOut: effectiveDateOut });
   });
   return flagged;
 }
