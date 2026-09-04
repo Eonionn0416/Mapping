@@ -883,8 +883,22 @@ const PILL_CLASS = {
   planned: "planned", pending: "none", done: "done", none: "none"
 };
 
+/**
+ * row.state.done(Excel Status=Done 등)은 "그 스케줄 단계 자체가 끝났는지"만 볼 뿐,
+ * 수령확인/전달확인처럼 별도로 남은 확인 사항은 반영하지 않습니다. 그래서 수령확인/전달확인이
+ * 아직 열려 있는 행까지 "Done"으로 보여주면 이미 다 처리된 것처럼 오해하기 쉬워, 표에서는
+ * 그 경우 Done 표시를 보류합니다(체크박스도 함께 — resolveDoneChecked 참고).
+ */
+function isResolvedDone(row) {
+  return row.state.done && !row.recvCheck && !row.handoff;
+}
+
 function pill(row) {
-  const cls = PILL_CLASS[row.state.code] || "none";
+  const pendingTransfer = Boolean(row.recvCheck || row.handoff);
+  const showAsDone = row.state.code === "done" && pendingTransfer;
+  const cls = showAsDone ? "none" : (PILL_CLASS[row.state.code] || "none");
+  const label = showAsDone ? "시험 종료" : row.state.label;
+  const labelTitle = showAsDone ? "Excel Status=Done(시험 단계는 끝났지만) · 수령확인/전달확인은 아직 남아 있습니다" : "";
   const tags = [];
   if (row.recvCheck) {
     tags.push(`<span class="st-pill recv" title="Receive date ${escapeHtml(row.recvCheck.receiveDate)} 경과 · Remark 미기재">수령확인 필요</span>`);
@@ -895,7 +909,7 @@ function pill(row) {
   }
   if (row.state.ongoing === "explicit") tags.push(`<span class="st-pill soon">On going</span>`);
   if (row.muted && isAlerting(row.state.code)) tags.push(`<span class="st-pill none">Muted</span>`);
-  return `<span class="st-pill ${cls}">${escapeHtml(row.state.label)}</span> ${tags.join(" ")}`;
+  return `<span class="st-pill ${cls}" title="${escapeHtml(labelTitle)}">${escapeHtml(label)}</span> ${tags.join(" ")}`;
 }
 
 function renderTable() {
@@ -926,7 +940,7 @@ function renderTable() {
     const dispDateIn = row.dateIn || row.handoff?.dateIn || "";
     const dispDateOut = row.dateOut || row.handoff?.dateOut || "";
     return `<tr class="${rowCls}" data-key="${escapeHtml(row.dedupeKey)}">
-      <td><input type="checkbox" class="done-check" data-key="${escapeHtml(row.dedupeKey)}" ${row.state.done ? "checked" : ""} title="${row.state.done ? "Excel Status에 Done(완료)이라고 적혀 있어 자동으로 체크되어 있습니다 (수령확인/전달확인과는 별개 항목)." : ""} 체크하면 이 행의 모든 알림(Delay/수령확인/전달확인 포함)을 수동으로 완료 처리합니다." /></td>
+      <td><input type="checkbox" class="done-check" data-key="${escapeHtml(row.dedupeKey)}" ${isResolvedDone(row) ? "checked" : ""} title="${(row.recvCheck || row.handoff) ? "수령확인/전달확인이 아직 남아 있어 체크 해제 상태로 표시됩니다. " : ""}체크하면 이 행의 모든 알림(Delay/수령확인/전달확인 포함)을 수동으로 완료 처리합니다." /></td>
       <td>${pill(row)}</td>
       <td>${ddayCell(row.state)}</td>
       <td>${escapeHtml(row.sheetName)}</td>
@@ -1409,7 +1423,7 @@ function exportReport() {
     "Alarm from": row.state.alarmFrom || "",
     "Result": row.result,
     "Status": row.status,
-    "Done": row.state.done ? "Y" : "",
+    "Done": isResolvedDone(row) ? "Y" : "",
     "Remark": row.remark,
     "Fail mode": row.failMode,
     "Source File": row.sourceFileName || ""
