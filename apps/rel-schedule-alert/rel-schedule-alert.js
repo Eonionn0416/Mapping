@@ -747,14 +747,21 @@ function evaluateRows() {
       handoff: handoffMap.get(row.dedupeKey) || null
     };
   });
-  // 정렬 기준은 Delay > Pre alarm > On going > ... 순서를 항상 최우선으로 둡니다.
-  // (수령확인 / to Rel·to FT 전달확인은 표 위쪽으로 끌어올리지 않고, 원래 순서 안에서
-  // pill 태그 + 전용 Alert Status 필터로만 구분합니다 — Pop up(#1: Delay만)과 표(#2)가
-  // 서로 다른 항목을 최상단에 보여주던 불일치를 없애기 위함입니다.)
+  // 정렬 기준은 Delay > Pre alarm > 수령확인/전달확인 > On going > ... 순서입니다.
+  // 수령확인·전달확인 대상 행은 보통 그 행 자체의 스케줄 상태(state.code)가 이미
+  // "Done"이라, 예전처럼 state.code 순서로만 정렬하면 Pre alarm/On going 항목들
+  // 뒤(맨 아래)로 밀려버려서 표에서 안 보이는 것처럼 느껴집니다. Pop up(Delay만)보다는
+  // 낮지만 Pre alarm 다음으로는 바로 보이도록 별도 우선순위를 둡니다.
+  const rowPriority = row => {
+    if (row.state.code === "delay") return 0;
+    if (row.state.code === "prealarm") return 1;
+    if (row.recvCheck || row.handoff) return 2;
+    const order = { watch: 3, planned: 4, pending: 5, none: 6, done: 7 };
+    return order[row.state.code] ?? 8;
+  };
   viewRows.sort((a, b) => {
-    const order = { delay: 0, prealarm: 1, watch: 2, planned: 3, pending: 4, none: 5, done: 6 };
-    const byCode = order[a.state.code] - order[b.state.code];
-    if (byCode) return byCode;
+    const byPriority = rowPriority(a) - rowPriority(b);
+    if (byPriority) return byPriority;
     return String(a.dateOut || "9999").localeCompare(String(b.dateOut || "9999"))
       || String(a.sheetName).localeCompare(String(b.sheetName))
       || a.rowNumber - b.rowNumber;
@@ -910,21 +917,29 @@ function renderTable() {
     const delayCell = row.state.delayDays
       ? `<b class="danger-text" title="Date out 경과 일수">+${row.state.delayDays}</b>${excelDelayHtml ? ` <small>${excelDelayHtml}</small>` : ""}`
       : excelDelayHtml;
+    // to Rel/to FT 전달확인 대상 행은 병합 구간의 맨 마지막(빈) 줄인 경우가 많아
+    // Assy/FT lot · Date in/out이 그 행 자체엔 비어 있을 수 있습니다. 표에서 빈칸으로만
+    // 보여 혼란스럽지 않도록, 실제 값이 있는 참고 행(row.handoff)의 정보를 대신 보여줍니다.
+    const dispAssyLot = row.assyLot || row.handoff?.assyLot || "";
+    const dispFtLot = row.ftLot || row.handoff?.ftLot || "";
+    const dispQty = row.qty ?? row.handoff?.qty ?? "";
+    const dispDateIn = row.dateIn || row.handoff?.dateIn || "";
+    const dispDateOut = row.dateOut || row.handoff?.dateOut || "";
     return `<tr class="${rowCls}" data-key="${escapeHtml(row.dedupeKey)}">
-      <td><input type="checkbox" class="done-check" data-key="${escapeHtml(row.dedupeKey)}" ${row.state.done ? "checked" : ""} /></td>
+      <td><input type="checkbox" class="done-check" data-key="${escapeHtml(row.dedupeKey)}" ${row.state.done ? "checked" : ""} title="${row.state.done ? "Excel Status에 Done(완료)이라고 적혀 있어 자동으로 체크되어 있습니다 (수령확인/전달확인과는 별개 항목)." : ""} 체크하면 이 행의 모든 알림(Delay/수령확인/전달확인 포함)을 수동으로 완료 처리합니다." /></td>
       <td>${pill(row)}</td>
       <td>${ddayCell(row.state)}</td>
       <td>${escapeHtml(row.sheetName)}</td>
       <td class="criteria-cell">${escapeHtml(row.criteria)}</td>
       <td>${escapeHtml(row.relItem)}${blockTag(row)}</td>
       <td>${escapeHtml(row.condition)}</td>
-      <td>${escapeHtml(row.assyLot)}</td>
-      <td>${escapeHtml(row.ftLot)}</td>
-      <td class="number">${row.qty ?? ""}</td>
-      <td class="date-cell">${escapeHtml(row.dateIn)}</td>
+      <td>${escapeHtml(dispAssyLot)}</td>
+      <td>${escapeHtml(dispFtLot)}</td>
+      <td class="number">${dispQty}</td>
+      <td class="date-cell">${escapeHtml(dispDateIn)}</td>
       <td class="number">${row.duration ?? ""}</td>
       <td class="number">${delayCell}</td>
-      <td class="date-cell">${escapeHtml(row.dateOut)}</td>
+      <td class="date-cell">${escapeHtml(dispDateOut)}</td>
       <td class="date-cell">${escapeHtml(row.state.alarmFrom || "")}</td>
       <td>${escapeHtml(row.result)}</td>
       <td>${escapeHtml(row.status)}</td>
