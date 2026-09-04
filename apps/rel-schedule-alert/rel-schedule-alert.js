@@ -19,6 +19,12 @@ import {
   signInAnonymously,
   onAuthStateChanged
 } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-auth.js";
+import {
+  getStorage,
+  ref as storageRef,
+  uploadBytes,
+  getDownloadURL
+} from "https://www.gstatic.com/firebasejs/10.12.4/firebase-storage.js";
 
 import {
   ALERT_LEAD_DAYS,
@@ -45,6 +51,8 @@ import {
 const APP_VERSION = "v1-rel-schedule-alert";
 const RAW_COLLECTION = "relScheduleRaw";
 const STATUS_COLLECTION = "relScheduleStatus";
+const FILES_COLLECTION = "relScheduleFiles";   // 업로드한 원본 Excel 파일 다운로드 링크 메타데이터
+const FILES_STORAGE_PATH = "relScheduleFiles"; // Firebase Storage 상 원본 파일 저장 경로
 const BATCH_LIMIT = 450;
 const RECHECK_INTERVAL_MS = 60 * 1000;
 const TOAST_SNOOZE_MS = 30 * 60 * 1000;
@@ -62,11 +70,13 @@ const LS_SNOOZE = "relScheduleAlert.snoozeUntil";
 let app = null;
 let db = null;
 let auth = null;
+let storage = null;
 let currentUser = null;
 
 let rawRows = [];                 // 파싱/Firestore raw records
 let statusMap = new Map();        // dedupeKey -> { manualDone, updatedAt }
 let planStatusMap = new Map();    // sheetName -> { muted }
+let sourceFileMap = new Map();    // fileName -> { downloadURL, size, uploadedAt }
 let viewRows = [];                // evaluate 결과가 붙은 rows
 let selectedFiles = [];
 let fileReadStatus = new Map();
@@ -399,6 +409,9 @@ async function handleFiles(files) {
       parsedAll = parsedAll.concat(records);
       fileReadStatus.set(file.name, `${records.length} items / ${sheetCount - skipped.length} sheets`);
       log(`${file.name}: ${records.length} items parsed (skipped sheets: ${skipped.join(", ") || "none"})`);
+      // 다른 사람도 원본 파일을 내려받아 수정 후 재업로드할 수 있도록, 파싱에 성공한 원본
+      // 파일 그대로를 Storage에 올려둡니다 (알림/파싱 로직과는 무관 — 실패해도 계속 진행).
+      uploadOriginalFile(file);
     } catch (error) {
       console.error(error);
       fileReadStatus.set(file.name, `Read failed: ${error.message}`);
@@ -546,6 +559,38 @@ function cacheStatus() {
   });
 }
 
+/** Firestore 문서 ID로 못 쓰는 문자(/)만 안전하게 치환합니다. */
+function sanitizeDocId(name) {
+  return String(name || "file").replace(/[/\s]+/g, "_").slice(0, 400) || "file";
+}
+
+/**
+ * 업로드한 원본 Reliability test plan Excel 파일을 Firebase Storage에 그대로 올려서,
+ * 다른 사람도 "Uploaded Plan List"에서 Download 링크로 원본 파일을 받아 수정한 뒤
+ * 다시 첨부(재업로드)할 수 있게 합니다. 같은 파일명으로 다시 올리면 최신 버전으로 덮어씁니다.
+ * (Firestore/전체 알림 로직과는 무관한 부가 기능이라, 실패해도 나머지 업로드 흐름을 막지 않습니다.)
+ */
+async function uploadOriginalFile(file) {
+  if (!storage || !db || !currentUser) return;
+  try {
+    const path = `${FILES_STORAGE_PATH}/${sanitizeDocId(file.name)}`;
+    const fileRef = storageRef(storage, path);
+    await uploadBytes(fileRef, file, { contentType: file.type || "application/octet-stream" });
+    const downloadURL = await getDownloadURL(fileRef);
+    await setDoc(doc(db, FILES_COLLECTION, sanitizeDocId(file.name)), {
+      fileName: file.name,
+      downloadURL,
+      size: file.size || 0,
+      uploadedAt: serverTimestamp()
+    }, { merge: true });
+    sourceFileMap.set(file.name, { downloadURL, size: file.size || 0 });
+    renderPlanList();
+  } catch (error) {
+    console.error(error);
+    log(`원본 파일 업로드(다운로드용) 실패: ${file.name} — ${error.message} (Firebase Storage 설정을 확인해주세요)`);
+  }
+}
+
 /* ============================================================
    Firestore
    ============================================================ */
@@ -574,9 +619,10 @@ async function uploadRows(records) {
 async function loadFirestoreData() {
   if (!db || !currentUser) return;
   try {
-    const [rawSnap, statusSnap] = await Promise.all([
+    const [rawSnap, statusSnap, filesSnap] = await Promise.all([
       getDocs(collection(db, RAW_COLLECTION)),
-      getDocs(collection(db, STATUS_COLLECTION))
+      getDocs(collection(db, STATUS_COLLECTION)),
+      getDocs(collection(db, FILES_COLLECTION)).catch(error => { console.error(error); return null; })
     ]);
 
     const rows = rawSnap.docs.map(d => ({ ...d.data(), dedupeKey: d.id }))
@@ -591,6 +637,16 @@ async function loadFirestoreData() {
       if (data.kind === "plan" && data.sheetName) planStatusMap.set(data.sheetName, data);
       else statusMap.set(d.id, data);
     });
+
+    if (filesSnap) {
+      sourceFileMap = new Map();
+      filesSnap.docs.forEach(d => {
+        const data = d.data() || {};
+        if (data.fileName && data.downloadURL) {
+          sourceFileMap.set(data.fileName, { downloadURL: data.downloadURL, size: data.size || 0 });
+        }
+      });
+    }
 
     cacheRows();
     cacheStatus();
@@ -642,6 +698,15 @@ async function clearAllUploadedData() {
         deleteAllDocsInCollection(STATUS_COLLECTION)
       ]);
       log(`Firestore 삭제 완료: ${RAW_COLLECTION} ${rawDeleted}건 / ${STATUS_COLLECTION} ${statusDeleted}건.`);
+      // 원본 파일 다운로드 링크 메타데이터도 함께 정리합니다 (Storage의 실제 파일은 남아있어도
+      // 무해하므로 그대로 두고, 다음 업로드 때 같은 이름이면 다시 덮어씁니다).
+      try {
+        const filesDeleted = await deleteAllDocsInCollection(FILES_COLLECTION);
+        sourceFileMap = new Map();
+        if (filesDeleted) log(`Firestore 삭제 완료: ${FILES_COLLECTION} ${filesDeleted}건.`);
+      } catch (fileError) {
+        console.error(fileError);
+      }
     } catch (error) {
       firestoreOk = false;
       console.error(error);
@@ -1005,11 +1070,17 @@ function renderPlanList() {
 
   const list = Array.from(map.values()).sort((a, b) => b.delayed - a.delayed || a.sheetName.localeCompare(b.sheetName));
   if (!list.length) {
-    ui.uploadedBody.innerHTML = `<tr><td colspan="7" class="empty">아직 Upload된 Plan이 없습니다.</td></tr>`;
+    ui.uploadedBody.innerHTML = `<tr><td colspan="8" class="empty">아직 Upload된 Plan이 없습니다.</td></tr>`;
     return;
   }
   ui.uploadedBody.innerHTML = list.map(item => {
     const muted = planMuted(item.sheetName);
+    const fileInfo = sourceFileMap.get(item.sourceFileName);
+    const downloadCell = fileInfo
+      ? `<a class="secondary" href="${escapeHtml(fileInfo.downloadURL)}" target="_blank" rel="noopener"
+           style="display:inline-block;padding:4px 9px;font-size:11px;border-radius:9px;text-decoration:none"
+           title="원본 Excel 파일을 그대로 내려받습니다. 수정 후 다시 Drag&Drop 하면 최신 내용으로 갱신됩니다.">⬇ Download</a>`
+      : `<span style="color:#94a3b8;font-size:11px">업로드 중...</span>`;
     return `<tr>
       <td>${escapeHtml(item.sourceFileName)}</td>
       <td class="criteria-cell">${escapeHtml(item.sheetName)}
@@ -1023,6 +1094,7 @@ function renderPlanList() {
       <td class="number">${item.count}</td>
       <td class="number">${item.delayed ? `<b class="danger-text">${item.delayed}</b>` : 0}</td>
       <td class="date-cell">${escapeHtml(item.lastOut)}</td>
+      <td>${downloadCell}</td>
     </tr>`;
   }).join("");
 }
@@ -1564,6 +1636,10 @@ function initFirebase() {
     app = initializeApp(relScheduleFirebaseConfig, "rel-schedule-alert");
     db = getFirestore(app);
     auth = getAuth(app);
+    try { storage = getStorage(app); } catch (storageError) {
+      console.error(storageError);
+      log(`Firebase Storage 초기화 실패 — 원본 파일 다운로드 기능은 비활성화됩니다: ${storageError.message}`);
+    }
     onAuthStateChanged(auth, async user => {
       currentUser = user;
       if (user) {

@@ -214,7 +214,8 @@
       <div class="panel-header">
         <div>
           <h2>Uploaded Plan List</h2>
-          <p>Firestore <b>relScheduleRaw</b> collection 기준입니다.</p>
+          <p>Firestore <b>relScheduleRaw</b> collection 기준입니다. Download으로 업로드한 원본 Excel을 그대로 받아
+            수정한 뒤 다시 Drag&amp;Drop 하면 같은 이름의 파일은 최신 내용으로 자동 갱신됩니다.</p>
         </div>
         <div style="display:flex;gap:8px">
           <button id="reloadBtn" type="button" class="secondary">Firestore 새로고침</button>
@@ -232,10 +233,11 @@
               <th>Items</th>
               <th>Delayed</th>
               <th>Last Date out</th>
+              <th>File</th>
             </tr>
           </thead>
           <tbody id="uploadedBody">
-            <tr><td colspan="7" class="empty">아직 Upload된 Plan이 없습니다.</td></tr>
+            <tr><td colspan="8" class="empty">아직 Upload된 Plan이 없습니다.</td></tr>
           </tbody>
         </table>
       </div>
