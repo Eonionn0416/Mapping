@@ -747,15 +747,14 @@ function evaluateRows() {
       handoff: handoffMap.get(row.dedupeKey) || null
     };
   });
-  // 정렬 기준은 Delay > Pre alarm > 수령확인/전달확인 > On going > ... 순서입니다.
-  // 수령확인·전달확인 대상 행은 보통 그 행 자체의 스케줄 상태(state.code)가 이미
-  // "Done"이라, 예전처럼 state.code 순서로만 정렬하면 Pre alarm/On going 항목들
-  // 뒤(맨 아래)로 밀려버려서 표에서 안 보이는 것처럼 느껴집니다. Pop up(Delay만)보다는
-  // 낮지만 Pre alarm 다음으로는 바로 보이도록 별도 우선순위를 둡니다.
+  // 정렬 기준은 Delay > 수령확인/전달확인(critical) > Pre alarm > On going > ... 순서입니다.
+  // 수령확인·전달확인 대상 행은 자재가 실제로 넘어갔는지 확인이 안 된 critical 항목이라,
+  // Pre alarm보다도 위에 오도록 둡니다. (그 행 자체의 스케줄 상태(state.code)는 보통 이미
+  // "Done"이라, state.code 순서로만 정렬하면 맨 아래로 밀려버려서 이 별도 우선순위가 필요합니다.)
   const rowPriority = row => {
     if (row.state.code === "delay") return 0;
-    if (row.state.code === "prealarm") return 1;
-    if (row.recvCheck || row.handoff) return 2;
+    if (row.recvCheck || row.handoff) return 1;
+    if (row.state.code === "prealarm") return 2;
     const order = { watch: 3, planned: 4, pending: 5, none: 6, done: 7 };
     return order[row.state.code] ?? 8;
   };
@@ -784,12 +783,21 @@ function handoffAlerts() {
 }
 
 /**
- * 실제로 팝업(Toast + 자동 모달)을 띄울 대상만 모읍니다.
- * Pre alarm, Rel team 수령확인, to Rel/to FT 전달확인은 모두 "Criteria별 Schedule & Alert 현황"
- * 표(및 상단 배너/카드)에서 바로 확인할 수 있으므로 팝업(Toast·자동 모달)에는 Delay만 띄웁니다.
+ * 우측 Toast 팝업에 띄울 대상 — Delay만입니다.
+ * Pre alarm, Rel team 수령확인은 "Criteria별 Schedule & Alert 현황" 표(및 상단 배너/카드)에서
+ * 확인할 수 있으므로 Toast에는 띄우지 않습니다.
  */
-function popupAlerts() {
+function toastAlerts() {
   return viewRows.filter(row => !row.muted && row.state.code === "delay");
+}
+
+/**
+ * 중앙 모달(Reliability Schedule Alert)에 띄울 대상 — Delay + to Rel/to FT 전달확인입니다.
+ * 전달확인은 자재가 실제로 넘어갔는지 확인이 안 된 critical 항목이라 Toast는 아니어도 모달에는
+ * 표시합니다. Pre alarm과 수령확인은 표/배너/카드에서만 확인합니다.
+ */
+function modalAlerts() {
+  return viewRows.filter(row => !row.muted && (row.state.code === "delay" || row.handoff));
 }
 
 /* ============================================================
@@ -915,52 +923,40 @@ function pill(row) {
 function renderTable() {
   const rows = filteredRows();
   if (!rows.length) {
-    ui.scheduleBody.innerHTML = `<tr><td colspan="18" class="empty">조건에 맞는 항목이 없습니다.</td></tr>`;
+    ui.scheduleBody.innerHTML = `<tr><td colspan="10" class="empty">조건에 맞는 항목이 없습니다.</td></tr>`;
     return;
   }
   ui.scheduleBody.innerHTML = rows.slice(0, 600).map(row => {
-    const rowCls = row.state.code === "delay" ? "row-delayed"
+    // 수령확인/전달확인(to Rel·to FT)은 자재가 실제로 넘어갔는지 확인 안 되면 critical하므로
+    // 다른 상태보다 우선해서 행 전체를 파란색으로 강조합니다.
+    const rowCls = (row.recvCheck || row.handoff) ? "row-transfer"
+      : row.state.code === "delay" ? "row-delayed"
       : row.state.code === "prealarm" ? "row-due"
       : row.state.code === "watch" ? "row-soon"
       : row.state.code === "done" ? "row-done" : "";
-    const excelDelay = normalizeNumber(row.delay);
-    const excelDelayHtml = excelDelay === null ? ""
-      : excelDelay < 0
-        ? `<span class="early-text" title="예정보다 ${Math.abs(excelDelay)}일 빠름">${escapeHtml(formatDelayValue(excelDelay))}</span>`
-        : `<span class="${excelDelay > 0 ? "danger-text" : ""}">${escapeHtml(formatDelayValue(excelDelay))}</span>`;
-    const delayCell = row.state.delayDays
-      ? `<b class="danger-text" title="Date out 경과 일수">+${row.state.delayDays}</b>${excelDelayHtml ? ` <small>${excelDelayHtml}</small>` : ""}`
-      : excelDelayHtml;
     // to Rel/to FT 전달확인 대상 행은 병합 구간의 맨 마지막(빈) 줄인 경우가 많아
-    // Assy/FT lot · Date in/out이 그 행 자체엔 비어 있을 수 있습니다. 표에서 빈칸으로만
+    // Date in/out이 그 행 자체엔 비어 있을 수 있습니다. 표에서 빈칸으로만
     // 보여 혼란스럽지 않도록, 실제 값이 있는 참고 행(row.handoff)의 정보를 대신 보여줍니다.
-    const dispAssyLot = row.assyLot || row.handoff?.assyLot || "";
-    const dispFtLot = row.ftLot || row.handoff?.ftLot || "";
-    const dispQty = row.qty ?? row.handoff?.qty ?? "";
     const dispDateIn = row.dateIn || row.handoff?.dateIn || "";
     const dispDateOut = row.dateOut || row.handoff?.dateOut || "";
+    // 수령확인/전달확인의 D-Day는 스케줄 D-day와 별개로, "그 기준일이 지난 지 며칠째"를
+    // today - date out(수령확인은 today - receive date) 기준 +N 형식으로 보여줍니다.
+    const transferRef = row.handoff ? row.handoff.dateOut : row.recvCheck ? row.recvCheck.receiveDate : null;
+    const ddayHtml = transferRef ? ddayCell({ dday: dayDiff(transferRef, today) }) : ddayCell(row.state);
     return `<tr class="${rowCls}" data-key="${escapeHtml(row.dedupeKey)}">
       <td><input type="checkbox" class="done-check" data-key="${escapeHtml(row.dedupeKey)}" ${isResolvedDone(row) ? "checked" : ""} title="${(row.recvCheck || row.handoff) ? "수령확인/전달확인이 아직 남아 있어 체크 해제 상태로 표시됩니다. " : ""}체크하면 이 행의 모든 알림(Delay/수령확인/전달확인 포함)을 수동으로 완료 처리합니다." /></td>
       <td>${pill(row)}</td>
-      <td>${ddayCell(row.state)}</td>
+      <td>${ddayHtml}</td>
       <td>${escapeHtml(row.sheetName)}</td>
+      <td>${escapeHtml(row.relNo)}</td>
       <td class="criteria-cell">${escapeHtml(row.criteria)}</td>
       <td>${escapeHtml(row.relItem)}${blockTag(row)}</td>
       <td>${escapeHtml(row.condition)}</td>
-      <td>${escapeHtml(dispAssyLot)}</td>
-      <td>${escapeHtml(dispFtLot)}</td>
-      <td class="number">${dispQty}</td>
       <td class="date-cell">${escapeHtml(dispDateIn)}</td>
-      <td class="number">${row.duration ?? ""}</td>
-      <td class="number">${delayCell}</td>
       <td class="date-cell">${escapeHtml(dispDateOut)}</td>
-      <td class="date-cell">${escapeHtml(row.state.alarmFrom || "")}</td>
-      <td>${escapeHtml(row.result)}</td>
-      <td>${escapeHtml(row.status)}</td>
-      <td>${escapeHtml(row.remark)}</td>
     </tr>`;
   }).join("") + (rows.length > 600
-    ? `<tr><td colspan="18" class="empty">상위 600건만 표시했습니다. (전체 ${rows.length.toLocaleString()}건 · 필터를 좁혀주세요)</td></tr>`
+    ? `<tr><td colspan="10" class="empty">상위 600건만 표시했습니다. (전체 ${rows.length.toLocaleString()}건 · 필터를 좁혀주세요)</td></tr>`
     : "");
 }
 
@@ -1268,21 +1264,26 @@ function groupAlerts(alerts) {
 }
 
 /**
- * 실제 팝업(Toast + 자동 모달)에 들어가는 항목만 묶습니다.
- * Pre alarm, 수령확인, 전달확인(to Rel/to FT)은 모두 표/배너/카드에서 볼 수 있으므로
- * 팝업에는 Delay만 남깁니다.
+ * 모달(Reliability Schedule Alert)에 들어가는 항목을 묶습니다.
+ * Pre alarm, 수령확인은 표/배너/카드에서 볼 수 있으므로 모달에는 Delay + to Rel/to FT
+ * 전달확인(critical)만 남깁니다.
  */
 function popupGroups(alerts) {
   return {
-    delay: alerts.filter(r => r.state.code === "delay").sort((a, b) => a.state.dday - b.state.dday)
+    delay: alerts.filter(r => r.state.code === "delay").sort((a, b) => a.state.dday - b.state.dday),
+    handoff: alerts.filter(r => r.handoff).sort((a, b) => String(a.sheetName).localeCompare(String(b.sheetName)))
   };
 }
 
 function alertItemHtml(row) {
-  const cls = "delayed";
-  const big = `Delay +${row.state.delayDays}`;
-  const sub = [row.sheetName, "On going", row.assyLot, row.ftLot, row.dateIn ? `In ${row.dateIn}` : ""].filter(Boolean).join(" · ");
-  const rightSub = `Date out ${row.dateOut}`;
+  const cls = row.handoff ? "recv" : "delayed";
+  const big = row.handoff
+    ? (row.handoff.kind === "toRel" ? "to Rel" : "to FT")
+    : `Delay +${row.state.delayDays}`;
+  const sub = row.handoff
+    ? [row.sheetName, `Date out ${row.handoff.dateOut}`, row.handoff.kind === "toRel" ? "Rel team 전달 여부 미기재" : "FT팀 전달 여부 미기재"].filter(Boolean).join(" · ")
+    : [row.sheetName, "On going", row.assyLot, row.ftLot, row.dateIn ? `In ${row.dateIn}` : ""].filter(Boolean).join(" · ");
+  const rightSub = row.handoff ? `Date out ${row.handoff.dateOut}` : `Date out ${row.dateOut}`;
   return `<div class="alert-item ${cls}">
     <input type="checkbox" class="done-check" data-key="${escapeHtml(row.dedupeKey)}" title="Done 처리" />
     <div class="ai-main">
@@ -1304,13 +1305,14 @@ function openAlertModal(alerts) {
        </div>` : "";
 
   ui.alertBody.innerHTML =
-    section("🚨 Delay session · Date out 경과 (Done 전까지 계속 알림)", "delayed", groups.delay);
+    section("🚨 Delay session · Date out 경과 (Done 전까지 계속 알림)", "delayed", groups.delay) +
+    section("📤 to Rel / to FT 전달확인 필요 (critical)", "recv", groups.handoff);
 
   ui.alertSubtitle.textContent =
-    `오늘 ${today} 기준 · Delay ${groups.delay.length}건 ` +
-    `(Pre alarm / 수령확인 / 전달확인은 위 Criteria별 Schedule & Alert 현황 표에서 확인해주세요)`;
-  ui.alertFootNote.textContent = groups.delay.length
-    ? `Delay 건이 있어 최대 4시간까지만 숨겨집니다. 완료된 항목은 왼쪽 체크박스로 Done 처리하세요.`
+    `오늘 ${today} 기준 · Delay ${groups.delay.length}건 / 전달확인 ${groups.handoff.length}건 ` +
+    `(Pre alarm / 수령확인은 위 Criteria별 Schedule & Alert 현황 표에서 확인해주세요)`;
+  ui.alertFootNote.textContent = (groups.delay.length || groups.handoff.length)
+    ? `Delay·전달확인 건이 있어 최대 4시간까지만 숨겨집니다. 완료된 항목은 왼쪽 체크박스로 Done 처리하세요.`
     : `완료된 항목은 왼쪽 체크박스로 Done 처리하세요.`;
   ui.alertBackdrop.classList.add("open");
 }
@@ -1363,24 +1365,25 @@ function runAlertCycle({ forceAlert = false } = {}) {
   const handoffAlertsList = handoffAlerts();
   renderAlarmBar(scheduleAlerts, recvAlerts, handoffAlertsList);
 
-  // 실제 팝업(Toast + 자동 모달)은 Delay만 대상입니다.
-  // Pre alarm / 수령확인 / 전달확인은 위 Criteria별 Schedule & Alert 현황 표(및 배너·카드)에서
-  // 바로 볼 수 있어 팝업을 띄우지 않습니다.
-  const popupQueue = popupAlerts();
-  renderToasts(popupQueue);
+  // 우측 Toast는 Delay만 대상입니다. Pre alarm / 수령확인 / 전달확인은 위 표(및 배너·카드)에서
+  // 바로 볼 수 있어 Toast로는 띄우지 않습니다.
+  renderToasts(toastAlerts());
+
+  // 중앙 모달(Reliability Schedule Alert)은 Delay + to Rel/to FT 전달확인(critical) 대상입니다.
+  const modalQueue = modalAlerts();
 
   // 새로 알림 상태로 진입한 항목이 있으면 snooze 중이어도 즉시 다시 알립니다.
-  const currentKeys = new Set(popupQueue.map(row => `${row.dedupeKey}:${row.state.code}`));
+  const currentKeys = new Set(modalQueue.map(row => `${row.dedupeKey}:${row.state.code}:${row.handoff ? `handoff-${row.handoff.kind}` : "sched"}`));
   const hasNewAlert = Array.from(currentKeys).some(key => !knownAlertKeys.has(key));
   knownAlertKeys = currentKeys;
-  lastAlertSignature = alertSignature(popupQueue);
+  lastAlertSignature = alertSignature(modalQueue);
 
-  if (!popupQueue.length) { closeAlertModal(); return; }
+  if (!modalQueue.length) { closeAlertModal(); return; }
 
   const isOpen = ui.alertBackdrop.classList.contains("open");
-  if (forceAlert || hasNewAlert) { openAlertModal(popupQueue); return; }
+  if (forceAlert || hasNewAlert) { openAlertModal(modalQueue); return; }
   if (isOpen) return;   // 이미 열려 있으면 목록을 다시 그리지 않습니다 (체크 중 화면 튐 방지)
-  if (Date.now() >= getSnoozeUntil()) openAlertModal(popupQueue);
+  if (Date.now() >= getSnoozeUntil()) openAlertModal(modalQueue);
 }
 
 /* ============================================================
@@ -1460,10 +1463,10 @@ function setupEvents() {
   ui.reloadBtn.addEventListener("click", loadFirestoreData);
   if (ui.clearAllBtn) ui.clearAllBtn.addEventListener("click", clearAllUploadedData);
   ui.recheckBtn.addEventListener("click", () => refreshAll({ forceAlert: true }));
-  ui.showAlertBtn.addEventListener("click", () => openAlertModal(popupAlerts()));
+  ui.showAlertBtn.addEventListener("click", () => openAlertModal(modalAlerts()));
 
   el("alertClose").addEventListener("click", () => {
-    const hasUrgent = popupAlerts().length > 0;
+    const hasUrgent = modalAlerts().length > 0;
     setSnooze(DEFAULT_SNOOZE_MS, hasUrgent);
     closeAlertModal();
   });
@@ -1474,22 +1477,22 @@ function setupEvents() {
     setSnooze(4 * 60 * 60 * 1000, false); closeAlertModal();
   });
   el("snoozeToday").addEventListener("click", () => {
-    const hasUrgent = popupAlerts().length > 0;
+    const hasUrgent = modalAlerts().length > 0;
     const ms = Math.max(endOfTodayMs() - Date.now(), 60 * 1000);
     const applied = setSnooze(ms, hasUrgent);
     closeAlertModal();
-    if (hasUrgent && applied < ms) log("Delay 건이 있어 4시간 후 다시 알림이 표시됩니다.");
+    if (hasUrgent && applied < ms) log("Delay·전달확인 건이 있어 4시간 후 다시 알림이 표시됩니다.");
   });
   ui.alertBackdrop.addEventListener("click", event => {
     if (event.target === ui.alertBackdrop) {
-      const hasUrgent = popupAlerts().length > 0;
+      const hasUrgent = modalAlerts().length > 0;
       setSnooze(DEFAULT_SNOOZE_MS, hasUrgent);
       closeAlertModal();
     }
   });
   document.addEventListener("keydown", event => {
     if (event.key === "Escape" && ui.alertBackdrop.classList.contains("open")) {
-      const hasUrgent = popupAlerts().length > 0;
+      const hasUrgent = modalAlerts().length > 0;
       setSnooze(DEFAULT_SNOOZE_MS, hasUrgent);
       closeAlertModal();
     }
@@ -1521,7 +1524,7 @@ function setupEvents() {
     const doneKey = event.target.dataset?.toastDone;
     if (closeKey) {
       toastSnooze.set(closeKey, Date.now() + TOAST_SNOOZE_MS);
-      renderToasts(popupAlerts());
+      renderToasts(toastAlerts());
     } else if (doneKey) {
       await saveItemStatus(doneKey, true);
       refreshAll();

@@ -233,6 +233,11 @@ tr.row-soon td { background: rgba(254, 252, 232, .5); }
 tr.row-done td { color: #94a3b8; }
 tr.row-done td .st-pill.done { color: var(--done-text); }
 
+/* 수령확인/전달확인(to Rel·to FT) 대상 행 — critical, 파란색으로 눈에 띄게 강조 */
+tr.row-transfer td { background: rgba(37, 99, 235, .12); color: #1d4ed8; }
+tr.row-transfer td b, tr.row-transfer td strong { color: #1d4ed8; }
+tr.row-transfer .dday { color: #1d4ed8; }
+
 .done-check { width: 17px; height: 17px; cursor: pointer; accent-color: var(--primary); }
 .criteria-cell { font-weight: 900; color: #334155; }
 .date-cell { font-variant-numeric: tabular-nums; }
