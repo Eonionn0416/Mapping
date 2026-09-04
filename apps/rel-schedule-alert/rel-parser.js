@@ -574,7 +574,8 @@ function excludeEarlierEtBlocks(blocks) {
  * 비어 있고 그 구간이 이미 끝났으면(Today가 구간의 마지막 Date out을 지났으면) 전달 확인 알림 대상으로
  * 표시합니다.
  *
- *  - 대상: Status 병합 셀 1개(=병합 행이 2개 이상인 구간)의 맨 마지막 행
+ *  - 대상: ① Status 병합 셀 1개(=병합 행이 2개 이상인 구간)의 맨 마지막 행,
+ *    ② 병합되지 않은 단일 행이라도 그 행의 Status가 "Done"(완료) 계열 문구면 그 행 자체.
  *  - 같은 (Criteria, Rel item)이 ET1 → ET2로 반복되면(MNT/MTK 형식) 가장 큰 ET 구간만 확인합니다.
  *  - 방향 판정: 그 마지막 행의 Rel item에 "FT"가 들어있으면 → FT 시험이 끝난 뒤이므로 "to Rel"
  *    (Rel team에게 돌려보냈는지) 확인, 그 외(Bake/T0 SAT/SAT/Soak/Reflow/Post MSL SAT 등)면
@@ -595,7 +596,7 @@ export function markHandoffCheck(records, statusMap = new Map(), today = todayIs
   });
 
   const blocks = Array.from(groups.entries())
-    .filter(([, members]) => members.length >= 2)
+    .filter(([, members]) => members.length >= 2 || DONE_STATUS_RE.test(normalizeText(members[0].status)))
     .map(([key, members]) => {
       const sorted = members.slice().sort((a, b) => (a.rowNumber || 0) - (b.rowNumber || 0));
       return { key, sorted, lastRow: sorted[sorted.length - 1] };
