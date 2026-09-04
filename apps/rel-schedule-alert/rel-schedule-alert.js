@@ -825,7 +825,7 @@ function refreshFilters() {
   fillSelect(ui.criteriaSelect, criteria, "전체 Criteria");
   if (!ui.statusSelect.options.length) {
     ui.statusSelect.innerHTML = `
-      <option value="alert">알림 대상만 (Delay + Pre alarm)</option>
+      <option value="alert">알림 대상만 (Delay + Pre alarm + 수령확인 + 전달확인)</option>
       <option value="alertAll">알림 대상 + Muted Plan 포함</option>
       <option value="recvcheck">Rel team 수령확인 필요</option>
       <option value="handoff">to Rel / to FT 전달확인 필요</option>
@@ -850,8 +850,9 @@ function filteredRows() {
   return viewRows.filter(row => {
     if (plan && row.sheetName !== plan) return false;
     if (criteria && row.criteria !== criteria) return false;
-    if (status === "alert" && (row.muted || !isAlerting(row.state.code))) return false;
-    if (status === "alertAll" && !isAlerting(row.state.code)) return false;
+    const isAlertRow = isAlerting(row.state.code) || Boolean(row.recvCheck) || Boolean(row.handoff);
+    if (status === "alert" && (row.muted || !isAlertRow)) return false;
+    if (status === "alertAll" && !isAlertRow) return false;
     if (status === "recvcheck" && !row.recvCheck) return false;
     if (status === "handoff" && !row.handoff) return false;
     if (status === "ongoing" && !row.state.ongoing) return false;
