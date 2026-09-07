@@ -1,4 +1,4 @@
-MTK Assy & OS & BIN Yield Trend v22
+MTK Assy & OS & BIN Yield Trend v24
 ===================================
 
 Run
@@ -106,6 +106,15 @@ v23 Changes
   - 데이터가 없는 Device × WW 조합은 '-'로 표시, 값이 있는 셀은 0.000% 형식.
 - Report Upload 패널에 "전체 삭제" 버튼 추가: Firestore의 Assy/OS/BIN raw collection을 모두 삭제(확인 팝업 포함)합니다.
 - Export BIN Weekly Merge(기존 Monday-start 주차, BIN1~BIN36 전체 breakdown)는 기존과 동일하게 유지됩니다.
+
+v24 Changes
+-----------
+- Assy OS Trend / FT (BIN) Weekly Trend Sheet 구분 기준을 Device에서 **Lead**로 변경.
+  - OS는 **LEAD**, BIN은 **LEAD_ID** 값을 그대로(자르지 않고) Sheet 기준으로 사용합니다. (기존: DEVICE/CUST_DEVICE 앞 6자리)
+  - 실제 첨부 파일 기준 OS의 LEAD와 BIN의 LEAD_ID가 같은 코드 체계(예: 286, 852)를 쓰는 것을 확인했고, 이제 같은 Lead의 Assy OS 결과와 FT 결과가 같은 Sheet에 정확히 모입니다.
+- WW(Work Week) 기준을 **일요일~토요일**로 재확정 (9/6~9/12 = WW37). BIN Report 날짜에 대한 별도 offset 없이, OS/BIN 모두 해당 날짜가 속한 일~토 주를 그대로 사용합니다.
+- Vendor 구분 기준 명확화: PCB_VENDOR/SUBSTRATE_VENDOR 마지막 4자리가 'LIST'가 아니면 모두 **LGIT**(LG = LG Innotek)로 표시합니다. ('LG', 'LGIT' 뿐 아니라 실제 데이터의 다른 vendor 표기도 LIST가 아니면 LGIT로 집계되던 기존 로직을 그대로 유지 및 확인)
+- Open/Short/FT/Bin4 Rate 표시 규칙 재확인: 물량(TEST_QTY/IN_QTY)이 있는데 Open·Short·Fail이 0건이면 **0%**로, 물량 자체가 없으면 **'-'**로 표시합니다 (기존 로직 그대로 유지, 실제 데이터 기준 검증 완료).
 
 Usage
 -----

@@ -578,10 +578,10 @@ function calculateRate(qty, baseQty) {
   return (numerator / denominator) * 100;
 }
 
-// ---- Assy OS / FT Weekly (Device × Vendor × WW) 집계 ----
-// DEVICE / CUST_DEVICE 앞 6 digit 기준으로 Device를 구분합니다.
-function deviceCode6(value) {
-  return normalizeText(value).toUpperCase().replace(/\s+/g, "").slice(0, 6);
+// ---- Assy OS / FT Weekly (Lead × Vendor × WW) 집계 ----
+// Sheet 구분 기준: OS는 LEAD, BIN은 LEAD_ID.
+function groupKey(value) {
+  return normalizeText(value).toUpperCase();
 }
 
 // PCB_VENDOR / SUBSTRATE_VENDOR 마지막 4 digit이 'LIST'면 LIST, 그 외에는 LGIT로 구분합니다.
@@ -590,7 +590,8 @@ function vendorGroup(value) {
   return raw.slice(-4) === "LIST" ? "LIST" : "LGIT";
 }
 
-// WW는 일요일~토요일 기준 (예: 9/6~9/12 = WW37).
+// WW는 일요일~토요일 기준 (예: 9/6~9/12 = WW37). OS의 INPUT_TIME, BIN의 Report 날짜 모두
+// 그 날짜가 속한 일~토 주를 그대로 사용합니다 (별도 offset 없음).
 function sundayStartUTC(year, month, day) {
   const date = new Date(Date.UTC(year, month - 1, day));
   date.setUTCDate(date.getUTCDate() - date.getUTCDay());
@@ -662,7 +663,7 @@ function buildDeviceVendorWeekly(osRowsInput, binRowsInput) {
 
   (osRowsInput || []).forEach(row => {
     const wwInfo = getOsWorkWeekInfo(row);
-    const device = deviceCode6(row.device);
+    const device = groupKey(row.lead);
     if (!wwInfo || !device) return;
     deviceSet.add(device);
     yearSet.add(wwInfo.year);
@@ -680,7 +681,7 @@ function buildDeviceVendorWeekly(osRowsInput, binRowsInput) {
 
   (binRowsInput || []).forEach(row => {
     const wwInfo = getBinWorkWeekInfo(row);
-    const device = deviceCode6(row.custDevice);
+    const device = groupKey(row.leadId);
     if (!wwInfo || !device) return;
     deviceSet.add(device);
     yearSet.add(wwInfo.year);
@@ -1286,7 +1287,7 @@ function buildAssyOsWeeklyChartGroups() {
           shortList: osCellRate(cell.LIST, "short")
         };
       });
-      return { title: `Device · ${device}`, rows };
+      return { title: `Lead · ${device}`, rows };
     });
 }
 
@@ -1306,7 +1307,7 @@ function buildFtWeeklyChartGroups() {
           bin4List: binCellRate(cell.LIST, "bin4")
         };
       });
-      return { title: `Device · ${device}`, rows };
+      return { title: `Lead · ${device}`, rows };
     });
 }
 
@@ -2092,7 +2093,7 @@ function exportOsReport() {
   const lastWw = weekly.wwColumns[weekly.wwColumns.length - 1];
   const suffix = lastWw ? lastWw.columnLabel.replace(/[^0-9A-Za-z']/g, "") : todayStamp();
   XLSX.writeFile(workbook, `MTK FT and OS Weekly update@SCK_${suffix}.xlsx`);
-  log(`Assy OS / FT Weekly Report Export 완료 (Device ${devices.length}개 · ${weekly.wwColumns.length}주)`);
+  log(`Assy OS / FT Weekly Report Export 완료 (Lead ${devices.length}개 · ${weekly.wwColumns.length}주)`);
 }
 
 function makeBinExportRawRow(row) {
