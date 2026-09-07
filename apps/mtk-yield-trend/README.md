@@ -1,4 +1,4 @@
-MTK Assy & OS & BIN Yield Trend v25
+MTK Assy & OS & BIN Yield Trend v26
 ===================================
 
 Run
@@ -121,6 +121,14 @@ v25 Changes
 - FT(BIN)의 SUBSTRATE_VENDOR가 비어 있으면, LOT_ID 마지막 1자리(Split/Run 문자, 예: `TPFUN46.00-1A2A` → `TPFUN46.00-1A2`)를 뗀 값으로 Assy OS List의 LOT_ID를 검색해서, 일치하는 row가 있으면 그 PCB_VENDOR를 대신 사용해 LGIT/LIST를 구분합니다. (매칭되는 값이 없으면 기존과 동일하게 처리)
 - 이렇게 찾은 대체 PCB_VENDOR에도 기존과 동일한 방식(마지막 4자리 확인, 'LIST'가 아니면 LGIT=LG=LG Innotek)을 그대로 적용합니다.
 - BIN Report 날짜/WW 산출을 위한 파일명 날짜 인식을 보강: 기본은 파일명에 포함된 8자리(YYYYMMDD, 예: `..._20260608`)를 사용하고, 구분자 문제 등으로 이 패턴을 못 찾는 경우 파일명 끝의 8자리 숫자를 YYYYMMDD로 다시 시도하는 fallback을 추가했습니다 (그래도 못 찾으면 기존처럼 파일 수정일 사용).
+
+v26 Changes (답지 대조 검증 결과 반영)
+-----------
+사용자가 제공한 기존 답지("MT7987 FT and OS" 참고 파일, Lead 286)와 실제 업로드 파일(BIN 20260727, 4 lot)로 직접 대조 검증한 결과, 2가지 계산 오류를 발견하고 수정했습니다.
+- **FT Fail Qty에 BIN36 포함**: 기존에는 FT Rate = Σ(BIN2~BIN6) / Σ IN_QTY 였으나, 답지와 대조한 결과 BIN36도 Fail Bin에 포함해야 정확히 일치함을 확인했습니다. FT Rate = Σ(BIN2~BIN6+BIN36) / Σ IN_QTY 로 수정.
+- **BIN Report 파일명 날짜 -7일 보정**: BIN report 파일은 실제 데이터가 속한 일~토 주가 끝난 "다음 주 월요일" 날짜로 파일명이 찍힙니다(예: `20260727`=월요일 파일 → 실제 데이터는 직전 주 7/19~7/25=WW30). 파일명 날짜에서 7일을 뺀 날짜로 WW를 계산하도록 수정.
+- 검증: BIN_20260727.xlsx(Lead 286, LGIT, 4 lot) 기준 계산 결과 IN_QTY=108,329 / FT Fail(Bin2~6+36)=1,148 / FT Rate=1.05973...% / Bin4 Qty=88 / Bin4 Rate=0.08123...% 이며, 이는 답지의 WW30 LGIT 값과 소수점 이하까지 정확히 일치합니다.
+- OS(Assy OS) 쪽은 이번에 받은 OS 파일 1개(15 row)만으로는 답지의 누적 주간 합계와 완전히 일치하지 않을 수 있습니다(답지는 여러 차례 업로드된 lot들의 누적 합일 가능성). Assy OS 계산식 자체(Open/Short Rate = Σ/Σ TEST_QTY)는 변경하지 않았습니다.
 
 Usage
 -----

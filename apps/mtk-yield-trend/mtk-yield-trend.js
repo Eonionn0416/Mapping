@@ -643,8 +643,21 @@ function getOsWorkWeekInfo(row) {
   return workWeekInfoFromDateKey(row?.inputDate);
 }
 
+// BIN(FT) report 파일은 실제 데이터가 속한 일~토 주가 끝난 "다음 주 초"의 날짜로 파일명이 찍힙니다
+// (예: 20260727(월) 파일 = 직전 일~토 주인 7/19~7/25(WW30) data). 그래서 파일명 날짜에서 7일을 뺀
+// 날짜로 WW를 계산합니다. (실제 답지 파일과 대조해 정확히 일치하는 것을 확인했습니다.)
+function shiftDateKeyByDays(dateKey, days) {
+  const normalized = normalizeReportDate(dateKey);
+  if (!normalized) return "";
+  const [y, m, d] = normalized.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  date.setUTCDate(date.getUTCDate() + days);
+  return makeDateKey(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
+}
+
 function getBinWorkWeekInfo(row) {
-  const byDate = workWeekInfoFromDateKey(row?.reportDate);
+  const shiftedDate = shiftDateKeyByDays(row?.reportDate, -7);
+  const byDate = shiftedDate ? workWeekInfoFromDateKey(shiftedDate) : null;
   if (byDate) return byDate;
   const month = normalizeReportMonth(row?.reportMonth);
   if (/^\d{4}-\d{2}$/.test(month)) return workWeekInfoFromDateKey(`${month}-01`);
@@ -735,8 +748,10 @@ function buildDeviceVendorWeekly(osRowsInput, binRowsInput) {
     const resolvedVendorRaw = resolveBinVendorRaw(row, osLotVendorMap);
     const bucket = wwMap.get(wwInfo.sortKey)[vendorGroup(resolvedVendorRaw)];
     bucket.inQty += normalizeNumber(row.inQty) || 0;
+    // FT Fail Qty = BIN2~BIN6 + BIN36 (BIN36도 실패 Bin으로 포함해야 답지 수치와 정확히 일치합니다)
     bucket.ftFailQty += (normalizeNumber(row.bin2) || 0) + (normalizeNumber(row.bin3) || 0)
-      + (normalizeNumber(row.bin4) || 0) + (normalizeNumber(row.bin5) || 0) + (normalizeNumber(row.bin6) || 0);
+      + (normalizeNumber(row.bin4) || 0) + (normalizeNumber(row.bin5) || 0) + (normalizeNumber(row.bin6) || 0)
+      + (normalizeNumber(row.bin36) || 0);
     bucket.bin4Qty += normalizeNumber(row.bin4) || 0;
     bucket.rows += 1;
   });
