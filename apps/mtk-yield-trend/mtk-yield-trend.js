@@ -56,12 +56,13 @@ let sodSummaryRows = [];
 let osTrendRows = [];
 let defectTrendRows = [];
 let binTrendRows = [];
+let weeklyDeviceVendorData = { devices: [], wwColumns: [], osMap: new Map(), binMap: new Map() };
 let trendStartMonth = "";
 
 let yieldTrendCharts = [];
 let osTrendCharts = [];
 let defectTrendCharts = [];
-let binTrendChart = null;
+let binTrendCharts = [];
 
 const el = {
   firebaseStatus: document.getElementById("firebaseStatus"),
@@ -82,10 +83,9 @@ const el = {
   yieldTrendCharts: document.getElementById("yieldTrendCharts"),
   osTrendCharts: document.getElementById("osTrendCharts"),
   defectTrendCharts: document.getElementById("defectTrendCharts"),
-  binTrendChart: document.getElementById("binTrendChart"),
+  binTrendCharts: document.getElementById("binTrendCharts"),
   defectLimitSelect: document.getElementById("defectLimitSelect"),
   trendStartMonthSelect: document.getElementById("trendStartMonthSelect"),
-  binChartModeSelect: document.getElementById("binChartModeSelect"),
   defectPpmBody: document.getElementById("defectPpmBody"),
   assyRawBody: document.getElementById("assyRawBody"),
   osTrendBody: document.getElementById("osTrendBody"),
@@ -94,6 +94,7 @@ const el = {
   exportAssyBtn: document.getElementById("exportAssyBtn"),
   exportOsBtn: document.getElementById("exportOsBtn"),
   exportBinBtn: document.getElementById("exportBinBtn"),
+  clearAllBtn: document.getElementById("clearAllBtn"),
   log: document.getElementById("log")
 };
 
@@ -112,7 +113,7 @@ function setFirebaseStatus(text, type = "warning") {
 function setBusy(isBusy) {
   const hasSelectedRows = selectedAssyRows.length > 0 || selectedOsRows.length > 0 || selectedBinRows.length > 0;
   if (el.exportAssyBtn) el.exportAssyBtn.disabled = isBusy || !assyRows.length;
-  if (el.exportOsBtn) el.exportOsBtn.disabled = isBusy || !osRows.length;
+  if (el.exportOsBtn) el.exportOsBtn.disabled = isBusy || !(osRows.length || binRows.length);
   if (el.exportBinBtn) el.exportBinBtn.disabled = isBusy || !binRows.length;
 }
 
@@ -577,6 +578,141 @@ function calculateRate(qty, baseQty) {
   return (numerator / denominator) * 100;
 }
 
+// ---- Assy OS / FT Weekly (Device × Vendor × WW) 집계 ----
+// DEVICE / CUST_DEVICE 앞 6 digit 기준으로 Device를 구분합니다.
+function deviceCode6(value) {
+  return normalizeText(value).toUpperCase().replace(/\s+/g, "").slice(0, 6);
+}
+
+// PCB_VENDOR / SUBSTRATE_VENDOR 마지막 4 digit이 'LIST'면 LIST, 그 외에는 LGIT로 구분합니다.
+function vendorGroup(value) {
+  const raw = normalizeText(value).toUpperCase();
+  return raw.slice(-4) === "LIST" ? "LIST" : "LGIT";
+}
+
+// WW는 일요일~토요일 기준 (예: 9/6~9/12 = WW37).
+function sundayStartUTC(year, month, day) {
+  const date = new Date(Date.UTC(year, month - 1, day));
+  date.setUTCDate(date.getUTCDate() - date.getUTCDay());
+  return date;
+}
+
+function wwInfoFromWeekStart(weekStart) {
+  const weekYear = weekStart.getUTCFullYear();
+  const anchor = sundayStartUTC(weekYear, 1, 1);
+  const diffDays = Math.round((weekStart.getTime() - anchor.getTime()) / 86400000);
+  const ww = Math.floor(diffDays / 7) + 1;
+  const weekEnd = new Date(weekStart.getTime() + 6 * 86400000);
+  return {
+    year: weekYear,
+    ww,
+    sortKey: weekStart.getTime(),
+    label: `WW${ww}`,
+    rangeLabel: `${weekStart.getUTCMonth() + 1}/${weekStart.getUTCDate()}-${weekEnd.getUTCMonth() + 1}/${weekEnd.getUTCDate()}`
+  };
+}
+
+function workWeekInfoFromDateKey(dateKey) {
+  const normalized = normalizeReportDate(dateKey);
+  if (!normalized) return null;
+  const [y, m, d] = normalized.split("-").map(Number);
+  return wwInfoFromWeekStart(sundayStartUTC(y, m, d));
+}
+
+function getOsWorkWeekInfo(row) {
+  return workWeekInfoFromDateKey(row?.inputDate);
+}
+
+function getBinWorkWeekInfo(row) {
+  const byDate = workWeekInfoFromDateKey(row?.reportDate);
+  if (byDate) return byDate;
+  const month = normalizeReportMonth(row?.reportMonth);
+  if (/^\d{4}-\d{2}$/.test(month)) return workWeekInfoFromDateKey(`${month}-01`);
+  return null;
+}
+
+function emptyOsBucket() {
+  return { testQty: 0, openQty: 0, shortQty: 0, rows: 0 };
+}
+
+function emptyBinBucket() {
+  return { inQty: 0, ftFailQty: 0, bin4Qty: 0, rows: 0 };
+}
+
+function osCellRate(bucket, kind) {
+  if (!bucket || !bucket.rows) return null;
+  if (!bucket.testQty) return null;
+  const numerator = kind === "open" ? bucket.openQty : bucket.shortQty;
+  return numerator / bucket.testQty;
+}
+
+function binCellRate(bucket, kind) {
+  if (!bucket || !bucket.rows) return null;
+  if (!bucket.inQty) return null;
+  const numerator = kind === "ft" ? bucket.ftFailQty : bucket.bin4Qty;
+  return numerator / bucket.inQty;
+}
+
+function buildDeviceVendorWeekly(osRowsInput, binRowsInput) {
+  const osMap = new Map();
+  const binMap = new Map();
+  const wwMeta = new Map();
+  const deviceSet = new Set();
+  const yearSet = new Set();
+
+  (osRowsInput || []).forEach(row => {
+    const wwInfo = getOsWorkWeekInfo(row);
+    const device = deviceCode6(row.device);
+    if (!wwInfo || !device) return;
+    deviceSet.add(device);
+    yearSet.add(wwInfo.year);
+    wwMeta.set(wwInfo.sortKey, wwInfo);
+
+    if (!osMap.has(device)) osMap.set(device, new Map());
+    const wwMap = osMap.get(device);
+    if (!wwMap.has(wwInfo.sortKey)) wwMap.set(wwInfo.sortKey, { LGIT: emptyOsBucket(), LIST: emptyOsBucket() });
+    const bucket = wwMap.get(wwInfo.sortKey)[vendorGroup(row.pcbVendor)];
+    bucket.testQty += normalizeNumber(row.testQty) || 0;
+    bucket.openQty += normalizeNumber(row.openQty) || 0;
+    bucket.shortQty += normalizeNumber(row.shortQty) || 0;
+    bucket.rows += 1;
+  });
+
+  (binRowsInput || []).forEach(row => {
+    const wwInfo = getBinWorkWeekInfo(row);
+    const device = deviceCode6(row.custDevice);
+    if (!wwInfo || !device) return;
+    deviceSet.add(device);
+    yearSet.add(wwInfo.year);
+    wwMeta.set(wwInfo.sortKey, wwInfo);
+
+    if (!binMap.has(device)) binMap.set(device, new Map());
+    const wwMap = binMap.get(device);
+    if (!wwMap.has(wwInfo.sortKey)) wwMap.set(wwInfo.sortKey, { LGIT: emptyBinBucket(), LIST: emptyBinBucket() });
+    const bucket = wwMap.get(wwInfo.sortKey)[vendorGroup(row.substrateVendor)];
+    bucket.inQty += normalizeNumber(row.inQty) || 0;
+    bucket.ftFailQty += (normalizeNumber(row.bin2) || 0) + (normalizeNumber(row.bin3) || 0)
+      + (normalizeNumber(row.bin4) || 0) + (normalizeNumber(row.bin5) || 0) + (normalizeNumber(row.bin6) || 0);
+    bucket.bin4Qty += normalizeNumber(row.bin4) || 0;
+    bucket.rows += 1;
+  });
+
+  const sortKeys = Array.from(wwMeta.keys()).sort((a, b) => a - b);
+  const wwColumns = [];
+  if (sortKeys.length) {
+    const step = 7 * 86400000;
+    for (let k = sortKeys[0]; k <= sortKeys[sortKeys.length - 1]; k += step) {
+      wwColumns.push(wwMeta.get(k) || wwInfoFromWeekStart(new Date(k)));
+    }
+  }
+  const multiYear = yearSet.size > 1;
+  wwColumns.forEach(w => {
+    w.columnLabel = multiYear ? `'${String(w.year).slice(2)} WW${w.ww}` : `WW${w.ww}`;
+  });
+
+  return { devices: Array.from(deviceSet).sort(), wwColumns, osMap, binMap };
+}
+
 function isValidAssyRow(row) {
   return Boolean(row.sod && row.sckInputLotNo && row.inQty !== null && row.dedupeKey);
 }
@@ -871,6 +1007,58 @@ async function uploadSelectedToFirebase() {
   }
 }
 
+async function deleteAllDocsInCollection(collectionName) {
+  const snap = await getDocs(collection(db, collectionName));
+  const docs = snap.docs;
+  let deleted = 0;
+  for (let i = 0; i < docs.length; i += BATCH_LIMIT) {
+    const chunk = docs.slice(i, i + BATCH_LIMIT);
+    const batch = writeBatch(db);
+    chunk.forEach(docSnap => batch.delete(docSnap.ref));
+    await batch.commit();
+    deleted += chunk.length;
+  }
+  return deleted;
+}
+
+async function clearAllUploadedData() {
+  const ok = window.confirm("첨부한 모든 Raw Data(Assy/OS/BIN)를 Firestore에서 완전히 삭제합니다. 계속할까요?");
+  if (!ok) return;
+
+  selectedFiles = [];
+  selectedAssyRows = [];
+  selectedOsRows = [];
+  selectedBinRows = [];
+  renderSelectedFiles();
+  renderMetrics();
+
+  if (!db || !currentUser) {
+    assyRows = [];
+    osRows = [];
+    binRows = [];
+    rebuildDerivedData();
+    renderFirestoreViews();
+    log("Firebase 준비 전이라 화면 Data만 초기화했습니다.");
+    return;
+  }
+
+  setBusy(true);
+  try {
+    const [assyDeleted, osDeleted, binDeleted] = await Promise.all([
+      deleteAllDocsInCollection(ASSY_COLLECTION),
+      deleteAllDocsInCollection(OS_COLLECTION),
+      deleteAllDocsInCollection(BIN_COLLECTION)
+    ]);
+    log(`Firestore 삭제 완료: ${ASSY_COLLECTION} ${assyDeleted.toLocaleString()}건 / ${OS_COLLECTION} ${osDeleted.toLocaleString()}건 / ${BIN_COLLECTION} ${binDeleted.toLocaleString()}건.`);
+    await loadFirestoreData();
+    log("업로드된 Raw Data를 모두 삭제했습니다.");
+  } catch (error) {
+    log(`전체 삭제 Error: ${error.message}`);
+  } finally {
+    setBusy(false);
+  }
+}
+
 function rebuildDerivedData() {
   const leadLookup = buildLeadLookup();
   assyMergedRows = assyRows.map(row => {
@@ -893,6 +1081,7 @@ function rebuildDerivedData() {
   osTrendRows = buildOsTrendRows(windowOsRows);
   defectTrendRows = buildDefectTrendRows(windowAssyRows);
   binTrendRows = buildBinTrendRows(windowBinRows);
+  weeklyDeviceVendorData = buildDeviceVendorWeekly(windowOsRows, windowBinRows);
 }
 
 function average(values) {
@@ -1081,16 +1270,44 @@ function buildAssyYieldChartGroups() {
   ];
 }
 
-function buildOsTrendChartGroups() {
-  const rows = getWindowOsRows();
-  const leads = uniqueSorted(rows.map(row => fallbackGroupName(row.lead, "Blank Lead")));
-  return [
-    { title: "All", rows: buildOsTrendRows(rows) },
-    ...leads.map(lead => ({
-      title: `Lead · ${lead}`,
-      rows: buildOsTrendRows(rows.filter(row => fallbackGroupName(row.lead, "Blank Lead") === lead))
-    }))
-  ];
+function buildAssyOsWeeklyChartGroups() {
+  const weekly = weeklyDeviceVendorData;
+  return weekly.devices
+    .filter(device => weekly.osMap.has(device))
+    .map(device => {
+      const wwMap = weekly.osMap.get(device);
+      const rows = weekly.wwColumns.map(w => {
+        const cell = wwMap.get(w.sortKey) || {};
+        return {
+          label: w.columnLabel,
+          openLgit: osCellRate(cell.LGIT, "open"),
+          openList: osCellRate(cell.LIST, "open"),
+          shortLgit: osCellRate(cell.LGIT, "short"),
+          shortList: osCellRate(cell.LIST, "short")
+        };
+      });
+      return { title: `Device · ${device}`, rows };
+    });
+}
+
+function buildFtWeeklyChartGroups() {
+  const weekly = weeklyDeviceVendorData;
+  return weekly.devices
+    .filter(device => weekly.binMap.has(device))
+    .map(device => {
+      const wwMap = weekly.binMap.get(device);
+      const rows = weekly.wwColumns.map(w => {
+        const cell = wwMap.get(w.sortKey) || {};
+        return {
+          label: w.columnLabel,
+          ftLgit: binCellRate(cell.LGIT, "ft"),
+          ftList: binCellRate(cell.LIST, "ft"),
+          bin4Lgit: binCellRate(cell.LGIT, "bin4"),
+          bin4List: binCellRate(cell.LIST, "bin4")
+        };
+      });
+      return { title: `Device · ${device}`, rows };
+    });
 }
 
 function buildDefectChartGroups() {
@@ -1393,56 +1610,27 @@ function renderYieldTrendChart() {
   );
 }
 
-function makeOsChartConfig(rows) {
-  const labels = rows.map(row => row.inputDateLabel);
+function pctOrNull(fraction) {
+  return fraction === null || fraction === undefined ? null : roundOrNull(fraction * 100, 4);
+}
+
+function makeAssyOsWeeklyChartConfig(rows) {
+  const labels = rows.map(row => row.label);
   return {
     data: {
       labels,
       datasets: [
-        {
-          type: "line",
-          label: "Reject Rate",
-          data: rows.map(row => roundOrNull(row.rejectRate, 4)),
-          yAxisID: "rateAxis",
-          tension: 0.2,
-          spanGaps: true
-        },
-        {
-          type: "line",
-          label: "Open Rate",
-          data: rows.map(row => roundOrNull(row.openRate, 4)),
-          yAxisID: "rateAxis",
-          tension: 0.2,
-          spanGaps: true
-        },
-        {
-          type: "line",
-          label: "Short Rate",
-          data: rows.map(row => roundOrNull(row.shortRate, 4)),
-          yAxisID: "rateAxis",
-          tension: 0.2,
-          spanGaps: true
-        },
+        { type: "line", label: "Open Rate (LGIT)", data: rows.map(row => pctOrNull(row.openLgit)), tension: 0.2, spanGaps: true },
+        { type: "line", label: "Open Rate (LIST)", data: rows.map(row => pctOrNull(row.openList)), tension: 0.2, spanGaps: true },
+        { type: "line", label: "Short Rate (LGIT)", data: rows.map(row => pctOrNull(row.shortLgit)), tension: 0.2, spanGaps: true },
+        { type: "line", label: "Short Rate (LIST)", data: rows.map(row => pctOrNull(row.shortList)), tension: 0.2, spanGaps: true },
         {
           type: "line",
           label: "USL 0.3%",
           data: rows.map(() => OS_RATE_USL),
-          yAxisID: "rateAxis",
           borderDash: [6, 5],
           pointRadius: 0,
           borderWidth: 1.5
-        },
-        {
-          type: "bar",
-          label: "TEST_QTY",
-          data: rows.map(row => row.testQty),
-          yAxisID: "qtyAxis"
-        },
-        {
-          type: "bar",
-          label: "OS_SS",
-          data: rows.map(row => row.osSs),
-          yAxisID: "qtyAxis"
         }
       ]
     },
@@ -1451,18 +1639,10 @@ function makeOsChartConfig(rows) {
       maintainAspectRatio: false,
       interaction: { mode: "index", intersect: false },
       scales: {
-        rateAxis: {
-          type: "linear",
-          position: "left",
+        y: {
           beginAtZero: true,
           ticks: { callback: value => `${value}%` },
           title: { display: true, text: "Rate (%)" }
-        },
-        qtyAxis: {
-          type: "linear",
-          position: "right",
-          grid: { drawOnChartArea: false },
-          title: { display: true, text: "Qty" }
         }
       },
       plugins: { legend: { position: "bottom" } }
@@ -1474,36 +1654,24 @@ function renderOsTrendChart() {
   renderChartCollection(
     el.osTrendCharts,
     osTrendCharts,
-    buildOsTrendChartGroups(),
-    rows => makeOsChartConfig(rows),
+    buildAssyOsWeeklyChartGroups(),
+    rows => makeAssyOsWeeklyChartConfig(rows),
     "아직 OS Trend Data가 없습니다."
   );
 }
 
-function getVisibleBinColumns() {
-  const mode = el.binChartModeSelect?.value || "fail";
-  if (mode === "all") return BIN_COLUMNS;
-  if (mode === "bin1") return BIN_COLUMNS.filter(bin => bin.key === "bin1");
-  return BIN_COLUMNS.filter(bin => bin.key !== "bin1");
-}
-
-function renderBinTrendChart() {
-  if (!el.binTrendChart) return;
-  const labels = binTrendRows.map(row => row.reportWeekLabel || row.reportWeek);
-  const selectedBins = getVisibleBinColumns();
-
-  const datasets = selectedBins.map(bin => ({
-    type: "line",
-    label: `${bin.label} Rate`,
-    data: binTrendRows.map(row => roundOrNull(row[`${bin.key}Rate`], 6)),
-    tension: 0.2,
-    spanGaps: true
-  }));
-
-  if (binTrendChart) binTrendChart.destroy();
-
-  binTrendChart = new Chart(el.binTrendChart, {
-    data: { labels, datasets },
+function makeFtWeeklyChartConfig(rows) {
+  const labels = rows.map(row => row.label);
+  return {
+    data: {
+      labels,
+      datasets: [
+        { type: "line", label: "FT Rate (LGIT)", data: rows.map(row => pctOrNull(row.ftLgit)), tension: 0.2, spanGaps: true },
+        { type: "line", label: "FT Rate (LIST)", data: rows.map(row => pctOrNull(row.ftList)), tension: 0.2, spanGaps: true },
+        { type: "line", label: "Bin4 Rate (LGIT)", data: rows.map(row => pctOrNull(row.bin4Lgit)), tension: 0.2, spanGaps: true },
+        { type: "line", label: "Bin4 Rate (LIST)", data: rows.map(row => pctOrNull(row.bin4List)), tension: 0.2, spanGaps: true }
+      ]
+    },
     options: {
       responsive: true,
       maintainAspectRatio: false,
@@ -1512,29 +1680,66 @@ function renderBinTrendChart() {
         y: {
           beginAtZero: true,
           ticks: { callback: value => `${value}%` },
-          title: { display: true, text: "Bin Rate (%)" }
+          title: { display: true, text: "Rate (%)" }
         }
       },
       plugins: { legend: { position: "bottom" } }
     }
-  });
+  };
+}
+
+function renderBinTrendChart() {
+  renderChartCollection(
+    el.binTrendCharts,
+    binTrendCharts,
+    buildFtWeeklyChartGroups(),
+    rows => makeFtWeeklyChartConfig(rows),
+    "아직 FT/BIN Trend Data가 없습니다."
+  );
 }
 
 function renderBinTrendTable() {
   if (!el.binTrendBody) return;
-  if (!binTrendRows.length) {
-    el.binTrendBody.innerHTML = `<tr><td colspan="12" class="empty">아직 BIN Trend Data가 없습니다.</td></tr>`;
+  const weekly = weeklyDeviceVendorData;
+  const flatRows = [];
+  weekly.devices.forEach(device => {
+    const wwMap = weekly.binMap.get(device);
+    if (!wwMap) return;
+    weekly.wwColumns.forEach(w => {
+      const cell = wwMap.get(w.sortKey);
+      if (!cell) return;
+      ["LGIT", "LIST"].forEach(vendor => {
+        const bucket = cell[vendor];
+        if (!bucket || !bucket.rows) return;
+        flatRows.push({
+          device,
+          ww: w.columnLabel,
+          vendor,
+          inQty: bucket.inQty,
+          ftFailQty: bucket.ftFailQty,
+          ftRate: binCellRate(bucket, "ft"),
+          bin4Qty: bucket.bin4Qty,
+          bin4Rate: binCellRate(bucket, "bin4")
+        });
+      });
+    });
+  });
+
+  if (!flatRows.length) {
+    el.binTrendBody.innerHTML = `<tr><td colspan="8" class="empty">아직 FT/BIN Trend Data가 없습니다.</td></tr>`;
     return;
   }
 
-  el.binTrendBody.innerHTML = binTrendRows.map(row => `
+  el.binTrendBody.innerHTML = flatRows.map(row => `
     <tr>
-      <td>${escapeHtml(row.reportWeekLabel || row.reportWeek)}</td>
-      <td>${formatNumber(row.rows)}</td>
+      <td>${escapeHtml(row.device)}</td>
+      <td>${escapeHtml(row.ww)}</td>
+      <td>${escapeHtml(row.vendor)}</td>
       <td>${formatNumber(row.inQty)}</td>
-      <td>${formatNumber(row.outQty)}</td>
-      <td>${formatYield(row.finalYield)}</td>
-      ${BIN_COLUMNS.map(bin => `<td>${formatRate(row[`${bin.key}Rate`])}</td>`).join("")}
+      <td>${formatNumber(row.ftFailQty)}</td>
+      <td>${formatRate(pctOrNull(row.ftRate))}</td>
+      <td>${formatNumber(row.bin4Qty)}</td>
+      <td>${formatRate(pctOrNull(row.bin4Rate))}</td>
     </tr>
   `).join("");
 }
@@ -1630,20 +1835,47 @@ function renderAssyRawTable() {
 }
 
 function renderOsTrendTable() {
-  if (!osTrendRows.length) {
-    el.osTrendBody.innerHTML = `<tr><td colspan="7" class="empty">아직 OS Trend Data가 없습니다.</td></tr>`;
+  if (!el.osTrendBody) return;
+  const weekly = weeklyDeviceVendorData;
+  const flatRows = [];
+  weekly.devices.forEach(device => {
+    const wwMap = weekly.osMap.get(device);
+    if (!wwMap) return;
+    weekly.wwColumns.forEach(w => {
+      const cell = wwMap.get(w.sortKey);
+      if (!cell) return;
+      ["LGIT", "LIST"].forEach(vendor => {
+        const bucket = cell[vendor];
+        if (!bucket || !bucket.rows) return;
+        flatRows.push({
+          device,
+          ww: w.columnLabel,
+          vendor,
+          testQty: bucket.testQty,
+          openQty: bucket.openQty,
+          shortQty: bucket.shortQty,
+          openRate: osCellRate(bucket, "open"),
+          shortRate: osCellRate(bucket, "short")
+        });
+      });
+    });
+  });
+
+  if (!flatRows.length) {
+    el.osTrendBody.innerHTML = `<tr><td colspan="8" class="empty">아직 OS Trend Data가 없습니다.</td></tr>`;
     return;
   }
 
-  el.osTrendBody.innerHTML = osTrendRows.map(row => `
+  el.osTrendBody.innerHTML = flatRows.map(row => `
     <tr>
-      <td>${escapeHtml(row.inputDateLabel)}</td>
-      <td>${formatNumber(row.rows)}</td>
+      <td>${escapeHtml(row.device)}</td>
+      <td>${escapeHtml(row.ww)}</td>
+      <td>${escapeHtml(row.vendor)}</td>
       <td>${formatNumber(row.testQty)}</td>
-      <td>${roundOrNull(row.osSs, 4) ?? ""}</td>
-      <td>${formatRate(row.rejectRate)}</td>
-      <td>${formatRate(row.openRate)}</td>
-      <td>${formatRate(row.shortRate)}</td>
+      <td>${formatNumber(row.openQty)}</td>
+      <td>${formatNumber(row.shortQty)}</td>
+      <td>${formatRate(pctOrNull(row.openRate))}</td>
+      <td>${formatRate(pctOrNull(row.shortRate))}</td>
     </tr>
   `).join("");
 }
@@ -1775,54 +2007,92 @@ function exportAssyReport() {
   log("Assy SOD Report Export 완료");
 }
 
+function buildDeviceSheetAoa(device, weekly) {
+  const osWwMap = weekly.osMap.get(device) || new Map();
+  const binWwMap = weekly.binMap.get(device) || new Map();
+
+  function osRowValues(vendor, kind) {
+    return weekly.wwColumns.map(w => {
+      const cell = (osWwMap.get(w.sortKey) || {})[vendor];
+      const rate = osCellRate(cell, kind);
+      return rate === null ? "-" : rate;
+    });
+  }
+  function binRowValues(vendor, kind) {
+    return weekly.wwColumns.map(w => {
+      const cell = (binWwMap.get(w.sortKey) || {})[vendor];
+      const rate = binCellRate(cell, kind);
+      return rate === null ? "-" : rate;
+    });
+  }
+
+  const rows = [];
+  rows.push([`${device} Assembly_SCK_OS and FT data`]);
+  rows.push(["* By Weekly"]);
+  rows.push([]);
+  rows.push(["", "Limit: OS >= 3000ppm(0.3%) based on W-207 MediaTek Assembl OS Operation Flow"]);
+  rows.push(["", "", "", ...weekly.wwColumns.map(w => w.rangeLabel)]);
+  rows.push(["Criteria", "Item", "SBT", ...weekly.wwColumns.map(w => w.columnLabel)]);
+  rows.push(["Assy\nOS", "Open", "LGIT", ...osRowValues("LGIT", "open")]);
+  rows.push([null, null, "LIST", ...osRowValues("LIST", "open")]);
+  rows.push([null, "Short", "LGIT", ...osRowValues("LGIT", "short")]);
+  rows.push([null, null, "LIST", ...osRowValues("LIST", "short")]);
+  rows.push(["FT", "FT", "LGIT", ...binRowValues("LGIT", "ft")]);
+  rows.push([null, null, "LIST", ...binRowValues("LIST", "ft")]);
+  rows.push([null, "Bin4 rate", "LGIT", ...binRowValues("LGIT", "bin4")]);
+  rows.push([null, null, "LIST", ...binRowValues("LIST", "bin4")]);
+  return rows;
+}
+
 function exportOsReport() {
-  if (!osRows.length) {
-    log("Export할 OS Data가 없습니다.");
+  const weekly = weeklyDeviceVendorData;
+  const devices = weekly.devices.filter(device => weekly.osMap.has(device) || weekly.binMap.has(device));
+
+  if (!devices.length || !weekly.wwColumns.length) {
+    log("Export할 Assy OS / FT Weekly Data가 없습니다.");
     return;
   }
 
   const workbook = XLSX.utils.book_new();
+  const usedSheetNames = new Set();
 
-  const trendSheetRows = osTrendRows.map(row => ({
-    INPUT_TIME: row.inputDateLabel,
-    Rows: row.rows,
-    TOTAL_QTY: row.totalQty,
-    TEST_QTY: row.testQty,
-    OS_SS: roundOrNull(row.osSs, 6),
-    TOTAL_OS_REJ: row.totalOsRej,
-    OPEN: row.openQty,
-    SHORT: row.shortQty,
-    "REJECT_RATE(%)": roundOrNull(row.rejectRate, 6),
-    "OPEN_RATE(%)": roundOrNull(row.openRate, 6),
-    "SHORT_RATE(%)": roundOrNull(row.shortRate, 6)
-  }));
+  devices.forEach(device => {
+    const aoa = buildDeviceSheetAoa(device, weekly);
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws["!merges"] = [
+      { s: { r: 6, c: 0 }, e: { r: 9, c: 0 } },
+      { s: { r: 10, c: 0 }, e: { r: 13, c: 0 } },
+      { s: { r: 6, c: 1 }, e: { r: 7, c: 1 } },
+      { s: { r: 8, c: 1 }, e: { r: 9, c: 1 } },
+      { s: { r: 10, c: 1 }, e: { r: 11, c: 1 } },
+      { s: { r: 12, c: 1 }, e: { r: 13, c: 1 } }
+    ];
+    ws["!cols"] = [{ wch: 8 }, { wch: 11 }, { wch: 6 }, ...weekly.wwColumns.map(() => ({ wch: 9 }))];
 
-  const rawSheetRows = osRows.map(row => ({
-    "In Date": compactDateToLabel(row.inputDate),
-    LOT_ID: row.lotId,
-    "Lot Base": row.lotBase,
-    Customer: row.customer,
-    Device: row.device,
-    Lead: row.lead,
-    "PCB Vendor": row.pcbVendor,
-    TOTAL_QTY: row.osInQty,
-    TEST_QTY: row.testQty,
-    OS_SS: row.osSs,
-    TOTAL_OS_REJ: row.totalOsRej,
-    OPEN: row.openQty,
-    SHORT: row.shortQty,
-    "REJECT_RATE(%)": roundOrNull(row.rejectRate, 6),
-    "OPEN_RATE(%)": roundOrNull(row.openRate, 6),
-    "SHORT_RATE(%)": roundOrNull(row.shortRate, 6),
-    INPUT_TIME: row.inputTime,
-    "Source File": row.sourceFileName,
-    "Dedupe Key": row.dedupeKey
-  }));
+    for (let r = 6; r <= 13; r += 1) {
+      for (let c = 3; c < 3 + weekly.wwColumns.length; c += 1) {
+        const addr = XLSX.utils.encode_cell({ r, c });
+        const cell = ws[addr];
+        if (cell && typeof cell.v === "number") cell.z = "0.000%";
+      }
+    }
 
-  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(trendSheetRows), "OS_INPUT_TIME_Trend");
-  XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rawSheetRows), "OS_Raw");
-  XLSX.writeFile(workbook, `MTK_OS_INPUT_TIME_Trend_${todayStamp()}.xlsx`);
-  log("OS Report Export 완료");
+    let sheetName = device || `Sheet${usedSheetNames.size + 1}`;
+    sheetName = sheetName.slice(0, 31);
+    let suffix = 1;
+    while (usedSheetNames.has(sheetName)) {
+      sheetName = `${device.slice(0, 28)}_${suffix}`;
+      suffix += 1;
+    }
+    usedSheetNames.add(sheetName);
+
+    XLSX.utils.book_append_sheet(workbook, ws, sheetName);
+  });
+
+  const lastWw = weekly.wwColumns[weekly.wwColumns.length - 1];
+  const suffix = lastWw ? lastWw.columnLabel.replace(/[^0-9A-Za-z']/g, "") : todayStamp();
+  XLSX.writeFile(workbook, `MTK FT and OS Weekly update@SCK_${suffix}.xlsx`);
+  log(`Assy OS / FT Weekly Report Export 완료 (Device ${devices.length}개 · ${weekly.wwColumns.length}주)`);
 }
 
 function makeBinExportRawRow(row) {
@@ -1954,10 +2224,10 @@ function setupEvents() {
     renderFirestoreViews();
   });
   el.defectLimitSelect.addEventListener("change", renderDefectTrendChart);
-  el.binChartModeSelect.addEventListener("change", renderBinTrendChart);
   el.exportAssyBtn.addEventListener("click", exportAssyReport);
   el.exportOsBtn.addEventListener("click", exportOsReport);
   el.exportBinBtn.addEventListener("click", exportBinReport);
+  if (el.clearAllBtn) el.clearAllBtn.addEventListener("click", clearAllUploadedData);
 }
 
 setupEvents();

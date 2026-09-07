@@ -9,7 +9,7 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 
-  <link rel="stylesheet" href="mtk-yield-trend.css?v=22" />
+  <link rel="stylesheet" href="mtk-yield-trend.css?v=23" />
 </head>
 <body>
   <a class="qa-back-link" href="../../index.html">← QA Page</a>
@@ -76,8 +76,9 @@
         <div>
           <h2>Assy OS Trend</h2>
           <p>
-            OS comparison report의 <b>INPUT_TIME</b> 기준으로 TEST_QTY, OS_SS, REJECT_RATE, OPEN_RATE, SHORT_RATE를 표시합니다.
-            Rate USL은 <b>0.3%</b>입니다. Raw/Export에는 TOTAL_QTY, OPEN, SHORT, TOTAL_OS_REJ도 유지됩니다.
+            OS comparison report를 <b>DEVICE 앞 6자리</b>로 Device 구분, <b>PCB_VENDOR 마지막 4자리</b>(LIST / 그 외 LGIT)로 Vendor 구분,
+            <b>WW(일요일~토요일, 예 9/6~9/12=WW37)</b>별로 <b>Open Rate = Σ OPEN / Σ TEST_QTY</b>, <b>Short Rate = Σ SHORT / Σ TEST_QTY</b> 를 표시합니다.
+            Rate USL은 <b>0.3%</b>입니다.
           </p>
         </div>
         <button id="exportOsBtn" type="button" class="secondary">Export OS Report</button>
@@ -87,17 +88,18 @@
         <table>
           <thead>
             <tr>
-              <th>INPUT_TIME</th>
-              <th>Rows</th>
+              <th>Device</th>
+              <th>WW</th>
+              <th>Vendor</th>
               <th>TEST_QTY</th>
-              <th>OS_SS</th>
-              <th>REJECT_RATE</th>
-              <th>OPEN_RATE</th>
-              <th>SHORT_RATE</th>
+              <th>OPEN Qty</th>
+              <th>SHORT Qty</th>
+              <th>Open Rate</th>
+              <th>Short Rate</th>
             </tr>
           </thead>
           <tbody id="osTrendBody">
-            <tr><td colspan="7" class="empty">아직 OS Trend Data가 없습니다.</td></tr>
+            <tr><td colspan="8" class="empty">아직 OS Trend Data가 없습니다.</td></tr>
           </tbody>
         </table>
       </div>
@@ -106,45 +108,34 @@
     <section class="panel">
       <div class="panel-header">
         <div>
-          <h2>MTK BIN Rate Trend</h2>
+          <h2>FT (BIN) Weekly Trend</h2>
           <p>
-            MTK BIN INFORMATION 첨부 파일의 <b>Report Week</b> 기준으로 BIN1~BIN6/BIN36 수량을 merge하고,
-            <b>Bin Rate = BIN Qty / IN_QTY × 100</b> 으로 표시합니다.
+            MTK BIN INFORMATION 첨부 파일을 <b>CUST_DEVICE 앞 6자리</b>로 Device 구분, <b>SUBSTRATE_VENDOR 마지막 4자리</b>(LIST / 그 외 LGIT)로 Vendor 구분,
+            <b>WW(일요일~토요일)</b>별로 <b>FT Rate = Σ(BIN2~BIN6) / Σ IN_QTY</b>, <b>Bin4 Rate = Σ BIN4 / Σ IN_QTY</b> 를 표시합니다.
+            (BIN1~BIN36 전체 상세 Merge는 Export BIN Weekly Merge 파일에서 계속 확인 가능합니다.)
           </p>
         </div>
         <div class="actions">
-          <label class="inline-control compact-control">
-            Chart Bins
-            <select id="binChartModeSelect">
-              <option value="fail" selected>Fail Bins Only</option>
-              <option value="all">All Bins</option>
-              <option value="bin1">BIN1 Only</option>
-            </select>
-          </label>
           <button id="exportBinBtn" type="button" class="secondary">Export BIN Weekly Merge</button>
         </div>
       </div>
-      <canvas id="binTrendChart" height="115"></canvas>
+      <div id="binTrendCharts" class="chart-grid"></div>
       <div class="table-wrap large mt">
         <table>
           <thead>
             <tr>
-              <th>Week</th>
-              <th>Rows</th>
+              <th>Device</th>
+              <th>WW</th>
+              <th>Vendor</th>
               <th>IN_QTY</th>
-              <th>OUT_QTY</th>
-              <th>FINAL YIELD</th>
-              <th>BIN1 Rate</th>
-              <th>BIN2 Rate</th>
-              <th>BIN3 Rate</th>
+              <th>FT Fail Qty (Bin2~6)</th>
+              <th>FT Rate</th>
+              <th>BIN4 Qty</th>
               <th>BIN4 Rate</th>
-              <th>BIN5 Rate</th>
-              <th>BIN6 Rate</th>
-              <th>BIN36 Rate</th>
             </tr>
           </thead>
           <tbody id="binTrendBody">
-            <tr><td colspan="12" class="empty">아직 BIN Trend Data가 없습니다.</td></tr>
+            <tr><td colspan="8" class="empty">아직 FT/BIN Trend Data가 없습니다.</td></tr>
           </tbody>
         </table>
       </div>
@@ -196,6 +187,7 @@
             BIN 첨부 파일은 <b>MTK BIN INFORMATION</b> 시트 또는 CUST_ID/LOT_ID/IN_QTY/BIN headers를 자동 인식합니다.
           </p>
         </div>
+        <button id="clearAllBtn" type="button" class="danger">전체 삭제</button>
       </div>
 
       <div id="dropZone" class="drop-zone" role="button" tabindex="0">
@@ -239,6 +231,6 @@
     </section>
   </main>
 
-  <script type="module" src="mtk-yield-trend.js?v=22"></script>
+  <script type="module" src="mtk-yield-trend.js?v=23"></script>
 </body>
 </html>

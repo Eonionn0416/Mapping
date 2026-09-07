@@ -93,10 +93,25 @@ v22 Changes
   - BIN_YYYY_MM_DD: 주차별 raw row sheet 별도 생성.
 - Export raw에는 첨부 파일의 CUST_ID, PKG_ID, LEAD_ID, CUST_DEVICE, NICK_NAME, LOT_ID, CUST_RUN_ID, SUBSTRATE_VENDOR, IN_QTY, OUT_QTY, FINAL YIELD, BIN1, BIN2, BIN3, BIN4, BIN5, BIN6, BIN36 모두 유지.
 
+v23 Changes
+-----------
+- Assy OS Trend / FT (BIN) Weekly Trend를 Device × Vendor × WW 기준으로 전면 개편.
+  - Device 구분: OS는 DEVICE, BIN은 CUST_DEVICE의 앞 6자리.
+  - Vendor 구분: OS는 PCB_VENDOR, BIN은 SUBSTRATE_VENDOR의 마지막 4자리가 'LIST'면 LIST, 그 외에는 LGIT.
+  - WW(Work Week) 기준: 일요일~토요일 (예: 9/6~9/12 = WW37), Jan 1 기준 Sunday-start 주차 번호.
+  - Open Rate = Σ OPEN / Σ TEST_QTY, Short Rate = Σ SHORT / Σ TEST_QTY (Assy OS Trend).
+  - FT Rate = Σ(BIN2~BIN6) / Σ IN_QTY, Bin4 Rate = Σ BIN4 / Σ IN_QTY (FT (BIN) Weekly Trend).
+- Export OS Report: "MTK FT and OS Weekly update@SCK_WWxx.xlsx" 형식으로 전면 교체.
+  - Device(앞 6자리)별로 Sheet 생성, 각 Sheet는 Criteria(Assy OS/FT) × Item(Open/Short, FT/Bin4 rate) × SBT(LGIT/LIST) × WW column 구조.
+  - 데이터가 없는 Device × WW 조합은 '-'로 표시, 값이 있는 셀은 0.000% 형식.
+- Report Upload 패널에 "전체 삭제" 버튼 추가: Firestore의 Assy/OS/BIN raw collection을 모두 삭제(확인 팝업 포함)합니다.
+- Export BIN Weekly Merge(기존 Monday-start 주차, BIN1~BIN36 전체 breakdown)는 기존과 동일하게 유지됩니다.
+
 Usage
 -----
 - Assy report, OS comparison report, MTK BIN INFORMATION 파일을 Drop zone에 Drag & Drop 하면 자동으로 읽고 Firebase에 upload합니다.
 - 같은 report를 다시 넣으면 중복 row는 skipped 됩니다.
+- 전체 삭제 버튼으로 Assy/OS/BIN raw data를 Firestore에서 한번에 삭제할 수 있습니다.
 - Export Assy SOD Report: Assy SOD Trend, Assy lot raw, Defect PPM을 xlsx로 다운로드합니다.
-- Export OS Report: OS INPUT_TIME Trend와 OS Raw를 xlsx로 다운로드합니다.
-- Export BIN Weekly Merge: 주차별 BIN Rate Trend와 주차별 merge raw를 xlsx로 다운로드합니다.
+- Export OS Report: Device × Vendor(LGIT/LIST) × WW 기준 Assy OS(Open/Short)/FT(FT rate/Bin4 rate) 표를 Device별 Sheet로 다운로드합니다.
+- Export BIN Weekly Merge: 주차별(Monday-start) BIN Rate Trend와 주차별 merge raw를 xlsx로 다운로드합니다.
