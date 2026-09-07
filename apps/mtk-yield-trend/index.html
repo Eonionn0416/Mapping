@@ -9,7 +9,7 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 
-  <link rel="stylesheet" href="mtk-yield-trend.css?v=24" />
+  <link rel="stylesheet" href="mtk-yield-trend.css?v=25" />
 </head>
 <body>
   <a class="qa-back-link" href="../../index.html">← QA Page</a>
@@ -111,7 +111,8 @@
           <h2>FT (BIN) Weekly Trend</h2>
           <p>
             MTK BIN INFORMATION 첨부 파일을 <b>LEAD_ID</b> 기준으로 Sheet(Lead) 구분, <b>SUBSTRATE_VENDOR 마지막 4자리</b>(LIST / 그 외 LGIT=LG Innotek)로 Vendor 구분,
-            <b>WW(일요일~토요일)</b>별로 <b>FT Rate = Σ(BIN2~BIN6) / Σ IN_QTY</b>, <b>Bin4 Rate = Σ BIN4 / Σ IN_QTY</b> 를 표시합니다.
+            <b>WW(일요일~토요일, 파일명 끝 8자리 YYYYMMDD 기준)</b>별로 <b>FT Rate = Σ(BIN2~BIN6) / Σ IN_QTY</b>, <b>Bin4 Rate = Σ BIN4 / Σ IN_QTY</b> 를 표시합니다.
+            SUBSTRATE_VENDOR가 비어 있으면 LOT_ID 마지막 1자리를 뗀 값으로 Assy OS List에서 찾아 그 PCB_VENDOR로 대신 구분합니다.
             물량(IN_QTY)이 있는데 Fail이 0건이면 <b>0%</b>, 물량 자체가 없으면 <b>'-'</b>로 표시합니다.
             (BIN1~BIN36 전체 상세 Merge는 Export BIN Weekly Merge 파일에서 계속 확인 가능합니다.)
           </p>
@@ -232,6 +233,6 @@
     </section>
   </main>
 
-  <script type="module" src="mtk-yield-trend.js?v=24"></script>
+  <script type="module" src="mtk-yield-trend.js?v=25"></script>
 </body>
 </html>

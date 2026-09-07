@@ -248,9 +248,28 @@ function reportWeekLabel(weekKey) {
   return weekKey || "";
 }
 
+// BIN(FT) 파일은 row 자체에 날짜가 없어서 파일명 끝의 8자리(YYYYMMDD, 예: ..._20260608)를 report 날짜로 사용합니다.
+// normalizeReportDate가 (경계 문자 요구 등으로) 못 찾는 경우를 대비한 느슨한 fallback입니다.
+function dateFromFileNameTrailingDigits(fileName) {
+  const raw = normalizeText(fileName).replace(/\.[a-zA-Z0-9]+$/, "");
+  const digitRuns = raw.match(/\d+/g) || [];
+  for (let i = digitRuns.length - 1; i >= 0; i -= 1) {
+    const run = digitRuns[i];
+    if (run.length >= 8) {
+      const ymd8 = run.slice(-8);
+      const key = makeDateKey(ymd8.slice(0, 4), ymd8.slice(4, 6), ymd8.slice(6, 8));
+      if (key) return key;
+    }
+  }
+  return "";
+}
+
 function getReportDateFromFile(file) {
   const byName = normalizeReportDate(file?.name || "");
   if (byName) return byName;
+
+  const byTrailingDigits = dateFromFileNameTrailingDigits(file?.name || "");
+  if (byTrailingDigits) return byTrailingDigits;
 
   if (file?.lastModified) {
     const date = new Date(file.lastModified);
@@ -654,12 +673,35 @@ function binCellRate(bucket, kind) {
   return numerator / bucket.inQty;
 }
 
+// FT(BIN)의 SUBSTRATE_VENDOR가 비어 있으면 LOT_ID 마지막 1자리(Split/Run 문자)를 뗀 값으로
+// Assy OS List의 LOT_ID를 찾아서, 있으면 그 PCB_VENDOR를 대신 사용합니다.
+// 예: BIN LOT_ID "TPFUN46.00-1A2A" -> "TPFUN46.00-1A2"를 OS LOT_ID에서 검색.
+function buildOsLotVendorMap(osRowsInput) {
+  const map = new Map();
+  (osRowsInput || []).forEach(row => {
+    const lotKey = normalizeText(row.lotId).toUpperCase();
+    const vendor = normalizeText(row.pcbVendor);
+    if (lotKey && vendor && !map.has(lotKey)) map.set(lotKey, vendor);
+  });
+  return map;
+}
+
+function resolveBinVendorRaw(row, osLotVendorMap) {
+  const own = normalizeText(row.substrateVendor);
+  if (own) return own;
+  const lotKey = normalizeText(row.lotId).toUpperCase();
+  if (lotKey.length < 2) return own;
+  const trimmedLot = lotKey.slice(0, -1);
+  return osLotVendorMap.get(trimmedLot) || own;
+}
+
 function buildDeviceVendorWeekly(osRowsInput, binRowsInput) {
   const osMap = new Map();
   const binMap = new Map();
   const wwMeta = new Map();
   const deviceSet = new Set();
   const yearSet = new Set();
+  const osLotVendorMap = buildOsLotVendorMap(osRowsInput);
 
   (osRowsInput || []).forEach(row => {
     const wwInfo = getOsWorkWeekInfo(row);
@@ -690,7 +732,8 @@ function buildDeviceVendorWeekly(osRowsInput, binRowsInput) {
     if (!binMap.has(device)) binMap.set(device, new Map());
     const wwMap = binMap.get(device);
     if (!wwMap.has(wwInfo.sortKey)) wwMap.set(wwInfo.sortKey, { LGIT: emptyBinBucket(), LIST: emptyBinBucket() });
-    const bucket = wwMap.get(wwInfo.sortKey)[vendorGroup(row.substrateVendor)];
+    const resolvedVendorRaw = resolveBinVendorRaw(row, osLotVendorMap);
+    const bucket = wwMap.get(wwInfo.sortKey)[vendorGroup(resolvedVendorRaw)];
     bucket.inQty += normalizeNumber(row.inQty) || 0;
     bucket.ftFailQty += (normalizeNumber(row.bin2) || 0) + (normalizeNumber(row.bin3) || 0)
       + (normalizeNumber(row.bin4) || 0) + (normalizeNumber(row.bin5) || 0) + (normalizeNumber(row.bin6) || 0);

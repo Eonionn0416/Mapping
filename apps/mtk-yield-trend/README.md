@@ -1,4 +1,4 @@
-MTK Assy & OS & BIN Yield Trend v24
+MTK Assy & OS & BIN Yield Trend v25
 ===================================
 
 Run
@@ -115,6 +115,12 @@ v24 Changes
 - WW(Work Week) 기준을 **일요일~토요일**로 재확정 (9/6~9/12 = WW37). BIN Report 날짜에 대한 별도 offset 없이, OS/BIN 모두 해당 날짜가 속한 일~토 주를 그대로 사용합니다.
 - Vendor 구분 기준 명확화: PCB_VENDOR/SUBSTRATE_VENDOR 마지막 4자리가 'LIST'가 아니면 모두 **LGIT**(LG = LG Innotek)로 표시합니다. ('LG', 'LGIT' 뿐 아니라 실제 데이터의 다른 vendor 표기도 LIST가 아니면 LGIT로 집계되던 기존 로직을 그대로 유지 및 확인)
 - Open/Short/FT/Bin4 Rate 표시 규칙 재확인: 물량(TEST_QTY/IN_QTY)이 있는데 Open·Short·Fail이 0건이면 **0%**로, 물량 자체가 없으면 **'-'**로 표시합니다 (기존 로직 그대로 유지, 실제 데이터 기준 검증 완료).
+
+v25 Changes
+-----------
+- FT(BIN)의 SUBSTRATE_VENDOR가 비어 있으면, LOT_ID 마지막 1자리(Split/Run 문자, 예: `TPFUN46.00-1A2A` → `TPFUN46.00-1A2`)를 뗀 값으로 Assy OS List의 LOT_ID를 검색해서, 일치하는 row가 있으면 그 PCB_VENDOR를 대신 사용해 LGIT/LIST를 구분합니다. (매칭되는 값이 없으면 기존과 동일하게 처리)
+- 이렇게 찾은 대체 PCB_VENDOR에도 기존과 동일한 방식(마지막 4자리 확인, 'LIST'가 아니면 LGIT=LG=LG Innotek)을 그대로 적용합니다.
+- BIN Report 날짜/WW 산출을 위한 파일명 날짜 인식을 보강: 기본은 파일명에 포함된 8자리(YYYYMMDD, 예: `..._20260608`)를 사용하고, 구분자 문제 등으로 이 패턴을 못 찾는 경우 파일명 끝의 8자리 숫자를 YYYYMMDD로 다시 시도하는 fallback을 추가했습니다 (그래도 못 찾으면 기존처럼 파일 수정일 사용).
 
 Usage
 -----
