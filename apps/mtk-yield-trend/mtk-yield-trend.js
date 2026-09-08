@@ -549,6 +549,9 @@ function convertBinRow(rawRow, fileName, reportMonth, reportDate) {
     lotId: normalizeText(rawRow["LOT_ID"]),
     custRunId: normalizeText(rawRow["CUST_RUN_ID"]),
     substrateVendor: normalizeText(rawRow["SUBSTRATE_VENDOR"]),
+    substratePartDesc: normalizeText(rawRow["SUBSTRATE_PART_DESC"]),
+    ftInTime: normalizeText(rawRow["FT_IN_TIME"]),
+    ftOutTime: normalizeText(rawRow["FT_OUT_TIME"]),
     inQty: normalizeNumber(rawRow["IN_QTY"]),
     outQty: normalizeNumber(rawRow["OUT_QTY"]),
     finalYield: normalizeNumber(rawRow["FINAL YIELD"]),
@@ -562,6 +565,8 @@ function convertBinRow(rawRow, fileName, reportMonth, reportDate) {
     sourceFileName: fileName
   };
 
+  // FT_IN_TIME(row별 실제 FT 투입 시각)이 있으면 WW 계산에 이 날짜를 사용합니다 (OS의 INPUT_TIME과 동일한 방식).
+  row.ftInDate = rawRow["FT_IN_TIME"] ? parseInputDate(rawRow["FT_IN_TIME"]) : "";
   row.reportMonthLabel = monthLabel(row.reportMonth);
   row.reportWeekLabel = getBinReportWeekLabel(row);
   row.lotBase = normalizeLotBase(row.lotId);
@@ -656,6 +661,14 @@ function shiftDateKeyByDays(dateKey, days) {
 }
 
 function getBinWorkWeekInfo(row) {
+  // FT_IN_TIME(row별 실제 FT 투입 시각)이 있으면 그 날짜가 속한 일~토 주를 그대로 사용합니다
+  // (OS의 INPUT_TIME과 동일한 방식, 파일명 기준 -7일 보정 불필요).
+  if (row?.ftInDate) {
+    const byFtInTime = workWeekInfoFromDateKey(row.ftInDate);
+    if (byFtInTime) return byFtInTime;
+  }
+
+  // FT_IN_TIME이 없는 구버전 파일은 기존처럼 파일명 날짜에서 7일을 뺀 값으로 WW를 계산합니다.
   const shiftedDate = shiftDateKeyByDays(row?.reportDate, -7);
   const byDate = shiftedDate ? workWeekInfoFromDateKey(shiftedDate) : null;
   if (byDate) return byDate;
@@ -2167,6 +2180,8 @@ function makeBinExportRawRow(row) {
     LOT_ID: row.lotId,
     CUST_RUN_ID: row.custRunId,
     SUBSTRATE_VENDOR: row.substrateVendor,
+    FT_IN_TIME: row.ftInTime || "",
+    FT_OUT_TIME: row.ftOutTime || "",
     IN_QTY: row.inQty,
     OUT_QTY: row.outQty,
     "FINAL YIELD": row.finalYield,
