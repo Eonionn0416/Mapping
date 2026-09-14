@@ -68,3 +68,7 @@ Authentication → Sign-in method → Anonymous → Enable
 ### v20
 - Reverted the v19 hide/show toggle: the Monthly Low CPK / PPK table is always visible again (no `hidden` state, no toggle button).
 - Added a new clickable "Low CPK/PPK 항목" metric card at the top of the page showing the current count of Low CPK/PPK rows. Clicking it (or pressing Enter/Space on it) smooth-scrolls the page directly to the Monthly Low CPK / PPK table.
+
+### v21
+- Clicking a row in the Monthly Low CPK / PPK table now jumps the other way: it sets the Product/Device, Data type, and Start Month filters so the row's own month is in range, re-renders the trend charts, then smooth-scrolls to and briefly highlights the matching CPK & PPK Trend chart card (e.g. `TIANCHI_RCD (337) / Bump Diameter`).
+- Added a floating "Low CPK/PPK 항목" summary list docked to the right side of the screen (visible on wide screens, ≥1700px) that follows scroll and stays on screen, so items can be jumped to without scrolling down to the full table. Shows only Month / Type / Item·Characteristics / Status, is collapsible via its header, and each row triggers the same jump-to-chart behavior as the full table.

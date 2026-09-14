@@ -173,3 +173,54 @@ td.empty, .empty { text-align: center; color: var(--muted); padding: 28px; }
 @media (max-width: 560px) { .page { width: min(100% - 20px, 1560px); padding-bottom: 78px; } .hero, .panel { padding: 16px; } .grid.seven, .grid.six { grid-template-columns: 1fr; } }
 .danger-text { color: var(--danger-text); font-weight: 900; }
 .type-pill.bump { background: #fff7ed; color: #c2410c; }
+
+/* Low CPK/PPK 우측 Floating 요약 list — 화면을 스크롤해도 계속 따라다닙니다. */
+.low-cpk-float {
+  position: fixed;
+  top: 110px;
+  right: 18px;
+  width: 300px;
+  max-height: calc(100vh - 150px);
+  display: flex;
+  flex-direction: column;
+  background: var(--card-solid);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  z-index: 500;
+  overflow: hidden;
+}
+.low-cpk-float-header {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 12px 14px; cursor: pointer; font-weight: 900; font-size: 13px;
+  background: #f8fbff; border-bottom: 1px solid var(--line);
+}
+.low-cpk-float-header strong { color: var(--primary); margin-left: 4px; }
+.low-cpk-float-toggle { transition: transform .15s ease; color: var(--muted); }
+.low-cpk-float.collapsed .low-cpk-float-toggle { transform: rotate(-90deg); }
+.low-cpk-float-list { overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.low-cpk-float.collapsed .low-cpk-float-list { display: none; }
+.low-cpk-float-empty { padding: 14px 6px; text-align: center; color: var(--muted); font-size: 12px; margin: 0; }
+.low-cpk-float-item {
+  display: grid; grid-template-columns: auto auto 1fr auto; align-items: center; gap: 6px;
+  width: 100%; text-align: left; background: #f8fafc; border: 1px solid var(--line);
+  border-radius: 10px; padding: 7px 9px; font-size: 11.5px; cursor: pointer; font-family: inherit;
+}
+.low-cpk-float-item:hover, .low-cpk-float-item:focus-visible { border-color: var(--primary); background: var(--primary-soft); outline: none; }
+.low-cpk-float-month { color: var(--muted); font-weight: 700; white-space: nowrap; }
+.low-cpk-float-item-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #334155; font-weight: 700; }
+
+/* 화면이 좁을 때는 Chart를 가리지 않도록 숨기고, 상단 "Low CPK/PPK 항목" 카드로 표까지 이동해서 사용합니다. */
+@media (max-width: 1700px) { .low-cpk-float { display: none; } }
+
+/* Monthly Low CPK/PPK 표 행을 클릭하면 해당 Chart로 이동합니다. */
+#lowBody tr[data-idx] { cursor: pointer; }
+#lowBody tr[data-idx]:hover, #lowBody tr[data-idx]:focus-visible { background: var(--primary-soft); outline: none; }
+
+/* 표/Floating list에서 이동해온 직후 대상 Chart를 잠깐 강조 표시합니다. */
+.chart-card.chart-flash { animation: chartFlash 2.2s ease; }
+@keyframes chartFlash {
+  0% { box-shadow: 0 0 0 3px var(--primary); }
+  70% { box-shadow: 0 0 0 3px var(--primary); }
+  100% { box-shadow: none; }
+}

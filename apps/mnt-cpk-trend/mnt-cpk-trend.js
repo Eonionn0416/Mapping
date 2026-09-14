@@ -37,6 +37,7 @@ let trendRows = [];
 let assyTrendRows = [];
 let trendStartMonth = "";
 let assyTrendStartMonth = "";
+let lowRows = []; // Monthly Low CPK/PPK 표 + 우측 Floating list가 함께 참조하는 현재 Low CPK/PPK 행 목록
 
 const el = {
   firebaseStatus: document.getElementById("firebaseStatus"),
@@ -65,6 +66,10 @@ const el = {
   lowCpkPanel: document.getElementById("lowCpkPanel"),
   lowCpkCard: document.getElementById("lowCpkCard"),
   lowCpkCount: document.getElementById("lowCpkCount"),
+  lowCpkFloat: document.getElementById("lowCpkFloat"),
+  lowCpkFloatHeader: document.getElementById("lowCpkFloatHeader"),
+  lowCpkFloatCount: document.getElementById("lowCpkFloatCount"),
+  lowCpkFloatList: document.getElementById("lowCpkFloatList"),
   exportBtn: document.getElementById("exportBtn")
 };
 
@@ -1366,18 +1371,22 @@ function renderLowTable() {
     .filter(row => lowStatus(row))
     .sort((a, b) => sortByMonth(a, b) || String(a.reportType).localeCompare(String(b.reportType)) || (normalizeNumber(a.cpk) ?? 999) - (normalizeNumber(b.cpk) ?? 999));
 
+  lowRows = lows;
+
   if (el.lowCpkCount) el.lowCpkCount.textContent = lows.length.toLocaleString();
+  if (el.lowCpkFloatCount) el.lowCpkFloatCount.textContent = lows.length.toLocaleString();
 
   if (!lows.length) {
     el.lowBody.innerHTML = `<tr><td colspan="12" class="empty">Low CPK/PPK Data가 없습니다.</td></tr>`;
+    if (el.lowCpkFloatList) el.lowCpkFloatList.innerHTML = `<p class="low-cpk-float-empty">Low CPK/PPK Data가 없습니다.</p>`;
     return;
   }
-  el.lowBody.innerHTML = lows.map(row => {
+  el.lowBody.innerHTML = lows.map((row, idx) => {
     const status = lowStatus(row);
     const cls = status === "Below 1.33" ? "low-danger" : "low-warning";
     const type = row.reportType || "BUMP";
     return `
-      <tr>
+      <tr data-idx="${idx}" tabindex="0" title="클릭하면 해당 Item/Characteristics Chart로 이동합니다">
         <td>${escapeHtml(row.reportLabel || monthLabel(row.reportMonth))}</td>
         <td><span class="type-pill ${type === "ASSY" ? "assy" : "bump"}">${escapeHtml(type)}</span></td>
         <td>${escapeHtml(type === "ASSY" ? row.device : row.product)}</td>
@@ -1392,12 +1401,83 @@ function renderLowTable() {
         <td>${escapeHtml(row.sourceFileName)}</td>
       </tr>`;
   }).join("");
+
+  renderLowCpkFloatList(lows);
+}
+
+// 우측에 떠 있는 Low CPK/PPK 요약 list. Month, Type, Item/Characteristics, Status만 표시하고
+// 각 행을 클릭하면 아래로 안 내려가도 바로 해당 Item/Characteristics Chart로 이동할 수 있습니다.
+function renderLowCpkFloatList(lows) {
+  if (!el.lowCpkFloatList) return;
+  el.lowCpkFloatList.innerHTML = lows.map((row, idx) => {
+    const status = lowStatus(row);
+    const cls = status === "Below 1.33" ? "low-danger" : "low-warning";
+    const type = row.reportType || "BUMP";
+    const itemLabel = type === "ASSY" ? `${row.process || ""} / ${row.characteristics || ""}` : (row.item || "");
+    return `
+      <button type="button" class="low-cpk-float-item" data-idx="${idx}">
+        <span class="low-cpk-float-month">${escapeHtml(row.reportLabel || monthLabel(row.reportMonth))}</span>
+        <span class="type-pill ${type === "ASSY" ? "assy" : "bump"}">${escapeHtml(type)}</span>
+        <span class="low-cpk-float-item-label">${escapeHtml(itemLabel)}</span>
+        <span class="${cls}">${escapeHtml(status)}</span>
+      </button>`;
+  }).join("");
 }
 
 // 상단 "Low CPK/PPK 항목" 카드를 클릭하면 Monthly Low CPK / PPK 표로 바로 이동합니다.
 function scrollToLowCpkTable() {
   if (!el.lowCpkPanel) return;
   el.lowCpkPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function trySetSelectValue(select, value) {
+  if (!select || !value) return false;
+  if (Array.from(select.options).some(opt => opt.value === value)) {
+    select.value = value;
+    return true;
+  }
+  return false;
+}
+
+// Monthly Low CPK/PPK 표(또는 우측 Floating list)에서 행을 클릭하면 해당 Item/Characteristics의
+// CPK & PPK Trend Chart로 바로 이동합니다. Chart가 실제로 보이도록 Product/Device, Data type,
+// Start Month 필터를 그 행 기준으로 맞춘 뒤 Chart를 다시 그리고, 해당 Chart Card로 Scroll + 강조합니다.
+function jumpToLowCpkChart(idx) {
+  const row = lowRows[idx];
+  if (!row) return;
+  const type = row.reportType || "BUMP";
+
+  if (type === "ASSY") {
+    trySetSelectValue(el.assyDeviceSelect, row.device);
+    refreshAssyFilters();
+    trySetSelectValue(el.assyDeviceSelect, row.device);
+    if (trySetSelectValue(el.assyStartMonthSelect, row.reportMonth)) assyTrendStartMonth = row.reportMonth;
+  } else {
+    trySetSelectValue(el.productSelect, row.product);
+    refreshBumpFilters();
+    trySetSelectValue(el.productSelect, row.product);
+    if (el.dataTypeSelect) el.dataTypeSelect.value = "__ALL__";
+    if (trySetSelectValue(el.trendStartMonthSelect, row.reportMonth)) trendStartMonth = row.reportMonth;
+  }
+
+  renderTrend();
+
+  const container = type === "ASSY" ? el.assyTrendCharts : el.cpkTrendCharts;
+  const targetTitle = type === "ASSY"
+    ? `${row.device || "Device"} / ${row.process || "Blank Process"} / ${row.characteristics || "Blank Characteristics"}`
+    : `${row.product || "Product"} / ${row.item || "Blank Item"}`;
+
+  requestAnimationFrame(() => {
+    if (!container) return;
+    const card = Array.from(container.querySelectorAll(".chart-card"))
+      .find(cardEl => cardEl.querySelector("h3")?.textContent === targetTitle);
+    const target = card || container;
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (card) {
+      card.classList.add("chart-flash");
+      setTimeout(() => card.classList.remove("chart-flash"), 2200);
+    }
+  });
 }
 
 function exportReport() {
@@ -1509,6 +1589,38 @@ function setupEvents() {
     el.lowCpkCard.addEventListener("click", scrollToLowCpkTable);
     el.lowCpkCard.addEventListener("keydown", event => {
       if (event.key === "Enter" || event.key === " ") { event.preventDefault(); scrollToLowCpkTable(); }
+    });
+  }
+
+  // Monthly Low CPK / PPK 표에서 행을 클릭하면 해당 Item/Characteristics Chart로 이동합니다.
+  el.lowBody.addEventListener("click", event => {
+    const tr = event.target.closest("tr[data-idx]");
+    if (!tr) return;
+    jumpToLowCpkChart(Number(tr.dataset.idx));
+  });
+  el.lowBody.addEventListener("keydown", event => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const tr = event.target.closest("tr[data-idx]");
+    if (!tr) return;
+    event.preventDefault();
+    jumpToLowCpkChart(Number(tr.dataset.idx));
+  });
+
+  // 우측 Floating list(스크롤을 따라다니는 Low CPK/PPK 요약)에서 클릭해도 동일하게 이동합니다.
+  if (el.lowCpkFloatList) {
+    el.lowCpkFloatList.addEventListener("click", event => {
+      const item = event.target.closest(".low-cpk-float-item");
+      if (!item) return;
+      jumpToLowCpkChart(Number(item.dataset.idx));
+    });
+  }
+  // Floating panel 제목을 클릭하면 접었다 펼 수 있습니다 (화면이 좁을 때 Chart를 가리지 않도록).
+  if (el.lowCpkFloatHeader && el.lowCpkFloat) {
+    el.lowCpkFloatHeader.addEventListener("click", () => {
+      el.lowCpkFloat.classList.toggle("collapsed");
+    });
+    el.lowCpkFloatHeader.addEventListener("keydown", event => {
+      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); el.lowCpkFloat.classList.toggle("collapsed"); }
     });
   }
 }

@@ -10,10 +10,20 @@
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 
-  <link rel="stylesheet" href="mnt-cpk-trend.css?v=20" />
+  <link rel="stylesheet" href="mnt-cpk-trend.css?v=21" />
 </head>
 <body>
   <a class="qa-back-link" href="../../index.html">← QA Page</a>
+
+  <aside id="lowCpkFloat" class="low-cpk-float">
+    <div id="lowCpkFloatHeader" class="low-cpk-float-header" role="button" tabindex="0">
+      <span>Low CPK/PPK 항목 <strong id="lowCpkFloatCount">0</strong></span>
+      <span class="low-cpk-float-toggle" aria-hidden="true">▾</span>
+    </div>
+    <div id="lowCpkFloatList" class="low-cpk-float-list">
+      <p class="low-cpk-float-empty">Low CPK/PPK Data가 없습니다.</p>
+    </div>
+  </aside>
 
   <main class="page">
     <section class="hero">
@@ -102,7 +112,7 @@
       <div class="panel-header">
         <div>
           <h2>Monthly Low CPK / PPK</h2>
-          <p>Bump / Assy 전체 중 선택 기간 기준 CPK 또는 PPK가 1.67 미만인 항목을 표시합니다. 위쪽 <b>Low CPK/PPK 항목</b> 카드를 클릭하면 이 표로 바로 이동합니다.</p>
+          <p>Bump / Assy 전체 중 선택 기간 기준 CPK 또는 PPK가 1.67 미만인 항목을 표시합니다. 위쪽 <b>Low CPK/PPK 항목</b> 카드를 클릭하면 이 표로 바로 이동하고, 이 표(또는 우측에 떠 있는 요약 목록)의 행을 클릭하면 반대로 해당 Item/Characteristics의 CPK & PPK Trend Chart로 바로 이동합니다.</p>
         </div>
       </div>
       <div id="lowTableWrap" class="table-wrap large">
@@ -183,6 +193,6 @@
     </section>
   </main>
 
-  <script type="module" src="mnt-cpk-trend.js?v=20"></script>
+  <script type="module" src="mnt-cpk-trend.js?v=21"></script>
 </body>
 </html>
