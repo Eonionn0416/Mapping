@@ -1430,12 +1430,14 @@ function buildFtWeeklyChartGroups() {
 
 function buildDefectChartGroups() {
   const rows = getWindowAssyRows();
-  const leads = uniqueSorted(rows.map(row => fallbackGroupName(row.lead, "Unknown Lead")));
+  // Assy row에는 Lead 필드가 없어 항상 "Unknown Lead" 하나로만 묶이던 문제가 있었습니다.
+  // Device(Sheet device name, 예: MT8371, MT8189) 기준으로 분류합니다.
+  const devices = uniqueSorted(rows.map(row => fallbackGroupName(row.device, "Unknown Device")));
   return [
     { title: "All", rows: buildDefectTrendRows(rows) },
-    ...leads.map(lead => ({
-      title: `Lead · ${lead}`,
-      rows: buildDefectTrendRows(rows.filter(row => fallbackGroupName(row.lead, "Unknown Lead") === lead))
+    ...devices.map(device => ({
+      title: `Device · ${device}`,
+      rows: buildDefectTrendRows(rows.filter(row => fallbackGroupName(row.device, "Unknown Device") === device))
     }))
   ];
 }
@@ -1816,8 +1818,8 @@ function renderBinTrendChart() {
   );
 }
 
-function renderBinTrendTable() {
-  if (!el.binTrendBody) return;
+// Lead × WW × Vendor 기준 FT/Bin4 Rate flat row 목록 (화면 표 대신 Export BIN Weekly Merge에서 사용).
+function buildFtWeeklyByLeadFlatRows() {
   const weekly = weeklyDeviceVendorData;
   const flatRows = [];
   weekly.devices.forEach(device => {
@@ -1842,6 +1844,25 @@ function renderBinTrendTable() {
       });
     });
   });
+  return flatRows;
+}
+
+function makeFtWeeklyByLeadExportRow(row) {
+  return {
+    Lead: row.device,
+    WW: row.ww,
+    Vendor: row.vendor,
+    IN_QTY: row.inQty,
+    "FT Fail Qty (Bin2~6+36)": row.ftFailQty,
+    "FT Rate(%)": roundOrNull(pctOrNull(row.ftRate), 4),
+    BIN4_Qty: row.bin4Qty,
+    "BIN4 Rate(%)": roundOrNull(pctOrNull(row.bin4Rate), 4)
+  };
+}
+
+function renderBinTrendTable() {
+  if (!el.binTrendBody) return;
+  const flatRows = buildFtWeeklyByLeadFlatRows();
 
   if (!flatRows.length) {
     el.binTrendBody.innerHTML = `<tr><td colspan="8" class="empty">아직 FT/BIN Trend Data가 없습니다.</td></tr>`;
@@ -1908,6 +1929,7 @@ function renderDefectTrendChart() {
 }
 
 function renderDefectPpmTable() {
+  if (!el.defectPpmBody) return;
   if (!defectTrendRows.length) {
     el.defectPpmBody.innerHTML = `<tr><td colspan="5" class="empty">아직 Defect Trend Data가 없습니다.</td></tr>`;
     return;
@@ -2274,6 +2296,12 @@ function exportBinReport() {
     if (weekCompare !== 0) return weekCompare;
     return String(a.lotId || "").localeCompare(String(b.lotId || ""));
   });
+
+  // Lead × WW(일~토) × Vendor 기준 FT Rate / Bin4 Rate 요약을 가장 읽기 쉬운 첫 Sheet로 둡니다.
+  const ftWeeklyByLeadRows = buildFtWeeklyByLeadFlatRows().map(makeFtWeeklyByLeadExportRow);
+  if (ftWeeklyByLeadRows.length) {
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(ftWeeklyByLeadRows), "FT_Weekly_by_Lead");
+  }
 
   const trendRows = buildBinTrendRows(allRows).map(makeBinExportTrendRow);
   const rawRows = allRows.map(makeBinExportRawRow);

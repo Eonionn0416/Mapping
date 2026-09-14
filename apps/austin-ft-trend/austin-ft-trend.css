@@ -182,7 +182,11 @@ td.empty, .empty { text-align: center; color: var(--muted); padding: 28px; }
 .upload-result-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
 .metric-card.compact { padding: 14px 16px; box-shadow: none; border-radius: 18px; }
 .metric-card.compact strong { font-size: 24px; }
-.chart-summary { display: flex; align-items: center; }
+.chart-summary { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.chart-mode-toggle { display: inline-flex; gap: 4px; padding: 4px; border-radius: 999px; background: var(--primary-soft); }
+.chart-mode-toggle .mode-btn { border: 0; padding: 7px 14px; border-radius: 999px; font-weight: 900; font-size: 12px; font: inherit; cursor: pointer; background: transparent; color: var(--primary); transition: background .18s ease, color .18s ease; }
+.chart-mode-toggle .mode-btn.active { background: var(--primary); color: #fff; box-shadow: 0 8px 18px rgba(37,99,255,.24); }
+.chart-mode-toggle .mode-btn:hover:not(.active) { background: rgba(255,255,255,.7); }
 .chart-scroller { overflow-x: auto; overflow-y: hidden; border: 1px solid var(--line); border-radius: 18px; background: rgba(255,255,255,.68); }
 .chart-canvas-wrap { position: relative; min-width: 100%; height: 430px; padding: 14px 12px 8px; }
 #ftTrendChart { width: 100% !important; height: 400px !important; display: block; }

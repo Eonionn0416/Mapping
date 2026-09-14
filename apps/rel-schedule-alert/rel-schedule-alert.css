@@ -238,6 +238,12 @@ tr.row-transfer td { background: rgba(37, 99, 235, .12); color: #1d4ed8; }
 tr.row-transfer td b, tr.row-transfer td strong { color: #1d4ed8; }
 tr.row-transfer .dday { color: #1d4ed8; }
 
+/* 표의 행을 클릭하면 아래 Plan Timeline이 그 Plan으로 바뀝니다. */
+#scheduleBody tr[data-key] { cursor: pointer; }
+#scheduleBody tr[data-key]:hover td { background: rgba(37, 99, 235, .07); }
+tr.row-selected td { box-shadow: inset 0 0 0 9999px rgba(37, 99, 235, .12); }
+tr.row-selected td:first-child { border-left: 4px solid var(--primary); }
+
 .done-check { width: 17px; height: 17px; cursor: pointer; accent-color: var(--primary); }
 .criteria-cell { font-weight: 900; color: #334155; }
 .date-cell { font-variant-numeric: tabular-nums; }

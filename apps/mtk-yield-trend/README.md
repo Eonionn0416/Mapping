@@ -1,4 +1,4 @@
-MTK Assy & OS & BIN Yield Trend v28
+MTK Assy & OS & BIN Yield Trend v29
 ===================================
 
 Run
@@ -146,6 +146,13 @@ v27 배포 전에 이미 Firestore에 저장돼 있던 BIN lot을, v27 이후 FT
 - 이제 업로드 시, 이미 저장된 문서와 dedupe key가 같더라도 **새 row에 기존 문서에는 없던 값(FT_IN_TIME 등)이 있으면 완전히 Skip하지 않고 그 필드를 채워서 Update**합니다. 값이 100% 동일한 진짜 중복만 Skip됩니다.
 - Report Upload 로그에 Insert/Update/Duplicate Skip 건수를 각각 표시합니다.
 - **적용 방법**: 이 버전 배포 후, FT_IN_TIME이 포함된 BIN 파일을 다시 한 번 업로드하면 기존에 저장돼 있던 같은 lot들이 Update되어 FT_IN_TIME 기준 WW로 정상 반영됩니다(전체 삭제 없이 재업로드만 하면 됩니다).
+
+v29 Changes (화면 가독성 정리)
+-----------
+- Assy OS Trend / FT (BIN) Weekly Trend / Defect PPM Trend 패널의 raw data 표(Chart 아래 긴 표)를 화면에서 제거했습니다. Chart로 요약해서 보고, 상세 수치는 Export 파일로 확인합니다.
+- FT (BIN) Weekly Trend 패널의 설명 문단(comment)을 제거했습니다.
+- **Export BIN Weekly Merge**에 화면에서 빠진 Lead × WW × Vendor 표를 **FT_Weekly_by_Lead** Sheet(Lead/WW/Vendor/IN_QTY/FT Fail Qty/FT Rate/BIN4 Qty/BIN4 Rate, 첫 번째 Sheet)로 옮겨서 그대로 계속 확인할 수 있습니다. 기존 BIN_Weekly_Trend/BIN_Merged_Raw/주차별 raw sheet도 유지됩니다.
+- Defect PPM Trend chart 분류 기준을 "Lead"(Assy row에 값이 없어 항상 Unknown Lead 하나로만 묶이던 버그)에서 **Device**(Sheet device name, 예: MT8371, MT8189) 기준으로 수정했습니다.
 
 Usage
 -----

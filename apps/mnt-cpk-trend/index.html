@@ -10,7 +10,7 @@
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 
-  <link rel="stylesheet" href="mnt-cpk-trend.css?v=18" />
+  <link rel="stylesheet" href="mnt-cpk-trend.css?v=19" />
 </head>
 <body>
   <a class="qa-back-link" href="../../index.html">← QA Page</a>
@@ -70,32 +70,6 @@
       </div>
 
       <div id="cpkTrendCharts" class="chart-grid"></div>
-
-      <div class="table-wrap large mt">
-        <table>
-          <thead>
-            <tr>
-              <th>Month</th>
-              <th>Product</th>
-              <th>Item</th>
-              <th>Data type</th>
-              <th>Target</th>
-              <th>Spec Limit</th>
-              <th>Min</th>
-              <th>Max</th>
-              <th>Avg</th>
-              <th>Std</th>
-              <th>S/S</th>
-              <th>Lots</th>
-              <th>CPK</th>
-              <th>PPK</th>
-            </tr>
-          </thead>
-          <tbody id="trendBody">
-            <tr><td colspan="14" class="empty">Product / Item을 선택하거나 Report를 Upload 해주세요.</td></tr>
-          </tbody>
-        </table>
-      </div>
     </section>
 
     <section class="panel">
@@ -121,32 +95,6 @@
       </div>
 
       <div id="assyTrendCharts" class="chart-grid"></div>
-
-      <div class="table-wrap large mt">
-        <table>
-          <thead>
-            <tr>
-              <th>Month</th>
-              <th>Device</th>
-              <th>Process</th>
-              <th>Characteristics</th>
-              <th>Spec Limit</th>
-              <th>Min</th>
-              <th>Max</th>
-              <th>Avg</th>
-              <th>Std</th>
-              <th>S/S</th>
-              <th>Lots</th>
-              <th>Q'TY</th>
-              <th>CPK</th>
-              <th>PPK</th>
-            </tr>
-          </thead>
-          <tbody id="assyTrendBody">
-            <tr><td colspan="14" class="empty">ASSY report를 Upload 해주세요.</td></tr>
-          </tbody>
-        </table>
-      </div>
     </section>
 
     <section class="panel">
@@ -155,8 +103,9 @@
           <h2>Monthly Low CPK / PPK</h2>
           <p>Bump / Assy 전체 중 선택 기간 기준 CPK 또는 PPK가 1.67 미만인 항목을 표시합니다.</p>
         </div>
+        <button id="lowToggleBtn" type="button" class="secondary">Low CPK 항목 보기</button>
       </div>
-      <div class="table-wrap large">
+      <div id="lowTableWrap" class="table-wrap large" hidden>
         <table>
           <thead>
             <tr>
@@ -234,6 +183,6 @@
     </section>
   </main>
 
-  <script type="module" src="mnt-cpk-trend.js?v=18"></script>
+  <script type="module" src="mnt-cpk-trend.js?v=19"></script>
 </body>
 </html>

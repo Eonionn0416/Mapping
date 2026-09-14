@@ -61,6 +61,8 @@ const el = {
   assyTrendCharts: document.getElementById("assyTrendCharts"),
   assyTrendBody: document.getElementById("assyTrendBody"),
   lowBody: document.getElementById("lowBody"),
+  lowTableWrap: document.getElementById("lowTableWrap"),
+  lowToggleBtn: document.getElementById("lowToggleBtn"),
   exportBtn: document.getElementById("exportBtn")
 };
 
@@ -1292,6 +1294,7 @@ function renderAssyTrendChart() {
 }
 
 function renderBumpTrendTable() {
+  if (!el.trendBody) return;
   if (!trendRows.length) {
     el.trendBody.innerHTML = `<tr><td colspan="14" class="empty">선택된 Product / Item의 Trend Data가 없습니다.</td></tr>`;
     return;
@@ -1317,6 +1320,7 @@ function renderBumpTrendTable() {
 }
 
 function renderAssyTrendTable() {
+  if (!el.assyTrendBody) return;
   if (!assyTrendRows.length) {
     el.assyTrendBody.innerHTML = `<tr><td colspan="14" class="empty">선택된 Device / Process / Characteristics의 Trend Data가 없습니다.</td></tr>`;
     return;
@@ -1384,6 +1388,12 @@ function renderLowTable() {
         <td>${escapeHtml(row.sourceFileName)}</td>
       </tr>`;
   }).join("");
+}
+
+function toggleLowTable() {
+  if (!el.lowTableWrap || !el.lowToggleBtn) return;
+  el.lowTableWrap.hidden = !el.lowTableWrap.hidden;
+  el.lowToggleBtn.textContent = el.lowTableWrap.hidden ? "Low CPK 항목 보기" : "Low CPK 항목 숨기기";
 }
 
 function exportReport() {
@@ -1491,6 +1501,7 @@ function setupEvents() {
   el.trendStartMonthSelect.addEventListener("change", () => { trendStartMonth = el.trendStartMonthSelect.value; renderTrend(); });
   el.assyDeviceSelect.addEventListener("change", () => { refreshAssyFilters(); renderTrend(); });
   el.assyStartMonthSelect.addEventListener("change", () => { assyTrendStartMonth = el.assyStartMonthSelect.value; renderTrend(); });
+  if (el.lowToggleBtn) el.lowToggleBtn.addEventListener("click", toggleLowTable);
 }
 
 function initFirebase() {

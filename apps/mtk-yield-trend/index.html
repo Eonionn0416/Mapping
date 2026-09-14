@@ -9,7 +9,7 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 
-  <link rel="stylesheet" href="mtk-yield-trend.css?v=28" />
+  <link rel="stylesheet" href="mtk-yield-trend.css?v=29" />
 </head>
 <body>
   <a class="qa-back-link" href="../../index.html">← QA Page</a>
@@ -84,64 +84,18 @@
         <button id="exportOsBtn" type="button" class="secondary">Export OS Report</button>
       </div>
       <div id="osTrendCharts" class="chart-grid"></div>
-      <div class="table-wrap large mt">
-        <table>
-          <thead>
-            <tr>
-              <th>Lead</th>
-              <th>WW</th>
-              <th>Vendor</th>
-              <th>TEST_QTY</th>
-              <th>OPEN Qty</th>
-              <th>SHORT Qty</th>
-              <th>Open Rate</th>
-              <th>Short Rate</th>
-            </tr>
-          </thead>
-          <tbody id="osTrendBody">
-            <tr><td colspan="8" class="empty">아직 OS Trend Data가 없습니다.</td></tr>
-          </tbody>
-        </table>
-      </div>
     </section>
 
     <section class="panel">
       <div class="panel-header">
         <div>
           <h2>FT (BIN) Weekly Trend</h2>
-          <p>
-            MTK BIN INFORMATION 첨부 파일을 <b>LEAD_ID</b> 기준으로 Sheet(Lead) 구분, <b>SUBSTRATE_VENDOR</b>(LIST / 그 외 LG Innotek=LGIT)로 Vendor 구분,
-            <b>WW(일요일~토요일)</b>별로 <b>FT Rate = Σ(BIN2~BIN6+BIN36) / Σ IN_QTY</b>, <b>Bin4 Rate = Σ BIN4 / Σ IN_QTY</b> 를 표시합니다.
-            <b>FT_IN_TIME</b> column이 있으면 row별 실제 FT 투입 시각 기준으로 WW를 계산하고(권장), 없는 구버전 파일은 파일명 끝 8자리(YYYYMMDD)에서 7일 전 날짜로 WW를 계산합니다.
-            SUBSTRATE_VENDOR가 비어 있으면 LOT_ID 마지막 1자리를 뗀 값으로 Assy OS List에서 찾아 그 PCB_VENDOR로 대신 구분합니다.
-            물량(IN_QTY)이 있는데 Fail이 0건이면 <b>0%</b>, 물량 자체가 없으면 <b>'-'</b>로 표시합니다.
-            (BIN1~BIN36 전체 상세 Merge는 Export BIN Weekly Merge 파일에서 계속 확인 가능합니다.)
-          </p>
         </div>
         <div class="actions">
           <button id="exportBinBtn" type="button" class="secondary">Export BIN Weekly Merge</button>
         </div>
       </div>
       <div id="binTrendCharts" class="chart-grid"></div>
-      <div class="table-wrap large mt">
-        <table>
-          <thead>
-            <tr>
-              <th>Lead</th>
-              <th>WW</th>
-              <th>Vendor</th>
-              <th>IN_QTY</th>
-              <th>FT Fail Qty (Bin2~6)</th>
-              <th>FT Rate</th>
-              <th>BIN4 Qty</th>
-              <th>BIN4 Rate</th>
-            </tr>
-          </thead>
-          <tbody id="binTrendBody">
-            <tr><td colspan="8" class="empty">아직 FT/BIN Trend Data가 없습니다.</td></tr>
-          </tbody>
-        </table>
-      </div>
     </section>
 
     <section class="panel">
@@ -161,23 +115,6 @@
         </label>
       </div>
       <div id="defectTrendCharts" class="chart-grid"></div>
-
-      <div class="table-wrap large mt">
-        <table>
-          <thead>
-            <tr>
-              <th>SOD</th>
-              <th>Defect</th>
-              <th>Defect Qty</th>
-              <th>In Qty</th>
-              <th>PPM</th>
-            </tr>
-          </thead>
-          <tbody id="defectPpmBody">
-            <tr><td colspan="5" class="empty">아직 Defect Trend Data가 없습니다.</td></tr>
-          </tbody>
-        </table>
-      </div>
     </section>
 
     <section class="panel">
@@ -234,6 +171,6 @@
     </section>
   </main>
 
-  <script type="module" src="mtk-yield-trend.js?v=28"></script>
+  <script type="module" src="mtk-yield-trend.js?v=29"></script>
 </body>
 </html>

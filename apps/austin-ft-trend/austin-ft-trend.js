@@ -50,6 +50,7 @@ let chart = null;
 let filterDefaultsInitialized = false;
 let isBusy = false;
 let localDb = null;
+let chartViewMode = "weekly"; // default view: "weekly" (aggregated) or "detail" (per Date/原批号 point)
 
 const el = {
   firebaseStatus: document.getElementById("firebaseStatus"),
@@ -82,6 +83,9 @@ const el = {
   chartCanvasWrap: document.getElementById("chartCanvasWrap"),
   ftTrendChart: document.getElementById("ftTrendChart"),
   chartPointSummary: document.getElementById("chartPointSummary"),
+  chartDescription: document.getElementById("chartDescription"),
+  chartModeWeeklyBtn: document.getElementById("chartModeWeeklyBtn"),
+  chartModeDetailBtn: document.getElementById("chartModeDetailBtn"),
   detailBody: document.getElementById("detailBody"),
   tableNotice: document.getElementById("tableNotice"),
   uploadedFilesBody: document.getElementById("uploadedFilesBody"),
@@ -277,6 +281,16 @@ function makeDateKey(year, month, day) {
   const date = new Date(Date.UTC(y, m - 1, d));
   if (date.getUTCFullYear() !== y || date.getUTCMonth() + 1 !== m || date.getUTCDate() !== d) return "";
   return `${y}-${pad2(m)}-${pad2(d)}`;
+}
+
+function getWeekStartDateKey(dateKey) {
+  // Monday-start week bucket, matching the mtk-yield-trend app's getWeekStartDateKey convention.
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey || "")) return "";
+  const [y, m, d] = dateKey.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  const mondayOffset = (date.getUTCDay() + 6) % 7;
+  date.setUTCDate(date.getUTCDate() - mondayOffset);
+  return makeDateKey(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
 }
 
 function normalizeDate(value) {
@@ -838,6 +852,27 @@ function buildPointRows(rows) {
   });
 }
 
+function buildWeeklyPointRows(rows) {
+  const grouped = new Map();
+  for (const row of rows) {
+    const weekKey = getWeekStartDateKey(row.dateKey);
+    if (!weekKey) continue;
+    if (!grouped.has(weekKey)) {
+      grouped.set(weekKey, {
+        key: weekKey,
+        dateKey: weekKey,
+        originalLot: "",
+        bins: {},
+        totalQty: 0
+      });
+    }
+    const item = grouped.get(weekKey);
+    item.bins[row.bin] = (item.bins[row.bin] || 0) + (row.qty || 0);
+    item.totalQty += row.qty || 0;
+  }
+  return Array.from(grouped.values()).sort((a, b) => a.dateKey.localeCompare(b.dateKey));
+}
+
 function binColor(bin, alpha = 1) {
   let hash = 0;
   const text = String(bin);
@@ -847,7 +882,7 @@ function binColor(bin, alpha = 1) {
 }
 
 function renderChart(rows) {
-  const points = buildPointRows(rows);
+  const points = chartViewMode === "weekly" ? buildWeeklyPointRows(rows) : buildPointRows(rows);
   const bins = uniqueSorted(rows.map(row => row.bin), compareBins);
   el.chartPointSummary.textContent = `${points.length.toLocaleString()} points · ${bins.length.toLocaleString()} bins`;
 
@@ -886,7 +921,9 @@ function renderChart(rows) {
   chart = new Chart(el.ftTrendChart, {
     type: "line",
     data: {
-      labels: points.map(point => [point.dateKey, point.originalLot]),
+      labels: points.map(point => (
+        chartViewMode === "weekly" ? [`Wk ${point.dateKey}`] : [point.dateKey, point.originalLot]
+      )),
       datasets
     },
     options: {
@@ -903,7 +940,8 @@ function renderChart(rows) {
           callbacks: {
             title(items) {
               const point = points[items[0]?.dataIndex];
-              return point ? `${point.dateKey} · ${point.originalLot}` : "";
+              if (!point) return "";
+              return chartViewMode === "weekly" ? `Week of ${point.dateKey}` : `${point.dateKey} · ${point.originalLot}`;
             },
             label(context) {
               return `${context.dataset.label}: ${formatNumber(context.parsed.y)}`;
@@ -924,7 +962,7 @@ function renderChart(rows) {
             minRotation: 0,
             font: { size: 10 }
           },
-          title: { display: true, text: "Date → 原批号" }
+          title: { display: true, text: chartViewMode === "weekly" ? "Week(월요일 시작)" : "Date → 原批号" }
         },
         y: {
           beginAtZero: true,
@@ -936,6 +974,17 @@ function renderChart(rows) {
       }
     }
   });
+}
+
+function setChartViewMode(mode) {
+  chartViewMode = mode === "detail" ? "detail" : "weekly";
+  if (el.chartModeWeeklyBtn) el.chartModeWeeklyBtn.classList.toggle("active", chartViewMode === "weekly");
+  if (el.chartModeDetailBtn) el.chartModeDetailBtn.classList.toggle("active", chartViewMode === "detail");
+  if (el.chartDescription) {
+    el.chartDescription.innerHTML = chartViewMode === "weekly"
+      ? "X축은 <b>Week(월요일 시작)</b> 기준이며, 각 Line은 BIN입니다. 같은 Week / BIN이 여러 Row이면 数量을 합산합니다."
+      : "X축은 <b>Date → 原批号</b> 순이며, 각 Line은 BIN입니다. 같은 Date / 原批号 / BIN이 여러 Row이면 数量을 합산합니다.";
+  }
 }
 
 function aggregateDetailRows(rows) {
@@ -984,6 +1033,7 @@ function aggregateDetailRows(rows) {
 }
 
 function renderDetailTable(rows) {
+  if (!el.detailBody) return;
   const detailRows = aggregateDetailRows(rows);
   const visibleRows = detailRows.slice(0, TABLE_LIMIT);
 
@@ -1210,10 +1260,22 @@ function setupEvents() {
 
   el.resetFilterBtn.addEventListener("click", resetFilters);
   el.exportBtn.addEventListener("click", exportFilteredData);
+
+  el.chartModeWeeklyBtn.addEventListener("click", () => {
+    if (chartViewMode === "weekly") return;
+    setChartViewMode("weekly");
+    renderChart(getFilteredRows());
+  });
+  el.chartModeDetailBtn.addEventListener("click", () => {
+    if (chartViewMode === "detail") return;
+    setChartViewMode("detail");
+    renderChart(getFilteredRows());
+  });
 }
 
 async function initializeAustinFtTrend() {
   setupEvents();
+  setChartViewMode(chartViewMode);
   renderSelectedFiles();
   renderAll();
   await restoreLocalData();

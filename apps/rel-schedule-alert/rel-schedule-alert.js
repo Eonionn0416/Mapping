@@ -86,6 +86,7 @@ let knownAlertKeys = new Set();
 let toastSnooze = new Map();      // dedupeKey -> timestamp
 let lastUploadDiff = { created: 0, updated: 0, unchanged: 0, removed: 0 };
 let today = todayIso();
+let selectedTimelineKey = null;   // 표에서 클릭해 Plan Timeline을 갱신시킨 행(dedupeKey) — 선택 강조용
 
 const el = id => document.getElementById(id);
 
@@ -607,7 +608,9 @@ async function uploadRows(records) {
     }
     if (count > 0) await batch.commit();
     log(`Firestore upsert 완료: ${records.length} rows.`);
-    await loadFirestoreData();
+    // handleFiles()가 파싱 직후 이미 refreshAll({forceAlert:true})로 알림을 한 번 띄웠으므로,
+    // 여기서는 강제로 다시 띄우지 않고(hasNewAlert/스누즈 판단에 맡김) 중복 팝업을 막습니다.
+    await loadFirestoreData({ forceAlert: false });
   } catch (error) {
     console.error(error);
     const hint = describeFirebaseError(error);
@@ -616,7 +619,14 @@ async function uploadRows(records) {
   }
 }
 
-async function loadFirestoreData() {
+/**
+ * forceAlert=false로 호출하면(uploadRows / 초기 Auth 로드처럼 바로 직전에 이미 같은 내용으로
+ * refreshAll({forceAlert:true})가 한 번 실행된 경우) 이미 열려 있거나 방금 닫은 동일한 알림을
+ * 또 한 번 강제로 띄우지 않습니다 — "팝업이 2번 뜨는" 중복 알림 버그 방지.
+ * (명시적으로 새로고침 버튼을 누른 경우는 인자 없이 호출되어 기존처럼 항상 강제로 보여줍니다.)
+ */
+async function loadFirestoreData(options = {}) {
+  const { forceAlert = true } = options;
   if (!db || !currentUser) return;
   try {
     const [rawSnap, statusSnap, filesSnap] = await Promise.all([
@@ -652,7 +662,7 @@ async function loadFirestoreData() {
     cacheStatus();
     ui.m.firestore.textContent = rows.length.toLocaleString();
     log(`Firestore loaded: ${rows.length} rows / ${statusSnap.size} status docs.`);
-    refreshAll({ forceAlert: true });
+    refreshAll({ forceAlert });
   } catch (error) {
     console.error(error);
     const hint = describeFirebaseError(error);
@@ -994,11 +1004,12 @@ function renderTable() {
   ui.scheduleBody.innerHTML = rows.slice(0, 600).map(row => {
     // 수령확인/전달확인(to Rel·to FT)은 자재가 실제로 넘어갔는지 확인 안 되면 critical하므로
     // 다른 상태보다 우선해서 행 전체를 파란색으로 강조합니다.
-    const rowCls = (row.recvCheck || row.handoff) ? "row-transfer"
+    const rowCls = ((row.recvCheck || row.handoff) ? "row-transfer"
       : row.state.code === "delay" ? "row-delayed"
       : row.state.code === "prealarm" ? "row-due"
       : row.state.code === "watch" ? "row-soon"
-      : row.state.code === "done" ? "row-done" : "";
+      : row.state.code === "done" ? "row-done" : "")
+      + (row.dedupeKey === selectedTimelineKey ? " row-selected" : "");
     // to Rel/to FT 전달확인 대상 행은 병합 구간의 맨 마지막(빈) 줄인 경우가 많아
     // Date in/out이 그 행 자체엔 비어 있을 수 있습니다. 표에서 빈칸으로만
     // 보여 혼란스럽지 않도록, 실제 값이 있는 참고 행(row.handoff)의 정보를 대신 보여줍니다.
@@ -1036,6 +1047,7 @@ function focusRow(dedupeKey) {
   refreshFilters();
   ui.criteriaSelect.value = row.criteria;
   ui.statusSelect.value = "";
+  selectedTimelineKey = dedupeKey;
   renderTable();
   renderGantt();
 
@@ -1047,6 +1059,23 @@ function focusRow(dedupeKey) {
     target.scrollIntoView({ behavior: "smooth", block: "center" });
     setTimeout(() => target.classList.remove("row-flash"), 4000);
   });
+}
+
+/**
+ * "Criteria별 Schedule & Alert 현황" 표에서 행을 클릭하면 아래 Plan Timeline(Gantt)이
+ * 그 행의 Plan(Sheet) 일정으로 바뀝니다. 이미 있는 Plan(Sheet) select(ui.planSelect)를
+ * 그대로 공유해서 쓰므로, select 값과 표에서 클릭해 선택한 Plan이 항상 같게 유지됩니다.
+ */
+function selectPlanFromRow(dedupeKey) {
+  const row = viewRows.find(item => item.dedupeKey === dedupeKey);
+  if (!row) return;
+  selectedTimelineKey = dedupeKey;
+  if (ui.planSelect.value !== row.sheetName) {
+    ui.planSelect.value = row.sheetName;
+    refreshFilters();
+  }
+  renderTable();
+  renderGantt();
 }
 
 function renderPlanList() {
@@ -1590,6 +1619,14 @@ function setupEvents() {
     focusRow(trigger.dataset.goto);
   });
 
+  // 표에서 행을 클릭하면 아래 Plan Timeline을 그 행의 Plan으로 갱신 (체크박스 클릭은 제외)
+  ui.scheduleBody.addEventListener("click", event => {
+    if (event.target.closest("input, a, button")) return;
+    const tr = event.target.closest("tr[data-key]");
+    if (!tr) return;
+    selectPlanFromRow(tr.dataset.key);
+  });
+
   // Toast 버튼
   ui.toastStack.addEventListener("click", async event => {
     const closeKey = event.target.dataset?.toastClose;
@@ -1645,7 +1682,9 @@ function initFirebase() {
       if (user) {
         ui.authStatus.textContent = `Anonymous Auth OK: ${user.uid.slice(0, 8)}...`;
         setFirebaseStatus("Firebase connected", "success");
-        await loadFirestoreData();
+        // 부팅 시 restoreCache() 직후 이미 refreshAll({forceAlert:true})로 알림을 한 번 띄웠으므로,
+        // Auth 완료 후 Firestore 데이터로 다시 그릴 때는 강제로 재오픈하지 않아 중복 팝업을 막습니다.
+        await loadFirestoreData({ forceAlert: false });
       } else {
         ui.authStatus.textContent = "Auth 필요";
         setFirebaseStatus("Auth required", "warning");

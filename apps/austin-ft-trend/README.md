@@ -18,10 +18,15 @@
 
 ## Trend rule
 
-- X-axis: Date → 原批号
+- Chart view mode toggle (`Weekly Trend` / `Date · 原批号`), default **Weekly Trend**:
+  - Weekly: X-axis is the Monday-start week bucket (`getWeekStartDateKey`, same convention as `mtk-yield-trend`); each point sums 数量 per BIN for that week.
+  - Date · 原批号: X-axis is Date → 原批号 (the original granular per-lot view); each point sums 数量 per BIN for the same Date/原批号.
 - Series: each BIN
-- Value: sum of 数量 for the same Date + 原批号 + BIN
 - Reset Filter only resets filters and never deletes data.
+
+## Changelog
+
+- v27: Removed the "Filtered Detail" raw table section (low-readability, chart-less duplicate of the chart/export data). Added a Weekly / Date·原批号 toggle above "BIN 数量 Trend" and made **Weekly Trend the default view** to reduce point-count clutter on the trend chart; the per-date/lot granular view remains available via the toggle.
 
 ## Firestore
 

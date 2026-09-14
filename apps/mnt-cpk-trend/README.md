@@ -57,3 +57,10 @@ Enable it in Firebase Console:
 ```txt
 Authentication → Sign-in method → Anonymous → Enable
 ```
+
+## Changes
+
+### v19
+- Removed the raw Bump trend table (`#trendBody`) below the Bump Product/Item chart. The chart, filters, and export button stay unchanged.
+- Removed the raw Assy trend table (`#assyTrendBody`) below the Assy Device/Process/Characteristics chart. The chart and filters stay unchanged.
+- The Monthly Low CPK / PPK table (`#lowBody`) is now hidden by default. A new "Low CPK 항목 보기" / "Low CPK 항목 숨기기" toggle button in that panel's header shows/hides it on click.
