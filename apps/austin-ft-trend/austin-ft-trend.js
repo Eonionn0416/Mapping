@@ -93,8 +93,13 @@ const el = {
 };
 
 function log(message) {
+  // Process Log 패널이 화면에서 제거되어 el.log가 없으므로 console로만 남깁니다.
   const time = new Date().toLocaleTimeString();
-  el.log.textContent = `[${time}] ${message}\n` + el.log.textContent;
+  if (el.log) {
+    el.log.textContent = `[${time}] ${message}\n` + el.log.textContent;
+  } else {
+    console.log(`[${time}] ${message}`);
+  }
 }
 
 function setFirebaseStatus(text, type = "warning") {

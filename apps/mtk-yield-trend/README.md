@@ -1,4 +1,4 @@
-MTK Assy & OS & BIN Yield Trend v29
+MTK Assy & OS & BIN Yield Trend v30
 ===================================
 
 Run
@@ -153,6 +153,10 @@ v29 Changes (화면 가독성 정리)
 - FT (BIN) Weekly Trend 패널의 설명 문단(comment)을 제거했습니다.
 - **Export BIN Weekly Merge**에 화면에서 빠진 Lead × WW × Vendor 표를 **FT_Weekly_by_Lead** Sheet(Lead/WW/Vendor/IN_QTY/FT Fail Qty/FT Rate/BIN4 Qty/BIN4 Rate, 첫 번째 Sheet)로 옮겨서 그대로 계속 확인할 수 있습니다. 기존 BIN_Weekly_Trend/BIN_Merged_Raw/주차별 raw sheet도 유지됩니다.
 - Defect PPM Trend chart 분류 기준을 "Lead"(Assy row에 값이 없어 항상 Unknown Lead 하나로만 묶이던 버그)에서 **Device**(Sheet device name, 예: MT8371, MT8189) 기준으로 수정했습니다.
+
+v30 Changes
+-----------
+- Defect PPM Trend의 Device 분류를 Device명 앞 4 digit 기준으로 Merge하도록 수정했습니다. 예: `MT8189AV/AZAHHB-H`, `MT8189GV/AZAHHB-PN-H` → 둘 다 **MT8189**로 동일하게 묶여서 하나의 Chart로 표시됩니다.
 
 Usage
 -----

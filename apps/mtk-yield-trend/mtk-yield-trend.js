@@ -1306,6 +1306,15 @@ function fallbackGroupName(value, fallback) {
   return text || fallback;
 }
 
+// Device(Sheet device name) 앞부분(예: MT + 4 digit)만 따와서 동일 Device로 Merge합니다.
+// 예: "MT8189AV/AZAHHB-H", "MT8189GV/AZAHHB-PN-H" → 둘 다 "MT8189"로 묶입니다.
+function shortDeviceCode(value) {
+  const text = normalizeText(value);
+  if (!text) return "";
+  const match = text.match(/^[A-Za-z]*\d{4}/);
+  return match ? match[0].toUpperCase() : text.toUpperCase();
+}
+
 function getWindowAssyRows() {
   return assyMergedRows.filter(row => isCompactDateInTrendWindow(row.sod));
 }
@@ -1431,13 +1440,14 @@ function buildFtWeeklyChartGroups() {
 function buildDefectChartGroups() {
   const rows = getWindowAssyRows();
   // Assy row에는 Lead 필드가 없어 항상 "Unknown Lead" 하나로만 묶이던 문제가 있었습니다.
-  // Device(Sheet device name, 예: MT8371, MT8189) 기준으로 분류합니다.
-  const devices = uniqueSorted(rows.map(row => fallbackGroupName(row.device, "Unknown Device")));
+  // Device(Sheet device name)의 앞 4 digit(예: MT8189AV/AZAHHB-H, MT8189GV/AZAHHB-PN-H → MT8189) 기준으로 Merge하여 분류합니다.
+  const deviceGroupOf = row => shortDeviceCode(row.device) || "Unknown Device";
+  const devices = uniqueSorted(rows.map(deviceGroupOf));
   return [
     { title: "All", rows: buildDefectTrendRows(rows) },
     ...devices.map(device => ({
       title: `Device · ${device}`,
-      rows: buildDefectTrendRows(rows.filter(row => fallbackGroupName(row.device, "Unknown Device") === device))
+      rows: buildDefectTrendRows(rows.filter(row => deviceGroupOf(row) === device))
     }))
   ];
 }

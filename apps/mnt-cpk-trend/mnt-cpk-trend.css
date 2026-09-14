@@ -95,6 +95,8 @@ p { color: var(--muted); margin-top: 6px; line-height: 1.45; }
 .metric-card { padding: 18px; }
 .metric-card p { margin: 0 0 8px; color: var(--muted); font-size: 13px; font-weight: 800; }
 .metric-card strong { font-size: 28px; letter-spacing: -0.04em; }
+.metric-card.clickable { cursor: pointer; transition: transform .12s ease, box-shadow .12s ease; }
+.metric-card.clickable:hover, .metric-card.clickable:focus-visible { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,.08); outline: none; }
 
 .drop-zone {
   display: flex;

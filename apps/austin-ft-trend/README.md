@@ -27,6 +27,7 @@
 ## Changelog
 
 - v27: Removed the "Filtered Detail" raw table section (low-readability, chart-less duplicate of the chart/export data). Added a Weekly / Date·原批号 toggle above "BIN 数量 Trend" and made **Weekly Trend the default view** to reduce point-count clutter on the trend chart; the per-date/lot granular view remains available via the toggle.
+- v28: Removed the "Process Log" panel at the bottom of the page. Status messages that used to print there now go to the browser console only (functionality unaffected).
 
 ## Firestore
 

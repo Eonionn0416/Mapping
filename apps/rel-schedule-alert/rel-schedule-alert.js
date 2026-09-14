@@ -87,6 +87,7 @@ let toastSnooze = new Map();      // dedupeKey -> timestamp
 let lastUploadDiff = { created: 0, updated: 0, unchanged: 0, removed: 0 };
 let today = todayIso();
 let selectedTimelineKey = null;   // 표에서 클릭해 Plan Timeline을 갱신시킨 행(dedupeKey) — 선택 강조용
+let timelinePlan = null;          // 표 행 클릭으로 지정된 Plan Timeline용 Plan(Sheet) — Plan(Sheet) 필터(ui.planSelect)와 독립적으로 동작
 
 const el = id => document.getElementById(id);
 
@@ -1063,17 +1064,15 @@ function focusRow(dedupeKey) {
 
 /**
  * "Criteria별 Schedule & Alert 현황" 표에서 행을 클릭하면 아래 Plan Timeline(Gantt)이
- * 그 행의 Plan(Sheet) 일정으로 바뀝니다. 이미 있는 Plan(Sheet) select(ui.planSelect)를
- * 그대로 공유해서 쓰므로, select 값과 표에서 클릭해 선택한 Plan이 항상 같게 유지됩니다.
+ * 그 행의 Plan(Sheet) 일정으로 바뀝니다. Plan(Sheet) select(ui.planSelect)와 표 필터는
+ * 건드리지 않고 timelinePlan만 별도로 갱신하므로, 표는 "전체 Plan" 등 기존 필터 그대로
+ * 유지되고 Plan Timeline만 클릭한 행의 Plan으로 독립적으로 바뀝니다.
  */
 function selectPlanFromRow(dedupeKey) {
   const row = viewRows.find(item => item.dedupeKey === dedupeKey);
   if (!row) return;
   selectedTimelineKey = dedupeKey;
-  if (ui.planSelect.value !== row.sheetName) {
-    ui.planSelect.value = row.sheetName;
-    refreshFilters();
-  }
+  timelinePlan = row.sheetName;
   renderTable();
   renderGantt();
 }
@@ -1226,7 +1225,7 @@ function renderGanttLegend(rows) {
 
 function renderGantt() {
   if (typeof Chart === "undefined" || !ui.ganttChart) return;
-  const plan = ui.planSelect.value || (viewRows[0] && viewRows[0].sheetName) || "";
+  const plan = timelinePlan || ui.planSelect.value || (viewRows[0] && viewRows[0].sheetName) || "";
 
   // Criteria를 Sheet에 나온 순서(첫 행 번호)대로 묶고, 그 안에서는 Sheet 행 순서대로
   const firstRowByCriteria = new Map();
@@ -1556,7 +1555,16 @@ function setupEvents() {
   });
   ui.dropZone.addEventListener("drop", event => handleFiles(event.dataTransfer?.files));
 
-  [ui.planSelect, ui.criteriaSelect, ui.statusSelect].forEach(select => {
+  // Plan(Sheet) select를 사용자가 직접 바꾸면 표 클릭으로 지정했던 timelinePlan은 해제하고
+  // 다시 select 값을 기준으로 Plan Timeline이 따라가도록 합니다.
+  ui.planSelect.addEventListener("change", () => {
+    timelinePlan = null;
+    selectedTimelineKey = null;
+    refreshFilters();
+    renderTable();
+    renderGantt();
+  });
+  [ui.criteriaSelect, ui.statusSelect].forEach(select => {
     select.addEventListener("change", () => { refreshFilters(); renderTable(); renderGantt(); });
   });
   ui.searchInput.addEventListener("input", renderTable);

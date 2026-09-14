@@ -62,7 +62,9 @@ const el = {
   assyTrendBody: document.getElementById("assyTrendBody"),
   lowBody: document.getElementById("lowBody"),
   lowTableWrap: document.getElementById("lowTableWrap"),
-  lowToggleBtn: document.getElementById("lowToggleBtn"),
+  lowCpkPanel: document.getElementById("lowCpkPanel"),
+  lowCpkCard: document.getElementById("lowCpkCard"),
+  lowCpkCount: document.getElementById("lowCpkCount"),
   exportBtn: document.getElementById("exportBtn")
 };
 
@@ -1364,6 +1366,8 @@ function renderLowTable() {
     .filter(row => lowStatus(row))
     .sort((a, b) => sortByMonth(a, b) || String(a.reportType).localeCompare(String(b.reportType)) || (normalizeNumber(a.cpk) ?? 999) - (normalizeNumber(b.cpk) ?? 999));
 
+  if (el.lowCpkCount) el.lowCpkCount.textContent = lows.length.toLocaleString();
+
   if (!lows.length) {
     el.lowBody.innerHTML = `<tr><td colspan="12" class="empty">Low CPK/PPK Data가 없습니다.</td></tr>`;
     return;
@@ -1390,10 +1394,10 @@ function renderLowTable() {
   }).join("");
 }
 
-function toggleLowTable() {
-  if (!el.lowTableWrap || !el.lowToggleBtn) return;
-  el.lowTableWrap.hidden = !el.lowTableWrap.hidden;
-  el.lowToggleBtn.textContent = el.lowTableWrap.hidden ? "Low CPK 항목 보기" : "Low CPK 항목 숨기기";
+// 상단 "Low CPK/PPK 항목" 카드를 클릭하면 Monthly Low CPK / PPK 표로 바로 이동합니다.
+function scrollToLowCpkTable() {
+  if (!el.lowCpkPanel) return;
+  el.lowCpkPanel.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function exportReport() {
@@ -1501,7 +1505,12 @@ function setupEvents() {
   el.trendStartMonthSelect.addEventListener("change", () => { trendStartMonth = el.trendStartMonthSelect.value; renderTrend(); });
   el.assyDeviceSelect.addEventListener("change", () => { refreshAssyFilters(); renderTrend(); });
   el.assyStartMonthSelect.addEventListener("change", () => { assyTrendStartMonth = el.assyStartMonthSelect.value; renderTrend(); });
-  if (el.lowToggleBtn) el.lowToggleBtn.addEventListener("click", toggleLowTable);
+  if (el.lowCpkCard) {
+    el.lowCpkCard.addEventListener("click", scrollToLowCpkTable);
+    el.lowCpkCard.addEventListener("keydown", event => {
+      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); scrollToLowCpkTable(); }
+    });
+  }
 }
 
 function initFirebase() {

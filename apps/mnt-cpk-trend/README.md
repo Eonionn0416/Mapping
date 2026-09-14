@@ -64,3 +64,7 @@ Authentication → Sign-in method → Anonymous → Enable
 - Removed the raw Bump trend table (`#trendBody`) below the Bump Product/Item chart. The chart, filters, and export button stay unchanged.
 - Removed the raw Assy trend table (`#assyTrendBody`) below the Assy Device/Process/Characteristics chart. The chart and filters stay unchanged.
 - The Monthly Low CPK / PPK table (`#lowBody`) is now hidden by default. A new "Low CPK 항목 보기" / "Low CPK 항목 숨기기" toggle button in that panel's header shows/hides it on click.
+
+### v20
+- Reverted the v19 hide/show toggle: the Monthly Low CPK / PPK table is always visible again (no `hidden` state, no toggle button).
+- Added a new clickable "Low CPK/PPK 항목" metric card at the top of the page showing the current count of Low CPK/PPK rows. Clicking it (or pressing Enter/Space on it) smooth-scrolls the page directly to the Monthly Low CPK / PPK table.
