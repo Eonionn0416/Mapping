@@ -1405,23 +1405,38 @@ function renderLowTable() {
   renderLowCpkFloatList(lows);
 }
 
-// 우측에 떠 있는 Low CPK/PPK 요약 list. Month, Type, Item/Characteristics, Status만 표시하고
-// 각 행을 클릭하면 아래로 안 내려가도 바로 해당 Item/Characteristics Chart로 이동할 수 있습니다.
+// 우측에 떠 있는 Low CPK/PPK 요약 list. 최신 달이 맨 위로 오는 내림차순으로 표시해서
+// 최근 항목은 바로 클릭할 수 있고, 이전 달 항목들은 Scroll해서 내려가야 보이게 합니다.
+// data-idx는 항상 원본 lowRows 배열의 index를 가리키므로 표시 순서와 무관하게 정확한 행을 찾습니다.
 function renderLowCpkFloatList(lows) {
   if (!el.lowCpkFloatList) return;
-  el.lowCpkFloatList.innerHTML = lows.map((row, idx) => {
+  const ordered = lows
+    .map((row, idx) => ({ row, idx }))
+    .sort((a, b) =>
+      String(b.row.reportMonth || "").localeCompare(String(a.row.reportMonth || "")) ||
+      String(a.row.reportType || "").localeCompare(String(b.row.reportType || "")) ||
+      (normalizeNumber(a.row.cpk) ?? 999) - (normalizeNumber(b.row.cpk) ?? 999)
+    );
+
+  let lastMonth = null;
+  const html = [];
+  ordered.forEach(({ row, idx }) => {
+    if (row.reportMonth !== lastMonth) {
+      lastMonth = row.reportMonth;
+      html.push(`<div class="low-cpk-float-month-header">${escapeHtml(row.reportLabel || monthLabel(row.reportMonth))}</div>`);
+    }
     const status = lowStatus(row);
     const cls = status === "Below 1.33" ? "low-danger" : "low-warning";
     const type = row.reportType || "BUMP";
     const itemLabel = type === "ASSY" ? `${row.process || ""} / ${row.characteristics || ""}` : (row.item || "");
-    return `
+    html.push(`
       <button type="button" class="low-cpk-float-item" data-idx="${idx}">
-        <span class="low-cpk-float-month">${escapeHtml(row.reportLabel || monthLabel(row.reportMonth))}</span>
         <span class="type-pill ${type === "ASSY" ? "assy" : "bump"}">${escapeHtml(type)}</span>
         <span class="low-cpk-float-item-label">${escapeHtml(itemLabel)}</span>
         <span class="${cls}">${escapeHtml(status)}</span>
-      </button>`;
-  }).join("");
+      </button>`);
+  });
+  el.lowCpkFloatList.innerHTML = html.join("");
 }
 
 // 상단 "Low CPK/PPK 항목" 카드를 클릭하면 Monthly Low CPK / PPK 표로 바로 이동합니다.
@@ -1439,25 +1454,45 @@ function trySetSelectValue(select, value) {
   return false;
 }
 
+// Start Month select에 해당 월 option이 없으면(실제 report가 없던 달이어도) 만들어서 선택합니다.
+// 그래야 "그 항목이 Low CPK/PPK가 되기 전 1년"처럼 임의의 월을 기준으로 window를 잡을 수 있습니다.
+function ensureMonthOption(select, month) {
+  if (!select || !month) return;
+  if (!Array.from(select.options).some(opt => opt.value === month)) {
+    const opt = document.createElement("option");
+    opt.value = month;
+    opt.textContent = `${monthLongLabel(month)} ~ ${monthLongLabel(addMonths(month, 12))}`;
+    const insertBefore = Array.from(select.options).find(o => o.value > month);
+    if (insertBefore) select.insertBefore(opt, insertBefore);
+    else select.appendChild(opt);
+  }
+  select.value = month;
+}
+
 // Monthly Low CPK/PPK 표(또는 우측 Floating list)에서 행을 클릭하면 해당 Item/Characteristics의
 // CPK & PPK Trend Chart로 바로 이동합니다. Chart가 실제로 보이도록 Product/Device, Data type,
 // Start Month 필터를 그 행 기준으로 맞춘 뒤 Chart를 다시 그리고, 해당 Chart Card로 Scroll + 강조합니다.
+// Start Month는 클릭한 행의 달을 "끝"으로 하는 지난 1년(예: 2026-08 클릭 → 2025-08 ~ 2026-08)으로 맞춰서,
+// 이 항목이 Low CPK/PPK가 되기 전까지의 이력을 바로 볼 수 있게 합니다.
 function jumpToLowCpkChart(idx) {
   const row = lowRows[idx];
   if (!row) return;
   const type = row.reportType || "BUMP";
+  const windowStart = addMonths(row.reportMonth, -12);
 
   if (type === "ASSY") {
     trySetSelectValue(el.assyDeviceSelect, row.device);
     refreshAssyFilters();
     trySetSelectValue(el.assyDeviceSelect, row.device);
-    if (trySetSelectValue(el.assyStartMonthSelect, row.reportMonth)) assyTrendStartMonth = row.reportMonth;
+    ensureMonthOption(el.assyStartMonthSelect, windowStart);
+    assyTrendStartMonth = windowStart;
   } else {
     trySetSelectValue(el.productSelect, row.product);
     refreshBumpFilters();
     trySetSelectValue(el.productSelect, row.product);
     if (el.dataTypeSelect) el.dataTypeSelect.value = "__ALL__";
-    if (trySetSelectValue(el.trendStartMonthSelect, row.reportMonth)) trendStartMonth = row.reportMonth;
+    ensureMonthOption(el.trendStartMonthSelect, windowStart);
+    trendStartMonth = windowStart;
   }
 
   renderTrend();
