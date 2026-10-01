@@ -667,7 +667,8 @@ function buildStatsGroups(rows, mapType = state.mapType) {
       { title: 'Batch + Panel 기준 Fail 집중도', rows: aggregateBy(withParsed.map(x => ({ ...x.row, __statKey: `${x.parsed.batch} / Panel ${x.parsed.panel}` })), r => r.__statKey) },
       { title: 'Strip No 기준 Fail 집중도', rows: aggregateBy(withParsed.map(x => ({ ...x.row, __statKey: `Strip No ${x.parsed.stripNo}` })), r => r.__statKey) },
       { title: 'Batch + Panel + Strip No Commonality (Strip ID) 기준 Fail 집중도', rows: aggregateBy(withParsed.map(x => ({ ...x.row, __statKey: formatStripIdCommonality(x.parsed) })), r => r.__statKey) },
-      { title: 'Strip 내 Y Row 기준 Fail 집중도', rows: aggregateBy(rows, r => `Strip Y Row ${r.Y}`) }
+      { title: 'Strip 내 Y Row 기준 Fail 집중도', rows: aggregateBy(rows, r => `Strip Y Row ${r.Y}`) },
+      { title: 'Strip 내 X Column Commonality 기준 Fail 집중도', rows: aggregateBy(rows, r => `Strip X Column ${r.X}`) }
     ];
   }
   const withParsedWafer = rows.map(row => ({ row, parsed: parseWaferId(row['WAFER ID']) }));
