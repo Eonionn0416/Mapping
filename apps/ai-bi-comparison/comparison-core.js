@@ -65,19 +65,17 @@
     const ids=info=>[...new Set(info.ai.map(x=>x.value).filter(Boolean))];
     const a=ids(original),b=ids(revised);
     for(const [name,info,list] of [['원본',original,a],['개정',revised,b]]){
-      if(!info.ai.length||info.ai.some(x=>!x.value))errors.push(`${name}: AI No 누락 — 비교 불가`);
-      if(list.length>1)errors.push(`${name}: 서로 다른 AI No가 여러 개 있습니다 — 비교 불가 (${list.join(', ')})`);
+      if(!info.ai.length||info.ai.some(x=>!x.value))warnings.push(`${name}: AI No 누락`);
+      if(list.length>1)warnings.push(`${name}: 서로 다른 AI No가 여러 개 있습니다 (${list.join(', ')})`);
       if(!info.cp.length)warnings.push(`${name}: CP/BL No 누락 (항목 없음)`);
       for(const cp of info.cp)if(!cp.value||/^(?:none|n\/?a|null|-|—)$/i.test(cp.value))warnings.push(`${name} / ${cp.sheet}: CP/BL No 누락 (${cp.cell})`);
     }
-    if(a.length===1&&b.length===1&&a[0]!==b[0])errors.push(`AI No 불일치 — 비교 불가 (원본: ${a[0]} / 개정: ${b[0]})`);
     return {allowed:errors.length===0,errors,warnings,original,revised};
   }
   function compare(before,after,options={}) {
     const changes=[], warnings=[];
     const validation=validate(before,after);
-    if(options.validateIdentity!==false&&!validation.allowed)return {changes,groups:[],warnings:validation.warnings,validation};
-    if(options.validateIdentity!==false)warnings.push(...validation.warnings);
+    warnings.push(...validation.warnings);
     let sectionKey='';const groups=[];
     const emit=(type,sheet,process,item,oldValue,newValue,oldCell='',newCell='')=>changes.push({type,sheet,process,item,oldValue,newValue,oldCell,newCell,sectionKey});
     const rowText=r=>Object.entries(r.cells).map(([c,v])=>`${c}${r.r}: ${text(v)}`).join('\n');
@@ -107,7 +105,9 @@
             if(norm(av,options)===norm(bv,options))continue;
             const source=ar||br,cols=Object.keys(source.cells),idx=cols.indexOf(c);
             const preceding=cols.slice(0,idx).reverse().find(col=>/^\s*\d+\s*[.)]/.test(text(source.cells[col])));
-            const item=preceding?text(source.cells[preceding]):context[c]||(key==='metadata'&&idx>0?text(source.cells[cols[idx-1]]):`${c}열`);
+            const prior=key==='metadata'?old.rows.find(row=>row.r===source.r-1):null;
+            const verticalLabel=prior&&prior.cells[c]&&['AINO','AINUMBER','BINO','BINUMBER','AIBINO','CPBLNO','CPBLNUMBER','CUSTOMER','PACKAGE','LEAD','BODY','CUSTBONDINGNO','SCKBONDINGNO','ISSUEDATE','AUTOMOTIVETYPE'].includes(headerKey(prior.cells[c]))?text(prior.cells[c]):'';
+            const item=preceding?text(source.cells[preceding]):context[c]||verticalLabel||(key==='metadata'&&idx>0?text(source.cells[cols[idx-1]]):`${c}열`);
             emit(!av?'추가':!bv?'삭제':'변경',sheet,process,item,av,bv,ar&&av?`${c}${ar.r}`:'',br&&bv?`${c}${br.r}`:'');
           }
           const source=br||ar;let last='';
@@ -118,6 +118,21 @@
     const changedGroups=groups.map(g=>({...g,changes:changes.filter(c=>c.sheet===g.sheet&&c.sectionKey===g.key)})).filter(g=>g.changes.length);
     return {changes,groups:changedGroups,warnings:[...new Set(warnings)],validation};
   }
-  root.AIBIComparison={compare,sections,align,documentInfo,validate};
+  function summaryLine(change) {
+    const c=change;
+    if(c.item==='전체 공정')return `${c.process} ${c.type}!`;
+    if(c.item==='전체 시트')return `${c.sheet} 시트 ${c.type}!`;
+    const prefix=`${c.process} ${c.item}`;
+    if(c.type==='변경'||c.type==='순서 변경')return `${prefix} "${c.oldValue}" 에서 "${c.newValue}" 으로 ${c.type}`;
+    return `${prefix} "${c.type==='삭제'?c.oldValue:c.newValue}" ${c.type}!`;
+  }
+  function summarize(group) {
+    return group.changes.filter(c=>{
+      // A newly added/deleted field label and its value form one summary item.
+      const v=c.type==='추가'?c.newValue:c.type==='삭제'?c.oldValue:'';
+      return !(/^\s*\d+\s*[.)]/.test(v)&&group.changes.some(other=>other!==c&&other.type===c.type&&other.item===v));
+    }).map(c=>({text:summaryLine(c),type:c.type,oldCell:c.oldCell,newCell:c.newCell}));
+  }
+  root.AIBIComparison={compare,sections,align,documentInfo,validate,summaryLine,summarize};
   if(typeof module!=='undefined')module.exports=root.AIBIComparison;
 })(typeof globalThis!=='undefined'?globalThis:this);
