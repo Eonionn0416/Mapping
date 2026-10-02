@@ -1,8 +1,8 @@
 'use strict';
 const $=id=>document.getElementById(id);
-let base=null,revisions=[],all=[],groups=[],missingNotices=[],summaryText='',limit=20,generation=0;
+let base=null,revisions=[],all=[],groups=[],summaryText='',limit=20,generation=0;
 const escapeHTML=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-function invalidate(){generation++;all=[];groups=[];missingNotices=[];summaryText='';$('results').hidden=true;}
+function invalidate(){generation++;all=[];groups=[];summaryText='';$('results').hidden=true;}
 function setFiles(kind,files){invalidate();if(kind==='base'){base=files[0]||null;$('baseName').textContent=base?.name||'선택한 파일 없음';}else{revisions=Array.from(files);$('revNames').textContent=revisions.map(f=>f.name).join(', ')||'선택한 파일 없음';}$('status').textContent='비교 실행을 눌러 주세요.';}
 $('baseFile').addEventListener('change',e=>setFiles('base',e.target.files));
 $('revFiles').addEventListener('change',e=>setFiles('rev',e.target.files));
@@ -25,7 +25,7 @@ async function read(file){
 $('compare').addEventListener('click',async()=>{
  if(!base||!revisions.length){$('status').textContent='원본 하나와 개정 파일을 선택해 주세요.';return;}
  if(typeof XLSX==='undefined'){$('status').textContent='Excel 읽기 라이브러리를 불러오지 못했습니다. 인터넷 연결 후 새로고침해 주세요.';return;}
- const token=++generation,source=base,files=[...revisions],options={ignoreWhitespace:$('whitespace').checked};all=[];groups=[];missingNotices=[];summaryText='';$('results').hidden=true;$('compare').disabled=true;$('status').textContent='파일을 읽고 비교하고 있습니다…';
+ const token=++generation,source=base,files=[...revisions],options={ignoreWhitespace:$('whitespace').checked};all=[];groups=[];summaryText='';$('results').hidden=true;$('compare').disabled=true;$('status').textContent='파일을 읽고 비교하고 있습니다…';
  try{const original=await read(source),notices=[];const results=[],cards=[];let compared=0,blocked=0;
   for(const file of files){
    try{const revised=await read(file);await new Promise(resolve=>setTimeout(resolve,0));const result=AIBIComparison.compare(original,revised,options);
@@ -34,7 +34,7 @@ $('compare').addEventListener('click',async()=>{
     cards.push(...result.groups.map(g=>({...g,file:file.name,original:source.name,beforeLayout:original[g.sheet]?.layout,afterLayout:revised[g.sheet]?.layout})));
    }catch(e){blocked++;notices.push({message:`${file.name}: 비교 실패 — ${e.message}`,error:true});}
   }
-  if(token!==generation)return;all=results;groups=cards;missingNotices=notices.filter(w=>w.missingCp);limit=20;
+  if(token!==generation)return;all=results;groups=cards;limit=20;
   $('fileFilter').innerHTML='<option value="">전체</option>'+files.map(f=>`<option>${escapeHTML(f.name)}</option>`).join('');$('typeFilter').value='';$('search').value='';
   $('warnings').innerHTML=notices.map(w=>`<p class="warning ${w.missingCp?'missing-cp':w.error?'error':''}" role="${w.error||w.missingCp?'alert':'status'}">${escapeHTML(w.message)}</p>`).join('');
   $('metrics').innerHTML=['전체','추가','변경','삭제','순서 변경'].map(t=>`<div class="metric">${t}<strong>${t==='전체'?all.length:all.filter(c=>c.type===t).length}</strong></div>`).join('');
@@ -77,12 +77,10 @@ function render(){
  const q=$('search').value.toLowerCase(),f=$('fileFilter').value,t=$('typeFilter').value;
  const filtered=groups.filter(g=>(!f||g.file===f)&&(!t||g.changes.some(c=>c.type===t))&&(!q||[g.file,g.sheet,g.process,...g.changes.flatMap(c=>[c.item,c.oldValue,c.newValue])].join(' ').toLowerCase().includes(q)));
  const summaries=filtered.map(g=>({group:g,items:AIBIComparison.summarize(g).filter(c=>!t||c.type===t)})).filter(s=>s.items.length);
- const missing=missingNotices.filter(w=>(!f||w.file===f)&&(!q||w.message.toLowerCase().includes(q)));
  const lines=summaries.flatMap(s=>[`[${s.group.file} / ${s.group.sheet}]`,...s.items.map(c=>c.text),'']);
- if(missing.length)lines.push('CP/BL No 누락',...missing.map(w=>w.message));
  summaryText=lines.join('\n').trim();
- $('summaryCount').textContent=`Gap 요약 ${summaries.reduce((n,s)=>n+s.items.length,0)}건 · CP/BL No 누락 ${missing.length}건`;
- $('gapSummary').innerHTML=summaries.map(s=>`<div class="summary-group"><p class="summary-source">${escapeHTML(s.group.file)} · ${escapeHTML(s.group.sheet)}</p><ul>${s.items.map(c=>`<li>${badge(c.type)} <span>${escapeHTML(c.text)}</span></li>`).join('')}</ul></div>`).join('')+(missing.length?`<div class="summary-missing"><h4>CP/BL No 누락</h4>${missing.map(w=>`<p class="warning missing-cp">${escapeHTML(w.message)}</p>`).join('')}</div>`:'')||'<p class="empty">표시할 Gap 요약 및 CP/BL No 누락이 없습니다.</p>';
+ $('summaryCount').textContent=`Gap 요약 ${summaries.reduce((n,s)=>n+s.items.length,0)}건`;
+ $('gapSummary').innerHTML=summaries.map(s=>`<div class="summary-group"><p class="summary-source">${escapeHTML(s.group.file)} · ${escapeHTML(s.group.sheet)}</p><ul>${s.items.map(c=>`<li>${badge(c.type)} <span>${escapeHTML(c.text)}</span></li>`).join('')}</ul></div>`).join('')||'<p class="empty">표시할 Gap 요약이 없습니다.</p>';
  $('summaryExport').disabled=!summaryText;
  $('count').textContent=`차이가 있는 공정/표 ${filtered.length}개 / 전체 ${groups.length}개`;
  $('rows').innerHTML=filtered.slice(0,limit).map(g=>`<article class="gap-card"><div class="gap-heading"><div><h3>${escapeHTML(g.process)}</h3><small>${escapeHTML(g.file)} · ${escapeHTML(g.sheet)}</small></div><div>${[...new Set(g.changes.map(c=>c.type))].map(badge).join(' ')} <small>${g.changes.length}건</small></div></div><div class="before-after"><section><div class="side-heading">Before <small>${escapeHTML(g.original)}</small></div>${blockTable(g,'before')}</section><section><div class="side-heading">After <small>${escapeHTML(g.file)}</small></div>${blockTable(g,'after')}</section></div><details class="cell-details"><summary>변경 항목 및 셀 위치 (${g.changes.length}건)</summary><ul>${g.changes.map(c=>`<li>${badge(c.type)} ${escapeHTML(c.item)} · ${escapeHTML(c.oldCell||'—')} → ${escapeHTML(c.newCell||'—')}</li>`).join('')}</ul></details></article>`).join('')||'<p class="empty">표시할 차이가 없습니다. 누락 및 파일 읽기 안내는 위에서 확인하세요.</p>';
