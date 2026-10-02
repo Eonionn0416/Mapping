@@ -46,22 +46,55 @@
     while(i||j){const t=trace[i*n+j];if(!t){pairs.push([a[--i],b[--j]]);}else if(t===1)pairs.push([a[--i],null]);else pairs.push([null,b[--j]]);}
     return pairs.reverse();
   }
+  const headerKey = v => text(v).toUpperCase().replace(/[\s._:/-]/g,'');
+  function documentInfo(book) {
+    const ai=[], cp=[];
+    const known=new Set(['AINO','AINUMBER','BINO','BINUMBER','AIBINO','CPBLNO','CPBLNUMBER','CUSTOMER','PACKAGE','LEAD','BODY','CUSTBONDINGNO','SCKBONDINGNO','ISSUEDATE','AUTOMOTIVETYPE']);
+    for(const [sheet,rows] of Object.entries(book))for(let i=0;i<rows.length;i++)for(const [col,value] of Object.entries(rows[i].cells)){
+      const key=headerKey(value);
+      if(!['AINO','AINUMBER','BINO','BINUMBER','AIBINO','CPBLNO','CPBLNUMBER'].includes(key))continue;
+      let v='';let cell='';const following=rows[i+1];
+      if(following&&following.r===rows[i].r+1&&following.cells[col]!=null&&!known.has(headerKey(following.cells[col]))){v=text(following.cells[col]).trim();cell=col+following.r;}
+      if(!v){const cols=Object.keys(rows[i].cells),next=cols[cols.indexOf(col)+1];if(next&&!known.has(headerKey(rows[i].cells[next]))){v=text(rows[i].cells[next]).trim();cell=next+rows[i].r;}}
+      (key.startsWith('CP')?cp:ai).push({sheet,value:v,cell:cell||col+rows[i].r});
+    }
+    return {ai,cp};
+  }
+  function validate(before,after) {
+    const original=documentInfo(before),revised=documentInfo(after),warnings=[],errors=[];
+    const ids=info=>[...new Set(info.ai.map(x=>x.value).filter(Boolean))];
+    const a=ids(original),b=ids(revised);
+    for(const [name,info,list] of [['원본',original,a],['개정',revised,b]]){
+      if(!info.ai.length||info.ai.some(x=>!x.value))errors.push(`${name}: AI No 누락 — 비교 불가`);
+      if(list.length>1)errors.push(`${name}: 서로 다른 AI No가 여러 개 있습니다 — 비교 불가 (${list.join(', ')})`);
+      if(!info.cp.length)warnings.push(`${name}: CP/BL No 누락 (항목 없음)`);
+      for(const cp of info.cp)if(!cp.value||/^(?:none|n\/?a|null|-|—)$/i.test(cp.value))warnings.push(`${name} / ${cp.sheet}: CP/BL No 누락 (${cp.cell})`);
+    }
+    if(a.length===1&&b.length===1&&a[0]!==b[0])errors.push(`AI No 불일치 — 비교 불가 (원본: ${a[0]} / 개정: ${b[0]})`);
+    return {allowed:errors.length===0,errors,warnings,original,revised};
+  }
   function compare(before,after,options={}) {
     const changes=[], warnings=[];
-    const emit=(type,sheet,process,item,oldValue,newValue,oldCell='',newCell='')=>changes.push({type,sheet,process,item,oldValue,newValue,oldCell,newCell});
+    const validation=validate(before,after);
+    if(options.validateIdentity!==false&&!validation.allowed)return {changes,groups:[],warnings:validation.warnings,validation};
+    if(options.validateIdentity!==false)warnings.push(...validation.warnings);
+    let sectionKey='';const groups=[];
+    const emit=(type,sheet,process,item,oldValue,newValue,oldCell='',newCell='')=>changes.push({type,sheet,process,item,oldValue,newValue,oldCell,newCell,sectionKey});
     const rowText=r=>Object.entries(r.cells).map(([c,v])=>`${c}${r.r}: ${text(v)}`).join('\n');
     const sectionText=s=>[s.header,...s.rows].filter(Boolean).map(rowText).join('\n');
     for(const sheet of new Set([...Object.keys(before),...Object.keys(after)])) {
-      if(!before[sheet]||!after[sheet]){emit(before[sheet]?'삭제':'추가',sheet,'시트','전체 시트',before[sheet]?before[sheet].map(rowText).join('\n'):'',after[sheet]?after[sheet].map(rowText).join('\n'):'');continue;}
+      if(!before[sheet]||!after[sheet]){sectionKey='whole-sheet';emit(before[sheet]?'삭제':'추가',sheet,'시트','전체 시트',before[sheet]?before[sheet].map(rowText).join('\n'):'',after[sheet]?after[sheet].map(rowText).join('\n'):'');groups.push({key:sectionKey,sheet,process:'전체 시트',before:before[sheet]?{rows:before[sheet]}:null,after:after[sheet]?{rows:after[sheet]}:null});continue;}
       const a=sections(before[sheet]),b=sections(after[sheet]);
       if(a.length===1 || b.length===1)warnings.push(`${sheet}: 공정 제목을 인식하지 못한 파일은 기본 정보의 행/셀 비교를 사용합니다.`);
       for(const list of [a,b]) if(list.some(s=>s.key!=='metadata'&&Number(s.key.split('|').pop())>1))warnings.push(`${sheet}: 같은 공정 코드가 반복됩니다. 등장 순서로 연결했으므로 해당 공정을 확인해 주세요.`);
       const am=new Map(a.map(s=>[s.key,s])),bm=new Map(b.map(s=>[s.key,s]));
       const commonA=a.filter(s=>s.key!=='metadata'&&bm.has(s.key)).map(s=>s.key);
       const commonB=b.filter(s=>s.key!=='metadata'&&am.has(s.key)).map(s=>s.key);
-      if(commonA.join('\n')!==commonB.join('\n'))emit('순서 변경',sheet,'공정 순서','공통 공정의 순서',commonA.map(k=>am.get(k).title).join('\n'),commonB.map(k=>bm.get(k).title).join('\n'));
+      if(commonA.join('\n')!==commonB.join('\n')){sectionKey='process-order';emit('순서 변경',sheet,'공정 순서','공통 공정의 순서',commonA.map(k=>am.get(k).title).join('\n'),commonB.map(k=>bm.get(k).title).join('\n'));groups.push({key:sectionKey,sheet,process:'공정 순서',before:{rows:commonA.map((k,i)=>({r:i+1,cells:{A:am.get(k).title}}))},after:{rows:commonB.map((k,i)=>({r:i+1,cells:{A:bm.get(k).title}}))}});}
       for(const key of new Set([...am.keys(),...bm.keys()])){
+        sectionKey=key;
         const old=am.get(key),rev=bm.get(key),process=(old||rev).title;
+        groups.push({key,sheet,process,before:old||null,after:rev||null});
         if(!old||!rev){emit(old?'삭제':'추가',sheet,process,'전체 공정',old?sectionText(old):'',rev?sectionText(rev):'',old?.header?`${Object.keys(old.header.cells)[0]}${old.header.r}`:'',rev?.header?`${Object.keys(rev.header.cells)[0]}${rev.header.r}`:'');continue;}
         if(old.header&&rev.header)for(const c of new Set([...Object.keys(old.header.cells),...Object.keys(rev.header.cells)])){
           const av=text(old.header.cells[c]),bv=text(rev.header.cells[c]);
@@ -82,8 +115,9 @@
         }
       }
     }
-    return {changes,warnings:[...new Set(warnings)]};
+    const changedGroups=groups.map(g=>({...g,changes:changes.filter(c=>c.sheet===g.sheet&&c.sectionKey===g.key)})).filter(g=>g.changes.length);
+    return {changes,groups:changedGroups,warnings:[...new Set(warnings)],validation};
   }
-  root.AIBIComparison={compare,sections,align};
+  root.AIBIComparison={compare,sections,align,documentInfo,validate};
   if(typeof module!=='undefined')module.exports=root.AIBIComparison;
 })(typeof globalThis!=='undefined'?globalThis:this);
