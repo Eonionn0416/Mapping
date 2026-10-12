@@ -153,6 +153,15 @@ service cloud.firestore {
       allow delete: if signedIn();
     }
 
+    // MNT Hold Lot List: isolated event collection (no subcollections).
+    match /mntHoldLotEvents/{docId} {
+      allow read, delete: if signedIn();
+      allow create, update: if signedIn()
+        && request.resource.data.keys().hasOnly(['event', 'lot'])
+        && request.resource.data.event is string
+        && request.resource.data.lot is string;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

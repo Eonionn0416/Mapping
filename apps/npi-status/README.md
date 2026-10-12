@@ -1,0 +1,9 @@
+# NPI Status
+
+Open QA Page > NPI Status. Upload MNT or MTK workbook, review sheet purposes and source row counts, then save. Customer is detected from the filename and can be corrected before saving. Sheet names are used verbatim as NPI purposes. Source statuses are shown as written; missing status is Not supplied. No status is inferred from email instructions or a project title.
+
+The parser handles LOT NO, LOT_ID, Lot, Montage Lot#, Efinix Lot#, Actual ASSY LOT, customer lot numbers and wafer-only lot tables; Korean quantity and customer-device headers are supported. Duplicate DEVICE headers use the last DEVICE column. Full lot IDs including space-separated sublot suffixes are preserved. Repeated tables for the same customer/purpose/lot become one entry with every original source row accessible. The last populated quantity/status in source row order is shown, without adding duplicated table quantities. A lot in different purposes remains in each purpose.
+
+Multiple lot identities in one table remain visible in Source Details. Sheets without recognized lot tables remain as purposes with a warning and View source sheet, so content is not silently discarded. Unlabeled fields, comments, and original source cells remain available in the source view. Sheet notes are evidence from the workbook, not instructions executed by the program.
+
+Save replaces matching customer + purpose sheets. Purposes absent from a newer upload are retained. Rename a sheet only when intentionally creating a new purpose. Search, customer/purpose filters, CSV export, and JSON backup/restore are provided. Restore adds missing purposes and preserves existing purposes. NPI data stays in the browser; this new NPI page does not use Firestore. Import needs internet for the same SheetJS CDN used by existing tools. Run through the usual HTTP hosting.
