@@ -1,9 +1,32 @@
 'use strict';
 const $=id=>document.getElementById(id);
-let base=null,revisions=[],all=[],groups=[],summaryText='',limit=20,generation=0;
+let base=null,revisions=[],all=[],groups=[],summaryText='',limit=20,generation=0,reportMeta=null;
+const snapshots=new WeakMap();
+let diagnostics=[];
+function fileError(file,e){
+ const message=`${file.name}: 파일을 읽지 못했습니다 (${e.name||'Error'}). 파일을 닫고 로컬 폴더에 복사한 뒤 다시 선택해 주세요. 계속 실패하면 회사 보안 정책에 따른 접근 제한을 확인해 주세요.`;
+ diagnostics.push({time:new Date().toISOString(),file:file.name,size:file.size,error:e.name,message:e.message});
+ return new Error(message);
+}
+function snapshot(file){
+ if(!snapshots.has(file)){
+  const pending=file.arrayBuffer().then(buffer=>({buffer}),error=>({error}));
+  snapshots.set(file,pending);
+ }
+ return snapshots.get(file);
+}
 const escapeHTML=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-function invalidate(){generation++;all=[];groups=[];summaryText='';$('results').hidden=true;}
-function setFiles(kind,files){invalidate();if(kind==='base'){base=files[0]||null;$('baseName').textContent=base?.name||'선택한 파일 없음';}else{revisions=Array.from(files);$('revNames').textContent=revisions.map(f=>f.name).join(', ')||'선택한 파일 없음';}$('status').textContent='비교 실행을 눌러 주세요.';}
+function invalidate(){generation++;all=[];groups=[];summaryText='';reportMeta=null;$('results').hidden=true;}
+async function setFiles(kind,files){
+ invalidate();const token=generation,selected=kind==='base'?Array.from(files).slice(0,1):Array.from(files);
+ if(kind==='base'){base=selected[0]||null;$('baseName').textContent=base?.name||'선택한 파일 없음';}
+ else{revisions=selected;$('revNames').textContent=revisions.map(f=>f.name).join(', ')||'선택한 파일 없음';}
+ $('status').textContent='선택한 파일을 읽고 있습니다…';
+ const loaded=await Promise.all(selected.map(async file=>({file,...await snapshot(file)})));
+ if(token!==generation)return;
+ const failed=loaded.filter(x=>x.error);
+ $('status').textContent=failed.length?failed.map(x=>fileError(x.file,x.error).message).join('\n'):'파일 읽기 완료. 비교 실행을 눌러 주세요.';
+}
 $('baseFile').addEventListener('change',e=>setFiles('base',e.target.files));
 $('revFiles').addEventListener('change',e=>setFiles('rev',e.target.files));
 $('whitespace').addEventListener('change',invalidate);
@@ -11,7 +34,8 @@ for(const [id,kind] of [['baseDrop','base'],['revDrop','rev']]){const el=$(id);e
 async function read(file){
  if(!/\.(xlsx|xlsm|xls)$/i.test(file.name))throw new Error(`${file.name}: Excel 파일을 선택해 주세요.`);
  if(file.size>50*1024*1024)throw new Error(`${file.name}: 50MB 이하 파일을 사용해 주세요.`);
- const wb=XLSX.read(new Uint8Array(await file.arrayBuffer()),{type:'array',cellFormula:true});const book={};
+ const data=await snapshot(file);if(data.error)throw fileError(file,data.error);
+ const wb=XLSX.read(new Uint8Array(data.buffer),{type:'array',cellFormula:true});const book={};
  for(const name of wb.SheetNames){const sheet=wb.Sheets[name],rows=new Map();
   // Iterate actual cells, avoiding inflated worksheet ranges and merged blank cells.
   for(const [address,cell] of Object.entries(sheet)){if(address.startsWith('!')||!cell||(!cell.f&&cell.v==null))continue;
@@ -26,19 +50,19 @@ $('compare').addEventListener('click',async()=>{
  if(!base||!revisions.length){$('status').textContent='원본 하나와 개정 파일을 선택해 주세요.';return;}
  if(typeof XLSX==='undefined'){$('status').textContent='Excel 읽기 라이브러리를 불러오지 못했습니다. 인터넷 연결 후 새로고침해 주세요.';return;}
  const token=++generation,source=base,files=[...revisions],options={ignoreWhitespace:$('whitespace').checked};all=[];groups=[];summaryText='';$('results').hidden=true;$('compare').disabled=true;$('status').textContent='파일을 읽고 비교하고 있습니다…';
- try{const original=await read(source),notices=[];const results=[],cards=[];let compared=0,blocked=0;
+ try{const original=await read(source),notices=[];const results=[],cards=[],completed=[];let compared=0,blocked=0;
   for(const file of files){
    try{const revised=await read(file);await new Promise(resolve=>setTimeout(resolve,0));const result=AIBIComparison.compare(original,revised,options);
     notices.push(...result.warnings.map(w=>({message:`${file.name}: ${w}`,file:file.name,error:false,missingCp:w.includes('CP/BL No 누락')})));
-    compared++;results.push(...result.changes.map(c=>({...c,file:file.name,original:source.name})));
+    compared++;completed.push(file.name);results.push(...result.changes.map(c=>({...c,file:file.name,original:source.name})));
     cards.push(...result.groups.map(g=>({...g,file:file.name,original:source.name,beforeLayout:original[g.sheet]?.layout,afterLayout:revised[g.sheet]?.layout})));
    }catch(e){blocked++;notices.push({message:`${file.name}: 비교 실패 — ${e.message}`,error:true});}
   }
-  if(token!==generation)return;all=results;groups=cards;limit=20;
+  if(token!==generation)return;all=results;groups=cards;limit=20;reportMeta={original:source.name,completed,failed:blocked,warnings:notices.map(n=>n.message),ignoreWhitespace:options.ignoreWhitespace,time:new Date().toLocaleString('ko-KR',{timeZone:'Asia/Seoul'})};
   $('fileFilter').innerHTML='<option value="">전체</option>'+files.map(f=>`<option>${escapeHTML(f.name)}</option>`).join('');$('typeFilter').value='';$('search').value='';
   $('warnings').innerHTML=notices.map(w=>`<p class="warning ${w.missingCp?'missing-cp':w.error?'error':''}" role="${w.error||w.missingCp?'alert':'status'}">${escapeHTML(w.message)}</p>`).join('');
   $('metrics').innerHTML=['전체','추가','변경','삭제','순서 변경'].map(t=>`<div class="metric">${t}<strong>${t==='전체'?all.length:all.filter(c=>c.type===t).length}</strong></div>`).join('');
-  $('export').disabled=!compared;
+  $('export').disabled=!compared;$('reportExport').disabled=!compared;
   $('results').hidden=false;$('status').textContent=`비교 완료 ${compared}개 / 실패 ${blocked}개 · 차이가 있는 공정/표 ${groups.length}개 · 셀 및 공정 차이 ${all.length}건`;render();
  }catch(e){if(token===generation){all=[];groups=[];$('status').textContent=`비교 실패: ${e.message}`;}}finally{$('compare').disabled=false;}
 });
@@ -99,3 +123,7 @@ $('export').addEventListener('click',()=>{
  const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download='AI_BI_Comparison.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 });
 
+
+function download(name,content,type){const url=URL.createObjectURL(new Blob([content],{type})),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
+$('reportExport').addEventListener('click',()=>{if(reportMeta)download('AI_BI_Comparison_Report.html',AIBIReport.create(reportMeta,all,groups,blockTable),'text/html;charset=utf-8');});
+$('diagnosticExport').addEventListener('click',()=>download('AI_BI_Diagnostics.txt',JSON.stringify({time:new Date().toISOString(),browser:navigator.userAgent,page:location.protocol,libraryLoaded:typeof XLSX!=='undefined',files:[base,...revisions].filter(Boolean).map(f=>({name:f.name,size:f.size})),status:$('status').textContent,errors:diagnostics},null,2),'text/plain;charset=utf-8'));

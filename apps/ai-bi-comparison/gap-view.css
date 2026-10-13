@@ -2,3 +2,14 @@
 
 
 .warning.missing-cp{background:#b91c1c;color:#fff;border:1px solid #991b1b;font-weight:600}.summary-panel{border:1px solid #cddaea;border-radius:12px;padding:20px;margin:24px 0;background:#f9fbff}.summary-group{padding:14px 0;border-bottom:1px solid #dce4ef}.summary-source{color:#52677f;font-size:13px;margin:0 0 10px}.summary-group ul{margin:0;padding-left:0;list-style:none}.summary-group li{display:flex;align-items:flex-start;gap:9px;margin:10px 0;line-height:1.65}.summary-group li span:last-child{white-space:pre-wrap;overflow-wrap:anywhere}.summary-group .badge{flex-shrink:0;margin-top:2px}.summary-missing h4{margin-bottom:10px}#summaryCount{font-weight:600}
+
+@media print {
+  html, body, .source-table td, .badge, .warning, .legend span {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  .source-table .changed, .legend-changed { background-color: #fff100 !important; }
+  .source-table .added, .legend-added { background-color: #d9f1da !important; }
+  .source-table .removed, .legend-removed { background-color: #f9d7dc !important; }
+  .print-hint { display: none; }
+}
