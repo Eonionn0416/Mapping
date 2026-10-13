@@ -7,10 +7,10 @@
     const result = [{key: 'metadata', title: '문서 기본 정보', rows: [], header: null}];
     const counts = {};
     for (const row of rows) {
-      const entry = Object.entries(row.cells).find(([,v]) => /^\s*\d+\s*\[[^\]]+\]\s*=/.test(text(v)));
+      const entry = Object.entries(row.cells).find(([,v]) => /^\s*[A-Z]*\d+\s*\[[^\]]+\]\s*=/i.test(text(v)));
       if (entry) {
-        const m = text(entry[1]).match(/^\s*(\d+)\s*\[([^\]]+)\]/);
-        const base = m[1] + '|' + m[2].trim().toUpperCase();
+        const m = text(entry[1]).match(/^\s*([A-Z]*\d+)\s*\[([^\]]+)\]/i);
+        const base = m[1].toUpperCase() + '|' + m[2].trim().toUpperCase();
         counts[base] = (counts[base] || 0) + 1;
         result.push({key: base + '|' + counts[base], title: text(entry[1]), header: row, rows: []});
       } else result[result.length - 1].rows.push(row);
