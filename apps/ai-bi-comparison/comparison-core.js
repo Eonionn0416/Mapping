@@ -3,19 +3,50 @@
   const text = v => v == null ? '' : String(v).replace(/\r\n?/g, '\n');
   const norm = (v, options = {}) => options.ignoreWhitespace ? text(v).replace(/\s+/g, ' ').trim() : text(v);
   const label = v => text(v).replace(/^\s*\d+\s*[.)]\s*/, '').trim().toLowerCase();
-  function sections(rows) {
+  function templatePattern(template) {
+    if(!template)return null;
+    if(!template.includes('{name}')||!(/\{(?:code|abbr)\}/.test(template)))throw Error('공정 형식에는 {name}과 {code} 또는 {abbr}를 넣어 주세요. 예: {code} [{abbr}] = {name}');
+    const tokens=[];const parts=template.split(/(\{code\}|\{abbr\}|\{name\})/g);
+    const pattern=parts.map(p=>{const token=p.match(/^\{(code|abbr|name)\}$/)?.[1];if(token){if(tokens.includes(token))throw Error('공정 형식의 각 항목은 한 번씩만 사용해 주세요.');tokens.push(token);return token==='code'?'([A-Z]*\\d+[A-Z]?)':'(.+?)';}return p.replace(/[.*+?^${}()|[\]\\]/g,'\\$&').replace(/\s+/g,'\\s*');}).join('');
+    return {regex:new RegExp('^\\s*'+pattern+'\\s*$','i'),tokens};
+  }
+  function processHeader(value,custom) {
+    const s=text(value).normalize('NFKC').trim();let m;
+    if(custom){m=s.match(custom.regex);if(!m)return null;return Object.fromEntries(custom.tokens.map((t,i)=>[t,m[i+1].trim()]));}
+    m=s.match(/^(?:(?:AI|BI)\s+)?([A-Z]*\d+[A-Z]?)\s*\[([^\]]+)\]\s*(?:=|:|[-–—])\s*(\S.*)$/i);
+    if(m)return {code:m[1],abbr:m[2],name:m[3]};
+    m=s.match(/^(?:(?:AI|BI)\s+)?([A-Z]*\d{3,}[A-Z]?)\s*(?:=|:)\s*(\S.*)$/i);
+    return m?{code:m[1],abbr:'',name:m[2]}:null;
+  }
+  function sections(rows,options={}) {
     const result = [{key: 'metadata', title: '문서 기본 정보', rows: [], header: null}];
-    const counts = {};
+    const counts = {},custom=templatePattern(options.processTemplate);
     for (const row of rows) {
-      const entry = Object.entries(row.cells).find(([,v]) => /^\s*[A-Z]*\d+\s*\[[^\]]+\]\s*=/i.test(text(v)));
-      if (entry) {
-        const m = text(entry[1]).match(/^\s*([A-Z]*\d+)\s*\[([^\]]+)\]/i);
-        const base = m[1].toUpperCase() + '|' + m[2].trim().toUpperCase();
+      const values=Object.values(row.cells).filter(v=>text(v).trim());
+      let title=values.find(v=>processHeader(v,custom));
+      if(!title&&values.length>1&&values.length<=4&&processHeader(values.join(' '),custom))title=values.join(' ');
+      const parsed=title?processHeader(title,custom):null;
+      if (parsed) {
+        const code=(parsed.code||'').trim().toUpperCase(),abbr=(parsed.abbr||'').trim().toUpperCase(),name=parsed.name.trim();
+        const base = code + '|' + abbr;
         counts[base] = (counts[base] || 0) + 1;
-        result.push({key: base + '|' + counts[base], title: text(entry[1]), header: row, rows: []});
+        result.push({key: base + '|' + counts[base],code,abbr,name,title:text(title),header:row,rows:[]});
       } else result[result.length - 1].rows.push(row);
     }
     return result;
+  }
+  function matchProcesses(a,b,warnings,sheet){
+    const left=new Set(a.filter(s=>s.header)),right=new Set(b.filter(s=>s.header));
+    // Pair only reciprocal unique identifiers. Never resolve duplicates by row order.
+    for(const by of [s=>s.code&&s.abbr?s.code+'|'+s.abbr:'',s=>s.code,s=>s.abbr,s=>s.name.toUpperCase().replace(/\s+/g,' ')]){
+      for(const old of [...left]){const id=by(old);if(!id)continue;const matches=[...right].filter(s=>by(s)===id);if(matches.length!==1||[...left].filter(s=>by(s)===id).length!==1)continue;
+        const rev=matches[0];rev.key=old.key;left.delete(old);right.delete(rev);
+      }
+    }
+    for(const s of left)s.key='before:'+s.key;
+    for(const s of right)s.key='after:'+s.key;
+    for(const s of [...left,...right])if([...a,...b].filter(t=>t.header&&t.code===s.code&&t.abbr===s.abbr).length>2)s.review=true;
+    if([...left,...right].some(s=>s.review))warnings.push(`${sheet}: 반복 공정을 하나로 특정할 수 없어 자동 연결하지 않았습니다. 추가·삭제 표시와 원본을 확인해 주세요.`);
   }
   function similarity(a,b,options) {
     const cols = [...new Set([...Object.keys(a.cells), ...Object.keys(b.cells)])];
@@ -74,6 +105,17 @@
   }
   function compare(before,after,options={}) {
     const changes=[], warnings=[];
+    // Match an unambiguous renamed revision tab by its document number, not position.
+    const identity=rows=>{const ids=documentInfo({sheet:rows}).ai.map(x=>{const id=x.value.toUpperCase().trim();return /(?:^|[-_\s])REV[.\s_-]*\d+/i.test(id)?id.replace(/(?:[-_\s])REV[.\s_-]*\d+.*$/i,''):id.split('-').length>=3?id.replace(/-\d{1,4}(?=\([^)]*\)$|$)/,''):id;});return [...new Set(ids.filter(Boolean))].sort().join('|');};
+    const originalAfter=after,renamed={};after={...after};
+    const missingBefore=Object.keys(before).filter(n=>!originalAfter[n]);
+    const missingAfter=Object.keys(originalAfter).filter(n=>!before[n]);
+    for(const name of missingBefore){const id=identity(before[name]);if(!id)continue;
+      const matches=missingAfter.filter(n=>identity(originalAfter[n])===id);
+      if(matches.length!==1||missingBefore.filter(n=>identity(before[n])===id).length!==1)continue;
+      const other=matches[0];after[name]=originalAfter[other];delete after[other];renamed[name]=other;
+      warnings.push(`시트 이름 변경: ${name} → ${other}. 동일 문서 번호의 개정본으로 비교합니다.`);
+    }
     const validation=validate(before,after);
     warnings.push(...validation.warnings);
     let sectionKey='';const groups=[];
@@ -82,9 +124,9 @@
     const sectionText=s=>[s.header,...s.rows].filter(Boolean).map(rowText).join('\n');
     for(const sheet of new Set([...Object.keys(before),...Object.keys(after)])) {
       if(!before[sheet]||!after[sheet]){sectionKey='whole-sheet';emit(before[sheet]?'삭제':'추가',sheet,'시트','전체 시트',before[sheet]?before[sheet].map(rowText).join('\n'):'',after[sheet]?after[sheet].map(rowText).join('\n'):'');groups.push({key:sectionKey,sheet,process:'전체 시트',before:before[sheet]?{rows:before[sheet]}:null,after:after[sheet]?{rows:after[sheet]}:null});continue;}
-      const a=sections(before[sheet]),b=sections(after[sheet]);
-      if(a.length===1 || b.length===1)warnings.push(`${sheet}: 공정 제목을 인식하지 못한 파일은 기본 정보의 행/셀 비교를 사용합니다.`);
-      for(const list of [a,b]) if(list.some(s=>s.key!=='metadata'&&Number(s.key.split('|').pop())>1))warnings.push(`${sheet}: 같은 공정 코드가 반복됩니다. 등장 순서로 연결했으므로 해당 공정을 확인해 주세요.`);
+      const a=sections(before[sheet],options),b=sections(after[sheet],options);
+      if(a.length===1 || b.length===1){warnings.push(`${sheet}: 공정 제목 인식 부족 (원본 ${a.length-1}개 / 개정 ${b.length-1}개). 행/셀 비교 결과입니다. 공정 제목 형식을 지정한 뒤 다시 비교해 주세요.`);if(a.length===1)a[0].title='공정 미분류';if(b.length===1)b[0].title='공정 미분류';}
+      matchProcesses(a,b,warnings,sheet);
       const am=new Map(a.map(s=>[s.key,s])),bm=new Map(b.map(s=>[s.key,s]));
       const commonA=a.filter(s=>s.key!=='metadata'&&bm.has(s.key)).map(s=>s.key);
       const commonB=b.filter(s=>s.key!=='metadata'&&am.has(s.key)).map(s=>s.key);
@@ -115,8 +157,9 @@
         }
       }
     }
-    const changedGroups=groups.map(g=>({...g,changes:changes.filter(c=>c.sheet===g.sheet&&c.sectionKey===g.key)})).filter(g=>g.changes.length);
-    return {changes,groups:changedGroups,warnings:[...new Set(warnings)],validation};
+    const allGroups=groups.map(g=>({...g,afterSheet:renamed[g.sheet]||g.sheet,changes:changes.filter(c=>c.sheet===g.sheet&&c.sectionKey===g.key)}));
+    const processSummary=allGroups.filter(g=>g.key!=='process-order').map(g=>({sheet:g.sheet,afterSheet:g.afterSheet,key:g.key,before:g.before?.title||'',after:g.after?.title||'',state:g.before?.review||g.after?.review?'연결 확인':!g.before?'추가':!g.after?'삭제':g.changes.length?'변경':'동일',count:g.changes.length}));
+    return {changes,groups:allGroups.filter(g=>g.changes.length),processSummary,warnings:[...new Set(warnings)],validation};
   }
   function summaryLine(change) {
     const c=change;
@@ -133,6 +176,6 @@
       return !(/^\s*\d+\s*[.)]/.test(v)&&group.changes.some(other=>other!==c&&other.type===c.type&&other.item===v));
     }).map(c=>({text:summaryLine(c),type:c.type,oldCell:c.oldCell,newCell:c.newCell}));
   }
-  root.AIBIComparison={compare,sections,align,documentInfo,validate,summaryLine,summarize};
+  root.AIBIComparison={compare,sections,processHeader,templatePattern,align,documentInfo,validate,summaryLine,summarize};
   if(typeof module!=='undefined')module.exports=root.AIBIComparison;
 })(typeof globalThis!=='undefined'?globalThis:this);

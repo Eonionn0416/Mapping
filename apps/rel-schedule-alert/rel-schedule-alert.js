@@ -1,4 +1,4 @@
-import { readPlanWorkbook, upgradeWorkbook, serialDate, dateSerial, seoulToday } from "./rel-workbook.js?v=30";
+import { readPlanWorkbook, upgradeWorkbook, serialDate, dateSerial, seoulToday } from "./rel-workbook.js?v=32";
 import { fileCache } from "./rel-file-cache.js";
 /**
  * REL Schedule Alert

@@ -72,6 +72,8 @@ export async function readPlanWorkbook(buffer,fileName){
       report.row=c.r;report.dueCell=anchor(c.r,cols.duedate);report.delayCell=cols.delay?anchor(c.r,cols.delay):'';
       report.sentCell=cols.sendtocust?anchor(c.r,cols.sendtocust):'';report.approvalCell=cols.approval?anchor(c.r,cols.approval):'';
       const dc=cells.get(report.dueCell);if(dc?.f){const refs=[...new Set((dc.f.match(/\$?[A-Z]+\$?\d+/g)||[]).map(a=>a.replace(/\$/g,'')))].filter(a=>point(a).r>header.r);if(refs.length){report.refs=refs;report.issue='';report.extra=/MAX\([^)]*\)\s*\+\s*7/i.test(dc.f)?7:0;}}
+      // An explicit source N/A overrides every calculated customer schedule.
+      if(/^n\s*\/\s*a$/i.test(text(dc?.v))){report.issue='N/A';report.refs=[];report.sourceNA=true;}
       report.sent=cells.get(report.sentCell)?.v??'';report.approval=cells.get(report.approvalCell)?.v??'';
       return true;
     });

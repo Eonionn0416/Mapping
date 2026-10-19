@@ -1,1 +1,1 @@
-v31 - Fix alert modal two-column layout and narrow-screen stacking (2026-10-19)
+v32 - Report N/A preservation, pattern-based AI/BI comparison, dynamic NPI customers (2026-10-19)

@@ -19,5 +19,21 @@
   return {customer,purpose,records,warnings,notes:nonTable.join('\n'),rows};
  }
  function summarize(sheets){const groups=[];for(const sheet of sheets){const lots=new Map();for(const r of sheet.records){const k=r.lotType+'|'+r.lot;if(!lots.has(k))lots.set(k,{...r,sources:[],notes:[]});const l=lots.get(k);for(const f of ['device','package','lead','status'])if(r[f])l[f]=r[f];if(r.qty!==null)l.qty=r.qty;l.sources.push(r);l.notes.push(...r.notes);}groups.push({...sheet,lots:[...lots.values()]});}return groups;}
- const api={parse,summarize};root.NpiCore=api;if(typeof module!=='undefined')module.exports=api;
+ const customerCode=v=>text(v).toUpperCase().replace(/\s+/g,' ');
+ function inferCustomer(sheetRows,fileName){
+  const codes=new Set(),labels=new Set(['고객','고객코드','고객명','customer','customercode','customername','custcode']);
+  const valid=v=>{const s=customerCode(v);return s&&s.length<=60&&!/^(N\/?A|NONE|NULL|-)$/.test(s)&&!labels.has(key(s))&&/^[\p{L}\p{N}][\p{L}\p{N} ._&()\/-]*$/u.test(s);};
+  for(const rows of sheetRows)for(let r=0;r<rows.length;r++)for(let c=0;c<rows[r].length;c++){
+   if(!labels.has(key(rows[r][c])))continue;
+   const table=rows[r].some(v=>priorities.includes(key(v)));
+   if(table){for(let i=r+1;i<rows.length;i++){if(rows[i].some(v=>priorities.includes(key(v)))||!text(rows[i][c]))break;if(valid(rows[i][c]))codes.add(customerCode(rows[i][c]));}}
+   else {const right=rows[r].slice(c+1).find(v=>text(v));const below=rows[r+1]?.[c];if(valid(right))codes.add(customerCode(right));else if(valid(below))codes.add(customerCode(below));}
+  }
+  if(codes.size===1)return {code:[...codes][0],source:'Customer field'};
+  if(codes.size>1)throw Error('Multiple customer codes found: '+[...codes].join(', ')+'. Import one customer per workbook.');
+  const stem=text(fileName).replace(/\.(xlsx|xlsm|xls)$/i,'');
+  const candidate=stem.replace(/\bNPI\b.*$/i,'').replace(/[_-]+$/,'').trim();
+  return {code:valid(candidate)&&!/^\d+$/.test(candidate)?customerCode(candidate):'',source:'File name'};
+ }
+ const api={parse,summarize,inferCustomer,customerCode};root.NpiCore=api;if(typeof module!=='undefined')module.exports=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

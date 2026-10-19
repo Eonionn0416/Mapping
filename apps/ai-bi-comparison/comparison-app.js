@@ -30,6 +30,8 @@ async function setFiles(kind,files){
 $('baseFile').addEventListener('change',e=>setFiles('base',e.target.files));
 $('revFiles').addEventListener('change',e=>setFiles('rev',e.target.files));
 $('whitespace').addEventListener('change',invalidate);
+try{$('processTemplate').value=localStorage.getItem('ai-bi-process-template')||'';}catch(e){}
+$('processTemplate').addEventListener('input',()=>{invalidate();try{localStorage.setItem('ai-bi-process-template',$('processTemplate').value.trim());}catch(e){}});
 for(const [id,kind] of [['baseDrop','base'],['revDrop','rev']]){const el=$(id);el.addEventListener('dragover',e=>{e.preventDefault();el.classList.add('drag');});el.addEventListener('dragleave',()=>el.classList.remove('drag'));el.addEventListener('drop',e=>{e.preventDefault();el.classList.remove('drag');if(kind==='base'&&e.dataTransfer.files.length!==1){$('status').textContent='원본 파일은 하나만 놓아 주세요.';return;}setFiles(kind,e.dataTransfer.files);});}
 async function read(file){
  if(!/\.(xlsx|xlsm|xls)$/i.test(file.name))throw new Error(`${file.name}: Excel 파일을 선택해 주세요.`);
@@ -48,18 +50,20 @@ async function read(file){
 }
 $('compare').addEventListener('click',async()=>{
  if(!base||!revisions.length){$('status').textContent='원본 하나와 개정 파일을 선택해 주세요.';return;}
- if(typeof XLSX==='undefined'){$('status').textContent='Excel 읽기 라이브러리를 불러오지 못했습니다. 인터넷 연결 후 새로고침해 주세요.';return;}
- const token=++generation,source=base,files=[...revisions],options={ignoreWhitespace:$('whitespace').checked};all=[];groups=[];summaryText='';$('results').hidden=true;$('compare').disabled=true;$('status').textContent='파일을 읽고 비교하고 있습니다…';
- try{const original=await read(source),notices=[];const results=[],cards=[],completed=[];let compared=0,blocked=0;
+ if(typeof XLSX==='undefined'){$('status').textContent='Excel 읽기 파일을 불러오지 못했습니다. shared/vendor 폴더가 함께 설치되었는지 확인해 주세요.';return;}
+ const token=++generation,source=base,files=[...revisions],options={ignoreWhitespace:$('whitespace').checked,processTemplate:$('processTemplate').value.trim()};all=[];groups=[];summaryText='';$('results').hidden=true;$('compare').disabled=true;$('status').textContent='파일을 읽고 비교하고 있습니다…';
+ try{AIBIComparison.templatePattern(options.processTemplate);const original=await read(source),notices=[];const results=[],cards=[],completed=[],processSummary=[];let compared=0,blocked=0;
   for(const file of files){
    try{const revised=await read(file);await new Promise(resolve=>setTimeout(resolve,0));const result=AIBIComparison.compare(original,revised,options);
     notices.push(...result.warnings.map(w=>({message:`${file.name}: ${w}`,file:file.name,error:false,missingCp:w.includes('CP/BL No 누락')})));
-    compared++;completed.push(file.name);results.push(...result.changes.map(c=>({...c,file:file.name,original:source.name})));
-    cards.push(...result.groups.map(g=>({...g,file:file.name,original:source.name,beforeLayout:original[g.sheet]?.layout,afterLayout:revised[g.sheet]?.layout})));
+    processSummary.push(...result.processSummary.map(p=>({...p,file:file.name})));compared++;completed.push(file.name);results.push(...result.changes.map(c=>({...c,file:file.name,original:source.name})));
+    cards.push(...result.groups.map(g=>({...g,file:file.name,original:source.name,beforeLayout:original[g.sheet]?.layout,afterLayout:revised[g.afterSheet||g.sheet]?.layout})));
    }catch(e){blocked++;notices.push({message:`${file.name}: 비교 실패 — ${e.message}`,error:true});}
   }
-  if(token!==generation)return;all=results;groups=cards;limit=20;reportMeta={original:source.name,completed,failed:blocked,warnings:notices.map(n=>n.message),ignoreWhitespace:options.ignoreWhitespace,time:new Date().toLocaleString('ko-KR',{timeZone:'Asia/Seoul'})};
+  if(token!==generation)return;all=results;groups=cards;limit=20;reportMeta={original:source.name,completed,processSummary,processTemplate:options.processTemplate,failed:blocked,warnings:notices.map(n=>n.message),ignoreWhitespace:options.ignoreWhitespace,time:new Date().toLocaleString('ko-KR',{timeZone:'Asia/Seoul'})};
   $('fileFilter').innerHTML='<option value="">전체</option>'+files.map(f=>`<option>${escapeHTML(f.name)}</option>`).join('');$('typeFilter').value='';$('search').value='';
+  $('processOverview').innerHTML='<div class="source-table-wrap"><table><thead><tr><th>개정 파일 / 시트</th><th>원본 공정</th><th>개정 공정</th><th>결과</th><th>변경 수</th></tr></thead><tbody>'+processSummary.map(p=>`<tr><td>${escapeHTML(p.file)} · ${escapeHTML(p.sheet)}${p.afterSheet!==p.sheet?' → '+escapeHTML(p.afterSheet):''}</td><td>${escapeHTML(p.before||'—')}</td><td>${escapeHTML(p.after||'—')}</td><td>${escapeHTML(p.state)}</td><td>${p.count}</td></tr>`).join('')+'</tbody></table></div>';
+  $('processFilter').innerHTML='<option value="">전체 공정</option>'+[...new Set(groups.map(g=>g.process))].map(p=>`<option value="${escapeHTML(p)}">${escapeHTML(p)}</option>`).join('');$('processFilter').value='';
   $('warnings').innerHTML=notices.map(w=>`<p class="warning ${w.missingCp?'missing-cp':w.error?'error':''}" role="${w.error||w.missingCp?'alert':'status'}">${escapeHTML(w.message)}</p>`).join('');
   $('metrics').innerHTML=['전체','추가','변경','삭제','순서 변경'].map(t=>`<div class="metric">${t}<strong>${t==='전체'?all.length:all.filter(c=>c.type===t).length}</strong></div>`).join('');
   $('export').disabled=!compared;$('reportExport').disabled=!compared;
@@ -99,7 +103,7 @@ function blockTable(group,side){
 }
 function render(){
  const q=$('search').value.toLowerCase(),f=$('fileFilter').value,t=$('typeFilter').value;
- const filtered=groups.filter(g=>(!f||g.file===f)&&(!t||g.changes.some(c=>c.type===t))&&(!q||[g.file,g.sheet,g.process,...g.changes.flatMap(c=>[c.item,c.oldValue,c.newValue])].join(' ').toLowerCase().includes(q)));
+ const filtered=groups.filter(g=>(!$('processFilter').value||g.process===$('processFilter').value)&&(!f||g.file===f)&&(!t||g.changes.some(c=>c.type===t))&&(!q||[g.file,g.sheet,g.process,...g.changes.flatMap(c=>[c.item,c.oldValue,c.newValue])].join(' ').toLowerCase().includes(q)));
  const summaries=filtered.map(g=>({group:g,items:AIBIComparison.summarize(g).filter(c=>!t||c.type===t)})).filter(s=>s.items.length);
  const lines=summaries.flatMap(s=>[`[${s.group.file} / ${s.group.sheet}]`,...s.items.map(c=>c.text),'']);
  summaryText=lines.join('\n').trim();
@@ -110,7 +114,7 @@ function render(){
  $('rows').innerHTML=filtered.slice(0,limit).map(g=>`<article class="gap-card"><div class="gap-heading"><div><h3>${escapeHTML(g.process)}</h3><small>${escapeHTML(g.file)} · ${escapeHTML(g.sheet)}</small></div><div>${[...new Set(g.changes.map(c=>c.type))].map(badge).join(' ')} <small>${g.changes.length}건</small></div></div><div class="before-after"><section><div class="side-heading">Before <small>${escapeHTML(g.original)}</small></div>${blockTable(g,'before')}</section><section><div class="side-heading">After <small>${escapeHTML(g.file)}</small></div>${blockTable(g,'after')}</section></div><details class="cell-details"><summary>변경 항목 및 셀 위치 (${g.changes.length}건)</summary><ul>${g.changes.map(c=>`<li>${badge(c.type)} ${escapeHTML(c.item)} · ${escapeHTML(c.oldCell||'—')} → ${escapeHTML(c.newCell||'—')}</li>`).join('')}</ul></details></article>`).join('')||'<p class="empty">표시할 차이가 없습니다. 누락 및 파일 읽기 안내는 위에서 확인하세요.</p>';
  $('more').hidden=filtered.length<=limit;
 }
-for(const id of ['fileFilter','typeFilter','search'])$(id).addEventListener('input',()=>{limit=20;render();});$('more').addEventListener('click',()=>{limit+=20;render();});
+for(const id of ['fileFilter','processFilter','typeFilter','search'])$(id).addEventListener('input',()=>{limit=20;render();});$('more').addEventListener('click',()=>{limit+=20;render();});
 $('reset').addEventListener('click',()=>{invalidate();base=null;revisions=[];$('baseFile').value='';$('revFiles').value='';$('baseName').textContent=$('revNames').textContent='선택한 파일 없음';$('status').textContent='원본과 개정 파일을 선택해 주세요.';});
 $('summaryExport').addEventListener('click',()=>{
  if(!summaryText)return;
