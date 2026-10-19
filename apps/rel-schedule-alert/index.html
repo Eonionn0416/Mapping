@@ -6,11 +6,13 @@
   <title>REL Schedule Alert</title>
   <link rel="icon" href="data:," />
 
+  <script src="vendor/jszip.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 
   <link rel="stylesheet" href="rel-schedule-alert.css?v=3" />
   <link rel="stylesheet" href="../../shared/qa-theme.css?v=23" />
+  <link rel="stylesheet" href="rel-dashboard.css?v=31" />
 </head>
 <body>
   <a class="qa-back-link" href="../../index.html">← QA Page</a>
@@ -24,7 +26,7 @@
       <header>
         <span class="bell">🔔</span>
         <div>
-          <h2 id="alertTitle">Reliability Schedule Alert</h2>
+          <h2 id="alertTitle">오늘 확인할 일정</h2>
           <p id="alertSubtitle">Date out 기준 D-2 예고 및 지연 항목입니다.</p>
         </div>
       </header>
@@ -41,32 +43,13 @@
 
   <main class="page">
     <section class="hero">
-      <div>
-        <p class="eyebrow">Reliability test plan tracker</p>
-        <h1>REL Schedule Alert</h1>
-        <p class="subtitle">
-        </p>
-        <div class="legend">
-          <span><i style="background:#be123c"></i>Delay session (Date out 경과, Delay +N) · Toast+모달 대상</span>
-          <span><i style="background:#1d4ed8"></i>Rel team 수령확인 / to Rel · to FT 전달확인 필요 · 표에서 파란색 강조(전달확인은 모달에도 표시)</span>
-          <span><i style="background:#c2410c"></i>Pre alarm (D-Day ~ D-2, 주말이면 앞당김) · 표에서만</span>
-          <span><i style="background:#a16207"></i>On going (D-2 이전)</span>
-          <span><i style="background:#1d4ed8"></i>Planned</span>
-          <span><i style="background:#047857"></i>Done</span>
-        </div>
+      <div><p class="eyebrow">QUALITY ASSURANCE / RELIABILITY</p><h1>REL Schedule</h1>
+        <p class="subtitle">고객 Report와 주요 readout 일정을 한곳에서 관리합니다.</p>
+        <nav class="section-nav"><a href="#reports">Report 발송</a><a href="#summary">Summary 일정</a><a href="#delays">지연 보기</a><a href="#files">Excel 파일</a></nav>
       </div>
-      <div class="hero-card">
-        <span id="firebaseStatus" class="status warning">Firebase connecting...</span>
-        <p>오늘 (기준일)</p>
-        <strong id="todayLabel">-</strong>
-        <p>알림 대상</p>
-        <strong>Status = On going 구간<br>(Date out 지나면 다음 단계로 자동 전환)</strong>
-        <p>중복 기준</p>
-        <strong>Sheet + Criteria + Rel item + Condition + 순번</strong>
-        <small id="authStatus">Auth 대기 중</small>
-      </div>
+      <div class="hero-card"><span id="firebaseStatus" class="status warning">연결 중…</span><p>오늘</p><strong id="todayLabel">—</strong><small id="authStatus">Auth 대기 중</small></div>
     </section>
-
+    <p id="actionNotice" class="action-notice" role="status" hidden></p>
     <section id="alarmBar" class="alarm-bar quiet">
       <b id="alarmBarText">알림 대상 항목이 없습니다.</b>
       <span class="push">
@@ -75,39 +58,15 @@
       </span>
     </section>
 
-    <section class="grid five">
-      <article class="metric-card alarm"><p>Delay session</p><strong id="mDelay">0</strong></article>
-      <article class="metric-card due"><p>Pre alarm</p><strong id="mPrealarm">0</strong></article>
-      <article class="metric-card soon"><p>On going (D-2 이전)</p><strong id="mWatch">0</strong></article>
-      <article class="metric-card"><p>Planned</p><strong id="mPlanned">0</strong></article>
-      <article class="metric-card done"><p>Done</p><strong id="mDone">0</strong></article>
-      <article class="metric-card recv"><p>Rel team 수령확인 필요</p><strong id="mRecv">0</strong></article>
-      <article class="metric-card recv"><p>to Rel / to FT 전달확인 필요</p><strong id="mHandoff">0</strong></article>
+    <section class="panel" id="reports">
+      <div class="panel-header"><div><p class="section-kicker">01 / CUSTOMER REPORTS</p><h2>Report 발송 관리 <span id="reportCount" class="count-label"></span></h2><p>발송일과 승인을 저장하면 다운로드 Excel에도 반영됩니다. Interim 발송은 주황색, Full 발송은 초록색 탭으로 표시합니다.</p></div></div>
+      <div class="table-wrap report-wrap"><table><thead><tr><th>Plan</th><th>Report</th><th>Due date</th><th>Delay</th><th>Send to Cust</th><th>Approval</th><th></th></tr></thead><tbody id="reportBody"></tbody></table></div>
     </section>
-
-    <section class="grid six">
-      <article class="metric-card"><p>Total Items</p><strong id="mTotal">0</strong></article>
-      <article class="metric-card"><p>Plans (Sheets)</p><strong id="mPlans">0</strong></article>
-      <article class="metric-card"><p>Firestore Rows</p><strong id="mFirestore">0</strong></article>
-      <article class="metric-card"><p>New (직전 Upload)</p><strong id="mNew">0</strong></article>
-      <article class="metric-card"><p>Updated (직전 Upload)</p><strong id="mUpdated">0</strong></article>
-      <article class="metric-card"><p>변경 없음</p><strong id="mSame">0</strong></article>
-      <article class="metric-card"><p>삭제됨 (Sheet 내 제거, 직전 Upload)</p><strong id="mRemoved">0</strong></article>
-    </section>
-
-    <section class="panel">
+    <section class="panel" id="summary">
       <div class="panel-header">
         <div>
-          <h2>Criteria별 Schedule &amp; Alert 현황</h2>
-          <p>
-            각 Sheet(Plan)의 Criteria &rarr; Rel item 순서입니다. Status에 <b>On going</b>이 적힌 항목만 알림 대상이고,
-            Status가 비어 있는 행은 알림에서 제외됩니다. Status가 세로 병합된 구간(예: UHAST96hrs + SAT)은
-            <b>Date out이 아직 지나지 않은 첫 단계</b>가 현재 진행 항목이며, Today가 그 Date out을 넘어서면
-            <b>자동으로 다음 단계(SAT)의 Date in / Date out으로 전환</b>됩니다.
-            Delay 컬럼은 <b>+N</b>이면 N일 지연, <b>(N)</b>이면 N일 빠름입니다.
-            Delay session에 들어가면 Delay 컬럼에 경과 일수가 <b>+N</b>으로 누적됩니다.
-            <b>Done</b>에 체크하면 해당 항목의 알림이 멈추고 Firestore에 상태가 저장됩니다.
-          </p>
+          <p class="section-kicker">02 / READOUT CHECKPOINTS</p><h2>Summary 일정 <span id="summaryCount" class="count-label"></span></h2>
+          <p>노란 Shipping 표시와 실제 FT readout을 기준으로 묶었습니다. 지연 항목의 ‘오늘로 변경’을 누르면 Delay와 후속 일정이 함께 갱신됩니다.</p>
         </div>
         <button id="exportBtn" type="button" class="secondary">Export Alert Report</button>
       </div>
@@ -131,21 +90,11 @@
         </label>
       </div>
 
+      <label class="prealert-toggle"><input type="checkbox" id="showPrealerts" /> Pre-alert 보기 (D-2 ~ D-1) · D-Day/지연은 항상 표시</label>
       <div class="table-wrap large">
         <table>
           <thead>
-            <tr>
-              <th>Done</th>
-              <th>Alert</th>
-              <th>D-Day</th>
-              <th>Plan</th>
-              <th>Rel.#</th>
-              <th>Criteria</th>
-              <th>Rel item</th>
-              <th>Condition</th>
-              <th>Date in</th>
-              <th>Date out</th>
-            </tr>
+            <tr><th>Done</th><th>Plan</th><th>Criteria</th><th>Rel item</th><th>Due date</th><th>Status</th><th>Delay</th><th>일정 변경</th></tr>
           </thead>
           <tbody id="scheduleBody">
             <tr><td colspan="10" class="empty">Reliability test plan Excel을 Upload 해주세요.</td></tr>
@@ -154,12 +103,11 @@
       </div>
     </section>
 
-    <section class="panel">
+    <section class="panel" id="delays">
       <div class="panel-header">
         <div>
-          <h2>Plan Timeline (Date in → Date out)</h2>
-          <p>선택한 Plan의 Criteria &rarr; Rel item 순서로 각 단계의 일정 구간을 표시합니다. 빨간 점선이 오늘이고,
-            Delay / Pre alarm 항목은 막대 끝에 남은 일수를 같이 적습니다.</p>
+          <p class="section-kicker">03 / DELAY FOCUS</p><h2>D-Day · 지연 주요 일정</h2>
+          <p>선택한 Plan의 D-Day와 지연된 알림 대상 Summary 항목을 보여줍니다. 지연이 큰 순서로 표시하며 오늘 마감 항목도 빠짐없이 포함합니다.</p>
         </div>
       </div>
       <div class="legend" id="ganttLegend"></div>
@@ -168,10 +116,10 @@
       </div>
     </section>
 
-    <section class="panel">
+    <section class="panel" id="files">
       <div class="panel-header">
         <div>
-          <h2>Reliability Test Plan Upload</h2>
+          <p class="section-kicker">04 / EXCEL WORKBOOKS</p><h2>Excel 업로드</h2>
           <p>
             <b>Cirteria / Rel item / Date in / Duration / Date out</b> header가 있는 Sheet와
             <b>Test item / Duration / Date in / Date out</b> 형식(Tianchi 계열) Sheet를 모두 자동 인식합니다.
@@ -182,7 +130,7 @@
       </div>
 
       <div id="dropZone" class="drop-zone" role="button" tabindex="0">
-        <input id="excelFiles" type="file" accept=".xlsx,.xls,.xlsm" multiple />
+        <input id="excelFiles" type="file" accept=".xlsx,.xlsm" multiple />
         <div class="drop-icon">⬇</div>
         <span>Reliability test plan을 여기에 Drag &amp; Drop 하면 자동 Upload</span>
         <small>또는 이 영역을 클릭해서 파일 선택 · 여러 개 한 번에 가능</small>
@@ -200,8 +148,7 @@
       <div class="panel-header">
         <div>
           <h2>Uploaded Plan List</h2>
-          <p>Firestore <b>relScheduleRaw</b> collection 기준입니다. Download으로 업로드한 원본 Excel을 그대로 받아
-            수정한 뒤 다시 Drag&amp;Drop 하면 같은 이름의 파일은 최신 내용으로 자동 갱신됩니다.</p>
+          <p>Download Excel을 누르면 모든 일정 시트에 Report·Summary를 보완하고, 저장한 일정·발송 정보까지 반영합니다. 이전 파일에서 권한 오류가 나면 원본을 한 번 다시 업로드해 주세요.</p>
         </div>
         <div style="display:flex;gap:8px">
           <button id="reloadBtn" type="button" class="secondary">Firestore 새로고침</button>
@@ -230,6 +177,6 @@
     </section>
   </main>
 
-  <script type="module" src="rel-schedule-alert.js?v=3"></script>
+  <script type="module" src="rel-schedule-alert.js?v=30"></script>
 </body>
 </html>

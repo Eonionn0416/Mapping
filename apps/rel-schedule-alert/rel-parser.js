@@ -181,6 +181,8 @@ const EXACT_FIELDS = {
   outdate: "dateOut",
   delay: "delay",
   status: "status",
+  shipping: "remark",
+  shipment: "remark",
   failmode: "failMode",
   failuremode: "failMode"
 };
@@ -208,7 +210,7 @@ function mapHeaderRow(row) {
 }
 
 /** Date in + Date out 이 모두 있는 첫 행을 header 로 판단 */
-export function findHeader(rows, maxScan = 40) {
+export function findHeader(rows, maxScan = 500) {
   const limit = Math.min(rows.length, maxScan);
   for (let r = 0; r < limit; r++) {
     const row = rows[r] || [];

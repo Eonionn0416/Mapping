@@ -1,3 +1,5 @@
+import { readPlanWorkbook, upgradeWorkbook, serialDate, dateSerial, seoulToday } from "./rel-workbook.js?v=30";
+import { fileCache } from "./rel-file-cache.js";
 /**
  * REL Schedule Alert
  * - Reliability test plan Excel의 각 Sheet / Criteria / Rel item 일정을 Firestore에 누적
@@ -10,6 +12,7 @@ import {
   collection,
   doc,
   getDocs,
+  getDoc,
   setDoc,
   writeBatch,
   serverTimestamp
@@ -23,7 +26,8 @@ import {
   getStorage,
   ref as storageRef,
   uploadBytes,
-  getDownloadURL
+  getDownloadURL,
+  getBlob
 } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-storage.js";
 
 import {
@@ -48,7 +52,7 @@ import {
 /* ============================================================
    상수
    ============================================================ */
-const APP_VERSION = "v1-rel-schedule-alert";
+const APP_VERSION = "v30-preserve-layout-20261019";
 const RAW_COLLECTION = "relScheduleRaw";
 const STATUS_COLLECTION = "relScheduleStatus";
 const FILES_COLLECTION = "relScheduleFiles";   // 업로드한 원본 Excel 파일 다운로드 링크 메타데이터
@@ -85,7 +89,10 @@ let lastAlertSignature = "";
 let knownAlertKeys = new Set();
 let toastSnooze = new Map();      // dedupeKey -> timestamp
 let lastUploadDiff = { created: 0, updated: 0, unchanged: 0, removed: 0 };
-let today = todayIso();
+let today = seoulToday();
+let workbookModels = new Map();
+let reportStates = readLS("relScheduleAlert.reports", {});
+let scheduleChanges = readLS("relScheduleAlert.changes", []);
 let selectedTimelineKey = null;   // 표에서 클릭해 Plan Timeline을 갱신시킨 행(dedupeKey) — 선택 강조용
 let timelinePlan = null;          // 표 행 클릭으로 지정된 Plan Timeline용 Plan(Sheet) — Plan(Sheet) 필터(ui.planSelect)와 독립적으로 동작
 
@@ -308,30 +315,12 @@ async function readFileBuffer(file) {
   if (file.size === 0) throw new Error(`${file.name}: file size가 0 byte입니다. 원본을 다시 저장한 뒤 선택해주세요.`);
   log(`Reading ${file.name} / ${(file.size / 1024).toFixed(1)} KB / modified ${file.lastModified ? new Date(file.lastModified).toLocaleString() : "unknown"}`);
 
-  const failures = [];
-  const readers = [
-    { name: "file-arrayBuffer", fn: () => (file.arrayBuffer ? file.arrayBuffer() : Promise.reject(new Error("arrayBuffer unavailable"))) },
-    { name: "FileReader-arrayBuffer", fn: () => readFileWithFileReader(file) },
-    { name: "chunked-slice", fn: () => readFileByChunks(file, 16 * 1024) },
-    { name: "FileReader-dataURL", fn: () => readFileAsDataUrl(file) },
-    { name: "FileReader-binaryString", fn: () => readFileAsBinaryString(file) },
-    { name: "file-stream", fn: () => (file.stream ? new Response(file.stream()).arrayBuffer() : Promise.reject(new Error("stream unavailable"))) }
-  ];
-
-  for (const reader of readers) {
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      try {
-        const buffer = await reader.fn();
-        if (!isReadableZipBuffer(buffer)) throw new Error(`${reader.name} returned non-xlsx buffer`);
-        if (reader.name !== "file-arrayBuffer") log(`${file.name}: ${reader.name} reader success (bytes=${buffer.byteLength}).`);
-        return buffer;
-      } catch (error) {
-        failures.push(`${reader.name} ${attempt}/2 -> ${formatFileError(error)}`);
-        await wait(150 * attempt);
-      }
-    }
+  const failures=[];
+  for(const reader of [()=>file.arrayBuffer(),()=>readFileWithFileReader(file)]){
+   try{const buffer=await reader();if(!isReadableZipBuffer(buffer))throw new Error('NOT_XLSX');return buffer;}
+   catch(error){if(error.message==='NOT_XLSX')throw new Error('Excel XLSX 파일 형식이 아닙니다. Excel에서 XLSX로 다시 저장해주세요.');failures.push(formatFileError(error));}
   }
-  throw new Error(`${file.name}: 브라우저가 파일 원본을 읽지 못했습니다(NotReadableError 계열). Excel에서 해당 파일을 완전히 닫고, OneDrive/네트워크 폴더가 아닌 로컬 폴더(C:\\Temp 등)에 새 이름으로 저장한 뒤 다시 시도해주세요. 실패 내역=${failures.join(" | ")}`);
+  throw new Error('파일 내용 분석 전 브라우저의 원본 읽기가 거부되었습니다. 양식 오류가 아닙니다. Excel을 닫고 OneDrive 파일을 로컬 폴더에 복사한 뒤, 파일 선택 버튼으로 다시 선택해주세요. 같은 파일도 다시 선택할 수 있습니다. ('+failures.join(' / ')+')');
 }
 
 /**
@@ -363,43 +352,33 @@ function expandStatusMerges(sheet, statusCol, rowOffset, colOffset) {
 }
 
 async function parseExcelFile(file) {
-  const buffer = await readFileBuffer(file);
-  // cellDates:true 로 만든 Date는 브라우저 timezone의 역사적 offset(예: Asia/Seoul 1899 LMT +08:27:52) 때문에
-  // 하루가 밀릴 수 있어, Excel serial 값을 그대로 받아 직접 UTC 기준으로 변환합니다.
-  const workbook = XLSX.read(new Uint8Array(buffer), { type: "array", cellDates: false });
-  const date1904 = Boolean(workbook.Workbook && workbook.Workbook.WBProps && workbook.Workbook.WBProps.date1904);
-  const records = [];
-  const skipped = [];
-  workbook.SheetNames.forEach(sheetName => {
-    const sheet = workbook.Sheets[sheetName];
-    if (!sheet) return;
-    // sheet !ref 가 A1이 아닌 경우(예: A2:JB123) 실제 Excel 행/열 번호를 맞춰줍니다.
-    const refStart = String(sheet["!ref"] || "A1").split(":")[0];
-    const origin = XLSX.utils.decode_cell(refStart);
-    const rowOffset = Math.max(0, origin.r || 0);
-    const colOffset = Math.max(0, origin.c || 0);
-
-    const readRows = () => XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: null, blankrows: true });
-    let rows = readRows();
-    const header = findHeader(rows);
-    let statusBlocks = null;
-    if (header && header.map.status !== undefined) {
-      statusBlocks = expandStatusMerges(sheet, header.map.status, rowOffset, colOffset);
-      rows = readRows();
+  const buffer=await readFileBuffer(file);
+  const model=await readPlanWorkbook(buffer,file.name);
+  await cacheFile(file.name,buffer);
+  workbookModels.set(file.name,model);
+  const records=[],skipped=[];
+  for(const source of model.sheets){
+    if(!source.header||isTemplateSheet(source.name)){skipped.push(source.name);continue;}
+    const max=Math.max(...source.records.map(r=>r.rowNumber),source.header.r),rows=Array.from({length:max},()=>[]);
+    for(const c of source.cells.values())if(c.r<=max&&c.c<=40)rows[c.r-1][c.c-1]=c.v;
+    const statusBlocks=new Map();
+    for(const r of source.records){if(source.header.map.status)rows[r.rowNumber-1][source.header.map.status-1]=r.status;statusBlocks.set(r.rowNumber-1,r.statusRef||r.rowNumber);}
+    const parsed=parseSheetMatrix(source.name,rows,file.name,{rowOffset:0,statusBlocks,date1904:model.date1904});
+    for(const record of parsed.records){
+      const legacyKey=record.dedupeKey,customer=(file.name.match(/\b(MNT|MTK|BDR)\d*/i)||[])[1]?.toUpperCase()||file.name;
+      record.dedupeKey=makeDocId(customer+'::'+legacyKey);
+      if(!statusMap.has(record.dedupeKey)&&statusMap.has(legacyKey))statusMap.set(record.dedupeKey,statusMap.get(legacyKey));
+      const r=source.records.find(r=>r.rowNumber===record.rowNumber);
+      if(r)Object.assign(record,{dateIn:r.dateIn,dateOut:r.dateOut,status:r.status,dueRef:r.dueRef,statusRef:r.statusRef,delayRef:r.delayRef,summarySelected:source.summary.includes(r),summaryLabel:r.summaryLabel||r.relItem,delay:r.delay});
+      record.relNo=source.relNo||"";record.schemaVersion=APP_VERSION;records.push(record);
     }
-    const parsed = parseSheetMatrix(sheetName, rows, file.name, { rowOffset, statusBlocks, date1904 });
-    if (!parsed.header) { skipped.push(sheetName); return; }
-    parsed.records.forEach(record => {
-      record.schemaVersion = APP_VERSION;
-      records.push(record);
-    });
-  });
-  return { records, skipped, sheetCount: workbook.SheetNames.length };
+  }
+  return {records,skipped,sheetCount:model.sheets.length,buffer};
 }
 
 async function handleFiles(files) {
-  const list = Array.from(files || []).filter(f => /\.(xlsx|xlsm|xls)$/i.test(f.name));
-  if (!list.length) return;
+  const list = Array.from(files || []).filter(f => /\.(xlsx|xlsm)$/i.test(f.name));
+  if (!list.length) { setNotice('Excel에서 XLSX 형식으로 저장한 파일을 업로드해 주세요.',true); return; }
   selectedFiles = list;
   list.forEach(f => fileReadStatus.set(f.name, "읽는 중..."));
   renderSelectedFileList();
@@ -407,16 +386,21 @@ async function handleFiles(files) {
   let parsedAll = [];
   for (const file of list) {
     try {
-      const { records, skipped, sheetCount } = await parseExcelFile(file);
+      const { records, skipped, sheetCount, buffer } = await parseExcelFile(file);
       parsedAll = parsedAll.concat(records);
       fileReadStatus.set(file.name, `${records.length} items / ${sheetCount - skipped.length} sheets`);
       log(`${file.name}: ${records.length} items parsed (skipped sheets: ${skipped.join(", ") || "none"})`);
       // 다른 사람도 원본 파일을 내려받아 수정 후 재업로드할 수 있도록, 파싱에 성공한 원본
       // 파일 그대로를 Storage에 올려둡니다 (알림/파싱 로직과는 무관 — 실패해도 계속 진행).
-      uploadOriginalFile(file);
+      try{await uploadOriginalFile(file,buffer);}catch(error){
+        log(`${file.name}: 파일 읽기·일정 분석은 성공했지만 서버 파일 저장에 실패했습니다: ${error.message}`);
+        fileReadStatus.set(file.name,`${records.length} items · 로컬 저장 완료 / 서버 파일 저장 실패`);
+        setNotice(`${file.name}: 일정은 읽었습니다. 서버 파일 저장에 실패하여 다른 기기에서 다운로드하려면 재업로드가 필요합니다. ${error.message}`,true);
+      }
     } catch (error) {
       console.error(error);
-      fileReadStatus.set(file.name, `Read failed: ${error.message}`);
+      fileReadStatus.set(file.name, `업로드 실패: ${error.message}`);
+      setNotice(`${file.name}: ${error.message}`,true);
     }
     renderSelectedFileList();
   }
@@ -463,7 +447,8 @@ function renderSelectedFileList() {
 
 const COMPARE_FIELDS = [
   "criteria", "relItem", "condition", "assyLot", "ftLot", "qty",
-  "dateIn", "duration", "delay", "dateOut", "result", "status", "remark", "failMode"
+  "dateIn", "duration", "delay", "dateOut", "result", "status", "remark", "failMode",
+  "sourceFileName", "rowNumber", "dueRef", "statusRef", "delayRef", "summarySelected", "summaryLabel", "schemaVersion"
 ];
 
 /**
@@ -498,10 +483,11 @@ function diffRecords(incoming) {
  * @returns {Array} 이번 배치에서 사라진(더 이상 존재하지 않는) 기존 row 목록
  */
 function mergeRows(incoming) {
-  const incomingSheets = new Set(incoming.map(row => row.sheetName));
+  const scope=row=>((row.sourceFileName||'').match(/\b(MNT|MTK|BDR)\d*/i)||[])[1]?.toUpperCase()+'|'+row.sheetName;
+  const incomingSheets = new Set(incoming.map(scope));
   const incomingKeys = new Set(incoming.map(row => row.dedupeKey));
-  const removed = rawRows.filter(row => incomingSheets.has(row.sheetName) && !incomingKeys.has(row.dedupeKey));
-  const survivors = rawRows.filter(row => !incomingSheets.has(row.sheetName));
+  const removed = rawRows.filter(row => incomingSheets.has(scope(row)) && !incomingKeys.has(row.dedupeKey));
+  const survivors = rawRows.filter(row => !incomingSheets.has(scope(row)));
 
   const map = new Map(survivors.map(row => [row.dedupeKey, row]));
   incoming.forEach(row => map.set(row.dedupeKey, row));
@@ -572,25 +558,34 @@ function sanitizeDocId(name) {
  * 다시 첨부(재업로드)할 수 있게 합니다. 같은 파일명으로 다시 올리면 최신 버전으로 덮어씁니다.
  * (Firestore/전체 알림 로직과는 무관한 부가 기능이라, 실패해도 나머지 업로드 흐름을 막지 않습니다.)
  */
-async function uploadOriginalFile(file) {
-  if (!storage || !db || !currentUser) return;
-  try {
-    const path = `${FILES_STORAGE_PATH}/${sanitizeDocId(file.name)}`;
-    const fileRef = storageRef(storage, path);
-    await uploadBytes(fileRef, file, { contentType: file.type || "application/octet-stream" });
-    const downloadURL = await getDownloadURL(fileRef);
-    await setDoc(doc(db, FILES_COLLECTION, sanitizeDocId(file.name)), {
-      fileName: file.name,
-      downloadURL,
-      size: file.size || 0,
-      uploadedAt: serverTimestamp()
-    }, { merge: true });
-    sourceFileMap.set(file.name, { downloadURL, size: file.size || 0 });
-    renderPlanList();
-  } catch (error) {
-    console.error(error);
-    log(`원본 파일 업로드(다운로드용) 실패: ${file.name} — ${error.message} (Firebase Storage 설정을 확인해주세요)`);
+async function uploadOriginalFile(file, buffer) {
+  if (!buffer) throw new Error("파일 읽기 결과가 없습니다. 파일을 다시 선택해주세요.");
+  await cacheFile(file.name, buffer);
+  sourceFileMap.set(file.name, {local:true,size:file.size});
+  if (!db || !currentUser) { renderPlanList(); return; }
+  const path = `${FILES_STORAGE_PATH}/${sanitizeDocId(file.name)}`;
+  let downloadURL = "", storageError = null;
+  if(storage) try {
+    const ref = storageRef(storage,path);
+    await uploadBytes(ref,buffer,{contentType:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+    downloadURL = await getDownloadURL(ref);
+  } catch(error) { storageError = error; }
+  // Firestore chunk backup avoids token/CORS failures without opening bucket permissions.
+  const bytes = new Uint8Array(buffer), revision = Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+  const chunkIds=[]; let batch=writeBatch(db),batchCount=0;
+  for(let i=0;i<bytes.length;i+=240000){
+    const id = sanitizeDocId(file.name)+"__"+revision+"__"+chunkIds.length;
+    let binary="";for(const n of bytes.subarray(i,i+240000))binary+=String.fromCharCode(n);
+    batch.set(doc(db,FILES_COLLECTION,id),{kind:"chunk",fileName:file.name,downloadURL:"",data:btoa(binary),uploadedAt:serverTimestamp()});chunkIds.push(id);batchCount++;
+    if(batchCount===20){await batch.commit();batch=writeBatch(db);batchCount=0;}
   }
+  const metadata={fileName:file.name,downloadURL,storagePath:path,size:bytes.length,revision,chunkIds,uploadedAt:serverTimestamp()};
+  batch.set(doc(db,FILES_COLLECTION,sanitizeDocId(file.name)),metadata);
+  await batch.commit();
+  sourceFileMap.set(file.name,{...metadata,local:true});
+  await cacheFile(file.name,buffer,revision);
+  if(storageError) log("Storage 연결 실패: 인증된 Firestore 파일 사본으로 다운로드할 수 있습니다.");
+  renderPlanList();
 }
 
 /* ============================================================
@@ -646,24 +641,30 @@ async function loadFirestoreData(options = {}) {
     statusSnap.docs.forEach(d => {
       const data = d.data() || {};
       if (data.kind === "plan" && data.sheetName) planStatusMap.set(data.sheetName, data);
-      else statusMap.set(d.id, data);
+      else if(data.kind === "report") reportStates[data.fileName+"|"+data.sheetName+"|"+data.label]=data;
+      else if(data.kind === "scheduleChange") {
+        scheduleChanges=scheduleChanges.filter(c=>c.fileName!==data.fileName||c.sheetName!==data.sheetName||c.dueRef!==data.dueRef);
+        scheduleChanges.push(data);
+      } else statusMap.set(d.id, data);
     });
 
     if (filesSnap) {
       sourceFileMap = new Map();
       filesSnap.docs.forEach(d => {
         const data = d.data() || {};
-        if (data.fileName && data.downloadURL) {
-          sourceFileMap.set(data.fileName, { downloadURL: data.downloadURL, size: data.size || 0 });
+        if (data.fileName && data.kind !== "chunk") {
+          sourceFileMap.set(data.fileName, data);
         }
       });
     }
 
     cacheRows();
     cacheStatus();
-    ui.m.firestore.textContent = rows.length.toLocaleString();
+    if(ui.m.firestore) ui.m.firestore.textContent = rows.length.toLocaleString();
     log(`Firestore loaded: ${rows.length} rows / ${statusSnap.size} status docs.`);
+    applyScheduleChanges();
     refreshAll({ forceAlert });
+    hydrateWorkbooks();
   } catch (error) {
     console.error(error);
     const hint = describeFirebaseError(error);
@@ -801,7 +802,7 @@ function planMuted(sheetName) {
 }
 
 function evaluateRows() {
-  today = todayIso();
+  today = seoulToday();
   ui.todayLabel.textContent = today;
   // 현재 진행 단계는 오늘 날짜에 따라 자동으로 다음 단계로 넘어갑니다.
   const ongoingMap = markOngoing(rawRows, statusMap, today);
@@ -809,7 +810,7 @@ function evaluateRows() {
   const recvMap = markSampleReceiptCheck(rawRows, statusMap, today);
   // Status 병합 구간(2행 이상)의 맨 마지막 행 Remark가 비어 있고 구간이 끝났으면 to Rel / to FT 확인 대상입니다.
   const handoffMap = markHandoffCheck(rawRows, statusMap, today);
-  viewRows = rawRows.filter(row => !isTemplateSheet(row.sheetName)).map(row => {
+  viewRows = rawRows.filter(row => !isTemplateSheet(row.sheetName) && normalizeText(row.relNo)).map(row => {
     const ongoing = ongoingMap.get(row.dedupeKey) || null;
     const state = evaluateAlert(
       row, statusMap.get(row.dedupeKey) || null, today, ALERT_LEAD_DAYS, ongoing ? ongoing.type : ""
@@ -845,7 +846,7 @@ function evaluateRows() {
 }
 
 function activeAlerts() {
-  return viewRows.filter(row => !row.muted && isAlerting(row.state.code));
+  return summaryViewRows().filter(row => !row.muted && (isAlerting(row.state.code)||row.recvCheck||row.handoff));
 }
 
 /** Rel team 샘플 수령확인이 필요한 행만. */
@@ -864,7 +865,7 @@ function handoffAlerts() {
  * 확인할 수 있으므로 Toast에는 띄우지 않습니다.
  */
 function toastAlerts() {
-  return viewRows.filter(row => !row.muted && row.state.code === "delay");
+  return summaryViewRows().filter(row => !row.muted && row.state.code === "delay");
 }
 
 /**
@@ -873,7 +874,7 @@ function toastAlerts() {
  * 표시합니다. Pre alarm과 수령확인은 표/배너/카드에서만 확인합니다.
  */
 function modalAlerts() {
-  return viewRows.filter(row => !row.muted && (row.state.code === "delay" || row.handoff));
+  return summaryViewRows().filter(row => !row.muted && (row.state.code === "delay" || (row.state.code === "prealarm" && row.dateOut===today) || row.handoff || row.recvCheck));
 }
 
 /* ============================================================
@@ -914,32 +915,18 @@ function refreshFilters() {
   const plan = ui.planSelect.value;
   const criteria = Array.from(new Set(viewRows.filter(r => !plan || r.sheetName === plan).map(r => r.criteria))).sort();
   fillSelect(ui.criteriaSelect, criteria, "전체 Criteria");
-  if (!ui.statusSelect.options.length) {
-    ui.statusSelect.innerHTML = `
-      <option value="alert">알림 대상만 (Delay + Pre alarm + 수령확인 + 전달확인)</option>
-      <option value="alertAll">알림 대상 + Muted Plan 포함</option>
-      <option value="recvcheck">Rel team 수령확인 필요</option>
-      <option value="handoff">to Rel / to FT 전달확인 필요</option>
-      <option value="ongoing">On going 항목 전체</option>
-      <option value="">전체</option>
-      <option value="delay">Delay session</option>
-      <option value="prealarm">Pre alarm</option>
-      <option value="watch">On going (D-2 이전)</option>
-      <option value="planned">Planned</option>
-      <option value="pending">Pending (미표기 경과)</option>
-      <option value="done">Done</option>
-      <option value="none">No date out</option>`;
-    ui.statusSelect.value = "alert";
-  }
+  ui.statusSelect.innerHTML='<option value="alert">알림 대상만 · D-Day / 지연 / 확인 필요</option>';
+  ui.statusSelect.value='alert';ui.statusSelect.disabled=true;
 }
 
 function filteredRows() {
   const plan = ui.planSelect.value;
   const criteria = ui.criteriaSelect.value;
-  const status = ui.statusSelect.value;
+  const status = "alert";
   const term = normalizeText(ui.searchInput.value).toLowerCase();
-  return viewRows.filter(row => {
+  return summaryViewRows().filter(row => {
     if (plan && row.sheetName !== plan) return false;
+    if (!el("showPrealerts").checked && row.state.code === "prealarm" && row.dateOut > today && !row.recvCheck && !row.handoff) return false;
     if (criteria && row.criteria !== criteria) return false;
     const isAlertRow = isAlerting(row.state.code) || Boolean(row.recvCheck) || Boolean(row.handoff);
     if (status === "alert" && (row.muted || !isAlertRow)) return false;
@@ -997,63 +984,42 @@ function pill(row) {
 }
 
 function renderTable() {
-  const rows = filteredRows();
-  if (!rows.length) {
-    ui.scheduleBody.innerHTML = `<tr><td colspan="10" class="empty">조건에 맞는 항목이 없습니다.</td></tr>`;
-    return;
-  }
-  ui.scheduleBody.innerHTML = rows.slice(0, 600).map(row => {
-    // 수령확인/전달확인(to Rel·to FT)은 자재가 실제로 넘어갔는지 확인 안 되면 critical하므로
-    // 다른 상태보다 우선해서 행 전체를 파란색으로 강조합니다.
-    const rowCls = ((row.recvCheck || row.handoff) ? "row-transfer"
-      : row.state.code === "delay" ? "row-delayed"
-      : row.state.code === "prealarm" ? "row-due"
-      : row.state.code === "watch" ? "row-soon"
-      : row.state.code === "done" ? "row-done" : "")
-      + (row.dedupeKey === selectedTimelineKey ? " row-selected" : "");
-    // to Rel/to FT 전달확인 대상 행은 병합 구간의 맨 마지막(빈) 줄인 경우가 많아
-    // Date in/out이 그 행 자체엔 비어 있을 수 있습니다. 표에서 빈칸으로만
-    // 보여 혼란스럽지 않도록, 실제 값이 있는 참고 행(row.handoff)의 정보를 대신 보여줍니다.
-    const dispDateIn = row.dateIn || row.handoff?.dateIn || "";
-    const dispDateOut = row.dateOut || row.handoff?.dateOut || "";
-    // 수령확인/전달확인의 D-Day는 스케줄 D-day와 별개로, "그 기준일이 지난 지 며칠째"를
-    // today - date out(수령확인은 today - receive date) 기준 +N 형식으로 보여줍니다.
-    const transferRef = row.handoff ? row.handoff.dateOut : row.recvCheck ? row.recvCheck.receiveDate : null;
-    const ddayHtml = transferRef ? ddayCell({ dday: dayDiff(transferRef, today) }) : ddayCell(row.state);
-    return `<tr class="${rowCls}" data-key="${escapeHtml(row.dedupeKey)}">
-      <td><input type="checkbox" class="done-check" data-key="${escapeHtml(row.dedupeKey)}" ${isResolvedDone(row) ? "checked" : ""} title="${(row.recvCheck || row.handoff) ? "수령확인/전달확인이 아직 남아 있어 체크 해제 상태로 표시됩니다. " : ""}체크하면 이 행의 모든 알림(Delay/수령확인/전달확인 포함)을 수동으로 완료 처리합니다." /></td>
-      <td>${pill(row)}</td>
-      <td>${ddayHtml}</td>
-      <td>${escapeHtml(row.sheetName)}</td>
-      <td>${escapeHtml(row.relNo)}</td>
-      <td class="criteria-cell">${escapeHtml(row.criteria)}</td>
-      <td>${escapeHtml(row.relItem)}${blockTag(row)}</td>
-      <td>${escapeHtml(row.condition)}</td>
-      <td class="date-cell">${escapeHtml(dispDateIn)}</td>
-      <td class="date-cell">${escapeHtml(dispDateOut)}</td>
+  const rows=filteredRows();
+  el("summaryCount").textContent=`${rows.length} checkpoints`;
+  ui.scheduleBody.innerHTML=rows.map(row=>{
+    const delay=Math.max(0,Number(row.delay)||0)+(row.state.done?0:Math.max(0,dayDiff(today,row.dateOut)||0));
+    const late=!row.state.done && row.dateOut && row.dateOut<today;
+    return `<tr class="${late?'row-delayed':''}" data-key="${escapeHtml(row.dedupeKey)}">
+      <td><input type="checkbox" class="done-check" data-key="${escapeHtml(row.dedupeKey)}" ${row.state.done?'checked':''} aria-label="${escapeHtml(row.relItem)} 완료" /></td>
+      <td><b>${escapeHtml(row.sheetName)}</b><small class="row-subtitle">${escapeHtml(row.relNo)}</small></td>
+      <td>${escapeHtml(row.criteria)}</td><td>${escapeHtml(row.relItem)}</td>
+      <td class="date-cell">${escapeHtml(row.dateOut||'미정')} ${!row.state.done&&row.dateOut===today?'<span class="st-pill due">D-Day</span>':''}</td>
+      <td>${row.state.done?'<span class="st-pill done">Done</span>':escapeHtml(row.status||'미입력')}</td>
+      <td class="${late?'danger-text':''}">${delay?`+${delay}일`:'—'}</td>
+      <td>${late?`<button class="delay-apply" data-key="${escapeHtml(row.dedupeKey)}">오늘로 변경 (+${dayDiff(today,row.dateOut)}일)</button>`:'—'}</td>
     </tr>`;
-  }).join("") + (rows.length > 600
-    ? `<tr><td colspan="10" class="empty">상위 600건만 표시했습니다. (전체 ${rows.length.toLocaleString()}건 · 필터를 좁혀주세요)</td></tr>`
-    : "");
+  }).join('')||'<tr><td colspan="8" class="empty">표시할 Summary 항목이 없습니다. 파일을 업로드하거나 필터를 변경하세요.</td></tr>';
 }
 
 /** 알림에서 클릭한 항목을 표에서 찾아 이동 + 강조합니다. */
 function focusRow(dedupeKey) {
-  const row = viewRows.find(item => item.dedupeKey === dedupeKey);
+  const row = summaryViewRows().find(item => item.dedupeKey === dedupeKey);
   if (!row) { log("해당 항목을 표에서 찾지 못했습니다."); return; }
 
   closeAlertModal();
+  if(row.dateOut>today)el("showPrealerts").checked=true;
+  timelinePlan=row.sheetName;
   ui.searchInput.value = "";
   ui.planSelect.value = row.sheetName;
   refreshFilters();
   ui.criteriaSelect.value = row.criteria;
-  ui.statusSelect.value = "";
+  ui.statusSelect.value = "alert";
   selectedTimelineKey = dedupeKey;
   renderTable();
   renderGantt();
 
   requestAnimationFrame(() => {
-    const target = Array.from(ui.scheduleBody.rows).find(tr => tr.dataset.key === dedupeKey);
+    const target = Array.from(ui.scheduleBody.querySelectorAll("tr[data-key]")).find(tr => tr.dataset.key === dedupeKey);
     if (!target) return;
     document.querySelectorAll("tr.row-flash").forEach(tr => tr.classList.remove("row-flash"));
     target.classList.add("row-flash");
@@ -1104,11 +1070,7 @@ function renderPlanList() {
   ui.uploadedBody.innerHTML = list.map(item => {
     const muted = planMuted(item.sheetName);
     const fileInfo = sourceFileMap.get(item.sourceFileName);
-    const downloadCell = fileInfo
-      ? `<a class="secondary" href="${escapeHtml(fileInfo.downloadURL)}" target="_blank" rel="noopener"
-           style="display:inline-block;padding:4px 9px;font-size:11px;border-radius:9px;text-decoration:none"
-           title="원본 Excel 파일을 그대로 내려받습니다. 수정 후 다시 Drag&Drop 하면 최신 내용으로 갱신됩니다.">⬇ Download</a>`
-      : `<span style="color:#94a3b8;font-size:11px">업로드 중...</span>`;
+    const downloadCell = `<button type="button" class="secondary file-download" data-file="${escapeHtml(item.sourceFileName)}">Download Excel</button>`;
     return `<tr>
       <td>${escapeHtml(item.sourceFileName)}</td>
       <td class="criteria-cell">${escapeHtml(item.sheetName)}
@@ -1224,121 +1186,19 @@ function renderGanttLegend(rows) {
 }
 
 function renderGantt() {
-  if (typeof Chart === "undefined" || !ui.ganttChart) return;
-  const plan = timelinePlan || ui.planSelect.value || (viewRows[0] && viewRows[0].sheetName) || "";
-
-  // Criteria를 Sheet에 나온 순서(첫 행 번호)대로 묶고, 그 안에서는 Sheet 행 순서대로
-  const firstRowByCriteria = new Map();
-  viewRows.filter(r => r.sheetName === plan).forEach(r => {
-    const current = firstRowByCriteria.get(r.criteria);
-    if (current === undefined || (r.rowNumber || 0) < current) firstRowByCriteria.set(r.criteria, r.rowNumber || 0);
+  if(typeof Chart === "undefined")return;
+  if(ganttChart){ganttChart.destroy();ganttChart=null;}
+  const plan=timelinePlan||ui.planSelect.value;
+  const rows=summaryViewRows().filter(r=>(!plan||r.sheetName===plan)&&!r.state.done&&r.dateOut&&r.dateOut<=today&&!r.muted&&isAlerting(r.state.code))
+    .sort((a,b)=>a.dateOut.localeCompare(b.dateOut));
+  ui.ganttLegend.textContent=rows.length?`D-Day 포함 · ${rows.length}개 표시`:'현재 선택 범위에 D-Day 또는 지연된 알림 대상이 없습니다.';
+  ui.ganttChart.parentElement.style.height=`${Math.max(140,rows.length*42+55)}px`;
+  if(!rows.length)return;
+  ganttChart=new Chart(ui.ganttChart,{
+    type:'bar',
+    data:{labels:rows.map(r=>[r.sheetName,`${shortCriteria(r.criteria)} · ${r.relItem} · ${r.dateOut===today?'D-Day':'+'+dayDiff(today,r.dateOut)+'일'}`]),datasets:[{label:'경과 일수',data:rows.map(r=>dayDiff(today,r.dateOut)),backgroundColor:rows.map(r=>r.dateOut===today?'#d59a32':'#c45151'),minBarLength:4,borderRadius:4,barThickness:18}]},
+    options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{beginAtZero:true,title:{display:true,text:'Due date 이후 경과 일수'},ticks:{precision:0}},y:{grid:{display:false},ticks:{font:{size:12}}}}}
   });
-  const criteriaOrder = Array.from(firstRowByCriteria.entries())
-    .sort((a, b) => a[1] - b[1])
-    .map(entry => entry[0]);
-
-  const rows = viewRows
-    .filter(r => r.sheetName === plan && isoToMs(r.dateIn) !== null && isoToMs(r.dateOut) !== null)
-    .sort((a, b) =>
-      criteriaOrder.indexOf(a.criteria) - criteriaOrder.indexOf(b.criteria) ||
-      (a.rowNumber || 0) - (b.rowNumber || 0))
-    .slice(0, 60);
-
-  if (ganttChart) { ganttChart.destroy(); ganttChart = null; }
-  renderGanttLegend(rows);
-  if (!rows.length) {
-    ui.ganttChart.height = 120;
-    return;
-  }
-
-  const starts = rows.map(r => isoToMs(r.dateIn));
-  const ends = rows.map(r => isoToMs(r.dateOut));
-  const todayMs = isoToMs(today);
-
-  // 일정 구간에 맞춰 축을 잡습니다. 오늘이 일정에서 너무 멀면(과거 Plan 등) 축을 늘리지 않습니다.
-  let min = Math.min(...starts);
-  let max = Math.max(...ends);
-  const span = Math.max(max - min, ONE_DAY);
-  if (todayMs >= min - span * 0.5 && todayMs <= max + span * 0.5) {
-    min = Math.min(min, todayMs);
-    max = Math.max(max, todayMs);
-  }
-  const pad = Math.max((max - min) * 0.04, ONE_DAY * 2);
-  min -= pad;
-  max += pad;
-
-  // 화면 높이를 행 수에 맞춰 조정 (막대가 겹쳐 보이지 않도록)
-  ui.ganttChart.style.height = `${Math.max(220, rows.length * 22 + 70)}px`;
-
-  const surface = "#ffffff";
-  ganttChart = new Chart(ui.ganttChart.getContext("2d"), {
-    type: "bar",
-    data: {
-      labels: rows.map(r => {
-        const head = shortCriteria(r.criteria);
-        const tail = [r.relItem, normalizeText(r.condition) && r.condition !== "-" ? r.condition : ""].filter(Boolean).join(" ");
-        return `${head} · ${tail}`.slice(0, 46);
-      }),
-      datasets: [{
-        label: "Date in → Date out",
-        data: rows.map((r, i) => [starts[i], Math.max(ends[i], starts[i] + ONE_DAY * 0.4)]),
-        backgroundColor: rows.map(r => CODE_COLOR[r.state.code] || CODE_COLOR.none),
-        borderColor: surface,
-        borderWidth: { top: 0, bottom: 0, left: 1, right: 1 },
-        borderRadius: 4,
-        borderSkipped: false,
-        barThickness: 11
-      }]
-    },
-    options: {
-      indexAxis: "y",
-      maintainAspectRatio: false,
-      responsive: true,
-      layout: { padding: { top: 18, right: 54 } },
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          displayColors: false,
-          callbacks: {
-            title: ctx => rows[ctx[0].dataIndex].criteria,
-            label: ctx => {
-              const row = rows[ctx.dataIndex];
-              return [
-                `${row.relItem}${row.condition && row.condition !== "-" ? ` · ${row.condition}` : ""}`,
-                `${row.dateIn} → ${row.dateOut} (${row.duration ?? "-"}일)`,
-                `${CODE_LABEL[row.state.code]}${row.state.dday !== null ? ` · ${formatDday(row.state.dday)}` : ""}`
-              ];
-            }
-          }
-        }
-      },
-      scales: {
-        x: {
-          type: "linear",
-          bounds: "data",
-          beginAtZero: false,
-          min,
-          max,
-          ticks: {
-            maxTicksLimit: 9,
-            autoSkip: true,
-            color: "#64748b",
-            font: { size: 11 },
-            callback: value => msToShort(value)
-          },
-          grid: { color: "rgba(148,163,184,.18)" },
-          border: { display: false }
-        },
-        y: {
-          ticks: { color: "#475569", font: { size: 10 }, autoSkip: false },
-          grid: { display: false },
-          border: { display: false }
-        }
-      }
-    },
-    plugins: [todayLinePlugin, barLabelPlugin]
-  });
-  ganttChart.$relRows = rows;
 }
 
 /* ============================================================
@@ -1369,52 +1229,28 @@ function groupAlerts(alerts) {
  * 전달확인(critical)만 남깁니다.
  */
 function popupGroups(alerts) {
-  return {
-    delay: alerts.filter(r => r.state.code === "delay").sort((a, b) => a.state.dday - b.state.dday),
-    handoff: alerts.filter(r => r.handoff).sort((a, b) => String(a.sheetName).localeCompare(String(b.sheetName)))
-  };
+ return {
+  delay:alerts.filter(r=>r.state.code==='delay'),
+  today:alerts.filter(r=>r.state.code!=='delay'&&!r.state.done&&r.dateOut===today),
+  check:alerts.filter(r=>(r.handoff||r.recvCheck)&&r.state.code!=='delay'&&(r.state.done||r.dateOut!==today))
+ };
 }
-
 function alertItemHtml(row) {
-  const cls = row.handoff ? "recv" : "delayed";
-  const big = row.handoff
-    ? (row.handoff.kind === "toRel" ? "to Rel" : "to FT")
-    : `Delay +${row.state.delayDays}`;
-  const sub = row.handoff
-    ? [row.sheetName, `Date out ${row.handoff.dateOut}`, row.handoff.kind === "toRel" ? "Rel team 전달 여부 미기재" : "FT팀 전달 여부 미기재"].filter(Boolean).join(" · ")
-    : [row.sheetName, "On going", row.assyLot, row.ftLot, row.dateIn ? `In ${row.dateIn}` : ""].filter(Boolean).join(" · ");
-  const rightSub = row.handoff ? `Date out ${row.handoff.dateOut}` : `Date out ${row.dateOut}`;
-  return `<div class="alert-item ${cls}">
-    <input type="checkbox" class="done-check" data-key="${escapeHtml(row.dedupeKey)}" title="Done 처리" />
-    <div class="ai-main">
-      <a class="ai-title go-row" href="#" data-goto="${escapeHtml(row.dedupeKey)}" title="표에서 이 항목으로 이동">
-        ${escapeHtml(itemLabel(row))} <span class="go-arrow">↗</span>
-      </a>
-      <div class="ai-sub">${escapeHtml(sub || row.planTitle || "")}</div>
-    </div>
-    <div class="ai-right"><span class="big">${escapeHtml(big)}</span>${escapeHtml(rightSub)}</div>
-  </div>`;
+ const label=row.state.code==='delay'?`+${dayDiff(today,row.dateOut)}일 지연`:!row.state.done&&row.dateOut===today?'D-Day':'확인 필요';
+ const check=row.handoff?(row.handoff.kind==='toRel'?'to Rel 전달확인':'to FT 전달확인'):row.recvCheck?'Rel team 수령확인':'';
+ return `<div class="alert-item ${row.state.code==='delay'?'delayed':'due'}">
+  <div class="ai-main"><button type="button" class="ai-title go-row" data-goto="${escapeHtml(row.dedupeKey)}">${escapeHtml(row.sheetName)} · ${escapeHtml(row.relItem)} <span aria-hidden="true">↗</span></button>
+  <div class="ai-sub">${escapeHtml(row.criteria)} · ${escapeHtml(row.relNo)}${check?' · '+escapeHtml(check):''}</div></div>
+  <div class="ai-right"><span class="big">${label}</span><span>${escapeHtml(row.dateOut||'')}</span></div>
+ </div>`;
 }
-
 function openAlertModal(alerts) {
-  const groups = popupGroups(alerts);
-  const section = (title, cls, items) => items.length
-    ? `<div class="alert-group">
-         <h3>${title} <span class="count st-pill ${cls}">${items.length}</span></h3>
-         ${items.map(alertItemHtml).join("")}
-       </div>` : "";
-
-  ui.alertBody.innerHTML =
-    section("🚨 Delay session · Date out 경과 (Done 전까지 계속 알림)", "delayed", groups.delay) +
-    section("📤 to Rel / to FT 전달확인 필요 (critical)", "recv", groups.handoff);
-
-  ui.alertSubtitle.textContent =
-    `오늘 ${today} 기준 · Delay ${groups.delay.length}건 / 전달확인 ${groups.handoff.length}건 ` +
-    `(Pre alarm / 수령확인은 위 Criteria별 Schedule & Alert 현황 표에서 확인해주세요)`;
-  ui.alertFootNote.textContent = (groups.delay.length || groups.handoff.length)
-    ? `Delay·전달확인 건이 있어 최대 4시간까지만 숨겨집니다. 완료된 항목은 왼쪽 체크박스로 Done 처리하세요.`
-    : `완료된 항목은 왼쪽 체크박스로 Done 처리하세요.`;
-  ui.alertBackdrop.classList.add("open");
+ const groups=popupGroups(alerts);
+ const section=(title,items)=>items.length?`<section class="alert-group"><h3>${title} <span class="count">${items.length}</span></h3>${items.map(alertItemHtml).join('')}</section>`:'';
+ ui.alertBody.innerHTML=section('오늘 마감',groups.today)+section('기한 경과',groups.delay)+section('수령·전달 확인',groups.check)||'<p class="empty">현재 확인할 D-Day·지연·수령·전달 항목이 없습니다.</p>';
+ ui.alertSubtitle.textContent=`${today} · D-Day ${groups.today.length} · 지연 ${groups.delay.length} · 확인 필요 ${groups.check.length}`;
+ ui.alertFootNote.textContent='항목을 누르면 Summary의 해당 일정으로 이동합니다. 완료 처리와 날짜 변경은 Summary에서 진행하세요.';
+ ui.alertBackdrop.classList.add('open');
 }
 
 function closeAlertModal() { ui.alertBackdrop.classList.remove("open"); }
@@ -1492,7 +1328,7 @@ function runAlertCycle({ forceAlert = false } = {}) {
 function refreshAll(options = {}) {
   evaluateRows();
   refreshFilters();
-  renderMetrics();
+  renderReports();
   renderTable();
   renderPlanList();
   renderGantt();
@@ -1546,7 +1382,7 @@ function setupEvents() {
     if (event.key === "Enter" || event.key === " ") { event.preventDefault(); ui.excelFiles.click(); }
   });
   ui.excelFiles.addEventListener("click", event => event.stopPropagation());
-  ui.excelFiles.addEventListener("change", event => handleFiles(event.target.files));
+  ui.excelFiles.addEventListener("change", async event => { const files=Array.from(event.target.files||[]);event.target.value="";await handleFiles(files); });
   ["dragenter", "dragover"].forEach(name => {
     ui.dropZone.addEventListener(name, event => { event.preventDefault(); ui.dropZone.classList.add("active"); });
   });
@@ -1568,6 +1404,8 @@ function setupEvents() {
     select.addEventListener("change", () => { refreshFilters(); renderTable(); renderGantt(); });
   });
   ui.searchInput.addEventListener("input", renderTable);
+  el("showPrealerts").addEventListener("change",renderTable);
+  setupReportEvents();
   ui.exportBtn.addEventListener("click", exportReport);
   ui.reloadBtn.addEventListener("click", loadFirestoreData);
   if (ui.clearAllBtn) ui.clearAllBtn.addEventListener("click", clearAllUploadedData);
@@ -1616,6 +1454,7 @@ function setupEvents() {
     const modalItem = target.closest(".alert-item");
     if (modalItem) modalItem.classList.toggle("resolved", target.checked);
     await saveItemStatus(key, target.checked);
+    await persistDoneToWorkbook(key, target.checked);
     refreshAll();
   });
 
@@ -1650,7 +1489,7 @@ function setupEvents() {
 
   // Plan 알림 ON/OFF
   ui.uploadedBody.addEventListener("click", async event => {
-    const sheet = event.target.dataset?.sheet;
+    const sheet = event.target.closest(".plan-mute")?.dataset.sheet;
     if (!sheet) return;
     await savePlanStatus(sheet, !planMuted(sheet));
     refreshAll();
@@ -1666,6 +1505,137 @@ function setupEvents() {
 /* ============================================================
    초기화
    ============================================================ */
+
+async function cacheFile(name,buffer,revision='') { try { await fileCache(name,buffer,revision); } catch(e) { log('로컬 파일 보관 실패: '+e.message); } }
+async function sourceBuffer(name) {
+  const info=sourceFileMap.get(name)||{};
+  const local=await fileCache(name).catch(()=>null);
+  if(local && (!info.revision || local.revision===info.revision))return local.buffer;
+  let remoteError;
+  if(info.chunkIds?.length && db && currentUser) {
+    try {
+      const chunks=await Promise.all(info.chunkIds.map(id=>getDoc(doc(db,FILES_COLLECTION,id))));
+      const bytes=chunks.map(d=>{if(!d.exists()||!d.data().data)throw Error('파일 조각 누락');return new Uint8Array(base64ToArrayBuffer(d.data().data));});
+      const result=new Uint8Array(bytes.reduce((n,c)=>n+c.length,0));let offset=0;for(const c of bytes){result.set(c,offset);offset+=c.length;}
+      if(info.size && result.length!==info.size)throw Error('파일 크기 검증 실패');
+      await cacheFile(name,result.buffer,info.revision);return result.buffer;
+    }catch(e){remoteError=e;}
+  }
+  if(storage && currentUser)try {
+    const ref=storageRef(storage,info.storagePath||`${FILES_STORAGE_PATH}/${sanitizeDocId(name)}`);
+    const blob=await getBlob(ref,25*1024*1024);const buffer=await blob.arrayBuffer();await cacheFile(name,buffer,info.revision);return buffer;
+  }catch(e){remoteError=e;}
+  if(info.downloadURL)try {
+    const ref=storageRef(storage,info.storagePath||`${FILES_STORAGE_PATH}/${sanitizeDocId(name)}`);
+    const url=await getDownloadURL(ref);const response=await fetch(url);if(!response.ok)throw Error(`HTTP ${response.status}`);
+    const buffer=await response.arrayBuffer();if(!isReadableZipBuffer(buffer))throw Error('Excel 형식 아님');await cacheFile(name,buffer,info.revision);return buffer;
+  }catch(e){remoteError=e;}
+  throw Error(`원본 파일을 읽을 수 없습니다. 이 Excel을 한 번 다시 업로드하면 새 다운로드 방식으로 저장됩니다. ${remoteError?.code||remoteError?.message||''}`);
+}
+let hydrationRunning=false;
+async function hydrateWorkbooks(){
+ if(hydrationRunning)return;hydrationRunning=true;
+ try{for(const name of new Set(rawRows.map(r=>r.sourceFileName).filter(Boolean))){
+   if(workbookModels.has(name))continue;
+   try{const model=await readPlanWorkbook(await sourceBuffer(name),name);workbookModels.set(name,model);
+    for(const row of rawRows.filter(r=>r.sourceFileName===name)){const s=model.sheets.find(s=>s.name===row.sheetName),r=s?.records.find(r=>r.rowNumber===row.rowNumber);if(r)Object.assign(row,{relNo:s.relNo||"",dueRef:r.dueRef,statusRef:r.statusRef,delayRef:r.delayRef,summarySelected:s.summary.includes(r),summaryLabel:r.summaryLabel||r.relItem,dateIn:r.dateIn,dateOut:r.dateOut,status:r.status,delay:r.delay});}
+    await recomputeFile(name);
+   }catch(e){log(name+': '+e.message);}
+ }cacheRows();refreshAll();}finally{hydrationRunning=false;}
+}
+function workbookOptions(name){
+ const reports={};for(const v of Object.values(reportStates))if(v.fileName===name){reports[v.sheetName]??={};reports[v.sheetName][v.label]={sent:v.sent,approval:v.approval};}
+ const changes=scheduleChanges.filter(c=>c.fileName===name).map(c=>{const row=rawRows.find(r=>r.dedupeKey===c.rowKey&&r.sourceFileName===name);return {...c,dueRef:row?.dueRef||c.dueRef};});
+ return {today,changes,reports};
+}
+async function downloadWorkbook(name,button){
+ const label=button.textContent;button.disabled=true;button.textContent='Excel 준비 중…';
+ try {const result=await upgradeWorkbook(await sourceBuffer(name),name,workbookOptions(name));
+   const blob=new Blob([result.buffer],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),url=URL.createObjectURL(blob);
+   const a=document.createElement('a');a.href=url;a.download=name.replace(/\.(xlsx|xlsm)$/i,/\.xlsm$/i.test(name)?'_updated.xlsm':'_updated.xlsx');document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
+   setNotice('업로드한 양식을 유지하고 저장된 일정·발송 정보를 반영한 Excel을 다운로드했습니다.');
+ }catch(e){setNotice(e.message,true);}finally{button.disabled=false;button.textContent=label;}
+}
+function setNotice(message,error=false){const n=el('actionNotice');n.textContent=message;n.hidden=false;n.classList.toggle('error',error);}
+function summaryViewRows(){
+ const rows=viewRows.filter(r=>r.summarySelected===true || (r.summarySelected===undefined&&/^(FT\b|FT\(|.*SAT)/i.test(r.relItem)));
+ return rows.map(r=>{
+  const manual=statusMap.get(r.dedupeKey),state=evaluateAlert({...r,result:''},manual,today,ALERT_LEAD_DAYS,/on\s*going/i.test(r.status)?'explicit':'');
+  const related=viewRows.filter(x=>x.sourceFileName===r.sourceFileName&&x.sheetName===r.sheetName&&x.criteria===r.criteria&&(x.dueRef===r.dueRef||x.statusRef&&x.statusRef===r.statusRef&&x.dateOut===r.dateOut));
+  const handoff=r.handoff||related.find(x=>x.handoff)?.handoff||null;
+  const recvCheck=r.recvCheck||related.find(x=>x.recvCheck)?.recvCheck||null;
+  return {...r,relItem:r.summaryLabel||r.relItem,state,handoff,recvCheck};
+ });
+}
+
+function applyScheduleChanges(){
+ for(const c of scheduleChanges){const row=rawRows.find(r=>r.dedupeKey===c.rowKey&&r.sourceFileName===c.fileName);if(!row)continue;
+  if(c.newDate&&row.dateOut<c.newDate){row.delay=(Number(row.delay)||0)+dayDiff(c.newDate,row.dateOut);row.dateOut=c.newDate;}
+  if(c.status)row.status=c.status;
+ }
+}
+async function recomputeFile(name){
+ const model=workbookModels.get(name);if(!model)return;
+ const result=await upgradeWorkbook(await sourceBuffer(name),name,workbookOptions(name));
+ const updated=await readPlanWorkbook(result.buffer,name);
+ for(const row of rawRows.filter(r=>r.sourceFileName===name)){
+  const old=model.sheets.find(s=>s.name===row.sheetName),s=updated.sheets.find(s=>s.name===row.sheetName);
+  if(!old?.header||!s?.header)continue;
+  const r=s.records.find(r=>r.rowNumber===row.rowNumber+s.header.r-old.header.r);
+  if(r)Object.assign(row,{dateIn:r.dateIn,dateOut:r.dateOut,status:r.status,delay:r.delay});
+ }
+ cacheRows();
+}
+async function saveChange(change){
+ const id=makeDocId('change::'+change.fileName+'::'+change.sheetName+'::'+change.dueRef);
+ const existing=scheduleChanges.find(c=>c.fileName===change.fileName&&c.sheetName===change.sheetName&&c.dueRef===change.dueRef);
+ const data={...existing,...change,kind:'scheduleChange',dedupeKey:id};
+ if(db&&currentUser)await setDoc(doc(db,STATUS_COLLECTION,id),{...data,updatedAt:serverTimestamp()},{merge:true});
+ scheduleChanges=scheduleChanges.filter(c=>c.fileName!==change.fileName||c.sheetName!==change.sheetName||c.dueRef!==change.dueRef);scheduleChanges.push(data);
+ writeLS('relScheduleAlert.changes',scheduleChanges);
+ await recomputeFile(change.fileName);refreshAll();
+}
+async function persistDoneToWorkbook(key,checked){
+ const row=rawRows.find(r=>r.dedupeKey===key);if(!row?.dueRef)return;
+ const base=workbookModels.get(row.sourceFileName)?.sheets.find(s=>s.name===row.sheetName)?.records.find(r=>r.dueRef===row.dueRef);
+ try{await saveChange({fileName:row.sourceFileName,sheetName:row.sheetName,dueRef:row.dueRef,rowKey:key,status:checked?'Done':base?.status||'On going'});}catch(e){setNotice('완료 상태의 Excel 반영 실패: '+e.message,true);}
+}
+function renderReports(){
+ const filter=ui.planSelect.value,rows=[];
+ for(const [name,model] of workbookModels)for(const s of model.sheets){
+  if(isTemplateSheet(s.name)||!s.header||!normalizeText(s.relNo)||(filter&&filter!==s.name))continue;
+  for(const r of s.reports){if(r.issue==='N/A')continue;
+   const stored=reportStates[name+'|'+s.name+'|'+r.label]||{},sent=stored.sent??serialDate(r.sent),approval=stored.approval??r.approval;
+   const dates=r.refs.map(ref=>rawRows.find(row=>row.sourceFileName===name&&row.sheetName===s.name&&row.dueRef===ref)?.dateOut||serialDate(s.cells.get(ref)?.v));
+   const due=!r.issue&&dates.length&&dates.every(Boolean)?serialDate(Math.max(...dates.map(dateSerial))+r.extra):'';
+   const delay=due?Math.max(0,dayDiff(sent||today,due)):0;
+   rows.push({name,sheet:s.name,label:r.label,sent,approval,due,delay,issue:r.issue});
+  }
+ }
+ rows.sort((a,b)=>(!b.sent&&b.delay)-(!a.sent&&a.delay)||a.sheet.localeCompare(b.sheet));
+ el('reportCount').textContent=`${rows.filter(r=>!r.sent&&r.delay>0).length}건 발송 지연`;
+ el('reportBody').innerHTML=rows.map(r=>`<tr class="${r.sent?'report-sent':r.delay?'row-delayed':''}" data-file="${escapeHtml(r.name)}" data-plan="${escapeHtml(r.sheet)}" data-report="${escapeHtml(r.label)}">
+ <td><b>${escapeHtml(r.sheet)}</b></td><td>${escapeHtml(r.label)}</td><td>${escapeHtml(r.due||r.issue||'일정 미정')}</td><td>${r.delay?'+'+r.delay+'일':'—'}</td>
+ <td><input type="date" class="report-sent-date" value="${escapeHtml(r.sent||'')}" aria-label="Send to Cust" /></td>
+ <td><input type="text" class="report-approval" value="${escapeHtml(r.approval||'')}" placeholder="승인일 또는 상태" aria-label="Approval" /></td>
+ <td><button class="secondary report-save">저장</button></td></tr>`).join('')||'<tr><td colspan="7" class="empty">Excel을 업로드하면 고객별 Report 일정이 표시됩니다.</td></tr>';
+}
+function setupReportEvents(){
+ document.addEventListener('click',async event=>{
+  const dl=event.target.closest('.file-download');if(dl){await downloadWorkbook(dl.dataset.file,dl);return;}
+  const delay=event.target.closest('.delay-apply');if(delay){
+   const row=rawRows.find(r=>r.dedupeKey===delay.dataset.key);if(!row?.dueRef){setNotice('Excel을 한 번 다시 업로드하여 원본 위치를 연결해 주세요.',true);return;}
+   delay.disabled=true;try{await saveChange({fileName:row.sourceFileName,sheetName:row.sheetName,dueRef:row.dueRef,rowKey:row.dedupeKey,newDate:today});setNotice('Due date를 오늘로 변경했습니다. 연결된 후속 일정과 다운로드 Excel에도 반영됩니다.');}catch(e){setNotice('저장 실패: '+e.message,true);}finally{delay.disabled=false;}return;
+  }
+  const save=event.target.closest('.report-save');if(save){const tr=save.closest('tr'),fileName=tr.dataset.file,sheetName=tr.dataset.plan,label=tr.dataset.report,sent=tr.querySelector('.report-sent-date').value,approval=tr.querySelector('.report-approval').value;
+   const id=makeDocId('report::'+fileName+'::'+sheetName+'::'+label),data={kind:'report',dedupeKey:id,fileName,sheetName,label,sent,approval};
+   save.disabled=true;try{if(db&&currentUser)await setDoc(doc(db,STATUS_COLLECTION,id),{...data,updatedAt:serverTimestamp()},{merge:true});reportStates[fileName+'|'+sheetName+'|'+label]=data;writeLS('relScheduleAlert.reports',reportStates);renderReports();setNotice('발송·승인 정보를 저장했습니다. Excel 다운로드 시 Interim은 주황색, Full은 초록색 탭으로 반영됩니다.');}catch(e){setNotice('저장 실패: '+e.message,true);}finally{save.disabled=false;}
+  }
+ });
+ ui.planSelect.addEventListener('change',renderReports);
+}
+
+
 function restoreCache() {
   const rows = readLS(LS_ROWS, []);
   if (Array.isArray(rows) && rows.length) rawRows = rows;
@@ -1714,3 +1684,4 @@ setupEvents();
 restoreCache();
 refreshAll({ forceAlert: true });
 initFirebase();
+
