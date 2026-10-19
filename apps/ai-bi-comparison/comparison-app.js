@@ -2,18 +2,31 @@
 const $=id=>document.getElementById(id);
 let base=null,revisions=[],all=[],groups=[],summaryText='',limit=20,generation=0,reportMeta=null;
 const snapshots=new WeakMap();
+const readInfo=new WeakMap();
+const APP_VERSION='33';
 let diagnostics=[];
 function fileError(file,e){
- const message=`${file.name}: 파일을 읽지 못했습니다 (${e.name||'Error'}). 파일을 닫고 로컬 폴더에 복사한 뒤 다시 선택해 주세요. 계속 실패하면 회사 보안 정책에 따른 접근 제한을 확인해 주세요.`;
- diagnostics.push({time:new Date().toISOString(),file:file.name,size:file.size,error:e.name,message:e.message});
+ const message=`${file.name}: 브라우저가 파일 내용을 읽지 못했습니다 (${e.name||'Error'}). Excel 저장을 마친 뒤 파일을 닫고, 아래 ‘다시 읽기’를 누르거나 같은 파일을 다시 선택해 주세요. 계속 실패하면 오류 진단 TXT를 저장해 주세요.`;
+ diagnostics.push({time:new Date().toISOString(),stage:'file-read',file:file.name,size:file.size,lastModified:file.lastModified,error:e.name,message:e.message,...readInfo.get(file)});
  return new Error(message);
 }
+function readerBuffer(file){
+ return new Promise((resolve,reject)=>{if(typeof FileReader==='undefined'){reject(new Error('FileReader unavailable'));return;}const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(reader.error||new Error('FileReader failed'));reader.onabort=()=>reject(new DOMException('File read cancelled','AbortError'));reader.readAsArrayBuffer(file);});
+}
 function snapshot(file){
- if(!snapshots.has(file)){
-  const pending=file.arrayBuffer().then(buffer=>({buffer}),error=>({error}));
-  snapshots.set(file,pending);
- }
- return snapshots.get(file);
+ if(snapshots.has(file))return snapshots.get(file);
+ const attempts=[];
+ const pending=(async()=>{
+  for(const [method,read] of [['arrayBuffer',()=>file.arrayBuffer()],['FileReader',()=>readerBuffer(file)]]){
+   try{const buffer=await read();if(buffer==null||typeof buffer.byteLength!=='number'||buffer.byteLength!==file.size)throw Error('Incomplete file read');readInfo.set(file,{method,attempts});return {buffer};}
+   catch(e){attempts.push({method,error:e.name,message:e.message});}
+  }
+  const last=attempts.at(-1),error=new Error(last.message);error.name=last.error;readInfo.set(file,{attempts});return {error};
+ })();
+ snapshots.set(file,pending);
+ // Failed references must be retried; only successful bytes are retained.
+ pending.then(result=>{if(result.error&&snapshots.get(file)===pending)snapshots.delete(file);});
+ return pending;
 }
 const escapeHTML=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function invalidate(){generation++;all=[];groups=[];summaryText='';reportMeta=null;$('results').hidden=true;}
@@ -22,13 +35,18 @@ async function setFiles(kind,files){
  if(kind==='base'){base=selected[0]||null;$('baseName').textContent=base?.name||'선택한 파일 없음';}
  else{revisions=selected;$('revNames').textContent=revisions.map(f=>f.name).join(', ')||'선택한 파일 없음';}
  $('status').textContent='선택한 파일을 읽고 있습니다…';
- const loaded=await Promise.all(selected.map(async file=>({file,...await snapshot(file)})));
+ const loaded=await Promise.all([base,...revisions].filter(Boolean).map(async file=>({file,...await snapshot(file)})));
  if(token!==generation)return;
  const failed=loaded.filter(x=>x.error);
  $('status').textContent=failed.length?failed.map(x=>fileError(x.file,x.error).message).join('\n'):'파일 읽기 완료. 비교 실행을 눌러 주세요.';
 }
-$('baseFile').addEventListener('change',e=>setFiles('base',e.target.files));
-$('revFiles').addEventListener('change',e=>setFiles('rev',e.target.files));
+$('baseFile').addEventListener('change',e=>{const files=Array.from(e.target.files);e.target.value='';return setFiles('base',files);});
+$('revFiles').addEventListener('change',e=>{const files=Array.from(e.target.files);e.target.value='';return setFiles('rev',files);});
+$('retryRead').addEventListener('click',async()=>{
+ invalidate();const token=generation,files=[base,...revisions].filter(Boolean);if(!files.length){$('status').textContent='먼저 원본과 개정 파일을 선택해 주세요.';return;}
+ $('retryRead').disabled=true;$('status').textContent='파일을 다시 읽고 있습니다…';
+ try{files.forEach(f=>snapshots.delete(f));const loaded=await Promise.all(files.map(async file=>({file,...await snapshot(file)})));if(token!==generation)return;const failed=loaded.filter(x=>x.error);$('status').textContent=failed.length?failed.map(x=>fileError(x.file,x.error).message).join('\n'):'파일 다시 읽기 완료. 비교 실행을 눌러 주세요.';}finally{$('retryRead').disabled=false;}
+});
 $('whitespace').addEventListener('change',invalidate);
 try{$('processTemplate').value=localStorage.getItem('ai-bi-process-template')||'';}catch(e){}
 $('processTemplate').addEventListener('input',()=>{invalidate();try{localStorage.setItem('ai-bi-process-template',$('processTemplate').value.trim());}catch(e){}});
@@ -130,4 +148,4 @@ $('export').addEventListener('click',()=>{
 
 function download(name,content,type){const url=URL.createObjectURL(new Blob([content],{type})),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 $('reportExport').addEventListener('click',()=>{if(reportMeta)download('AI_BI_Comparison_Report.html',AIBIReport.create(reportMeta,all,groups,blockTable),'text/html;charset=utf-8');});
-$('diagnosticExport').addEventListener('click',()=>download('AI_BI_Diagnostics.txt',JSON.stringify({time:new Date().toISOString(),browser:navigator.userAgent,page:location.protocol,libraryLoaded:typeof XLSX!=='undefined',files:[base,...revisions].filter(Boolean).map(f=>({name:f.name,size:f.size})),status:$('status').textContent,errors:diagnostics},null,2),'text/plain;charset=utf-8'));
+$('diagnosticExport').addEventListener('click',()=>download('AI_BI_Diagnostics.txt',JSON.stringify({version:APP_VERSION,time:new Date().toISOString(),browser:navigator.userAgent,page:location.protocol,libraryLoaded:typeof XLSX!=='undefined',files:[base,...revisions].filter(Boolean).map(f=>({name:f.name,size:f.size,lastModified:f.lastModified,read:readInfo.get(f)})),status:$('status').textContent,errors:diagnostics},null,2),'text/plain;charset=utf-8'));
