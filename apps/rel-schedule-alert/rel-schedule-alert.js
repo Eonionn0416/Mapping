@@ -1,4 +1,5 @@
-import { readPlanWorkbook, upgradeWorkbook, serialDate, dateSerial, seoulToday } from "./rel-workbook.js?v=32";
+import * as PCNCore from "./pcn-core.js?v=35";
+import { readPlanWorkbook, upgradeWorkbook, serialDate, dateSerial, seoulToday } from "./rel-workbook.js?v=34";
 import { fileCache } from "./rel-file-cache.js";
 /**
  * REL Schedule Alert
@@ -47,7 +48,7 @@ import {
   normalizeNumber,
   formatDelayValue,
   makeDocId
-} from "./rel-parser.js";
+} from "./rel-parser.js?v=34";
 
 /* ============================================================
    상수
@@ -365,7 +366,7 @@ async function parseExcelFile(file) {
     for(const r of source.records){if(source.header.map.status)rows[r.rowNumber-1][source.header.map.status-1]=r.status;statusBlocks.set(r.rowNumber-1,r.statusRef||r.rowNumber);}
     const parsed=parseSheetMatrix(source.name,rows,file.name,{rowOffset:0,statusBlocks,date1904:model.date1904});
     for(const record of parsed.records){
-      const legacyKey=record.dedupeKey,customer=(file.name.match(/\b(MNT|MTK|BDR)\d*/i)||[])[1]?.toUpperCase()||file.name;
+      const legacyKey=record.dedupeKey,customer=(file.name.match(/\b(MNT|MTK|BDR|AST)\d*/i)||[])[1]?.toUpperCase()||file.name;
       record.dedupeKey=makeDocId(customer+'::'+legacyKey);
       if(!statusMap.has(record.dedupeKey)&&statusMap.has(legacyKey))statusMap.set(record.dedupeKey,statusMap.get(legacyKey));
       const r=source.records.find(r=>r.rowNumber===record.rowNumber);
@@ -448,6 +449,7 @@ function renderSelectedFileList() {
 const COMPARE_FIELDS = [
   "criteria", "relItem", "condition", "assyLot", "ftLot", "qty",
   "dateIn", "duration", "delay", "dateOut", "result", "status", "remark", "failMode",
+  "aiNo", "changeFrom", "changeTo", "reportKind", "planLots", "planDevices",
   "sourceFileName", "rowNumber", "dueRef", "statusRef", "delayRef", "summarySelected", "summaryLabel", "schemaVersion"
 ];
 
@@ -483,7 +485,7 @@ function diffRecords(incoming) {
  * @returns {Array} 이번 배치에서 사라진(더 이상 존재하지 않는) 기존 row 목록
  */
 function mergeRows(incoming) {
-  const scope=row=>((row.sourceFileName||'').match(/\b(MNT|MTK|BDR)\d*/i)||[])[1]?.toUpperCase()+'|'+row.sheetName;
+  const scope=row=>((row.sourceFileName||'').match(/\b(MNT|MTK|BDR|AST)\d*/i)||[])[1]?.toUpperCase()+'|'+row.sheetName;
   const incomingSheets = new Set(incoming.map(scope));
   const incomingKeys = new Set(incoming.map(row => row.dedupeKey));
   const removed = rawRows.filter(row => incomingSheets.has(scope(row)) && !incomingKeys.has(row.dedupeKey));
@@ -586,6 +588,7 @@ async function uploadOriginalFile(file, buffer) {
   await cacheFile(file.name,buffer,revision);
   if(storageError) log("Storage 연결 실패: 인증된 Firestore 파일 사본으로 다운로드할 수 있습니다.");
   renderPlanList();
+  renderPCN();
 }
 
 /* ============================================================
@@ -625,12 +628,14 @@ async function loadFirestoreData(options = {}) {
   const { forceAlert = true } = options;
   if (!db || !currentUser) return;
   try {
-    const [rawSnap, statusSnap, filesSnap] = await Promise.all([
+    const [rawSnap, statusSnap, filesSnap, pcnSnap] = await Promise.all([
       getDocs(collection(db, RAW_COLLECTION)),
       getDocs(collection(db, STATUS_COLLECTION)),
-      getDocs(collection(db, FILES_COLLECTION)).catch(error => { console.error(error); return null; })
+      getDocs(collection(db, FILES_COLLECTION)).catch(error => { console.error(error); return null; }),
+      getDocs(collection(db, 'pcnHistories')).catch(error => { console.error(error); return null; })
     ]);
 
+    if(pcnSnap){const map=new Map(pcnHistory.map(p=>[p.historyKey,p]));pcnSnap.docs.forEach(d=>{const p={...d.data(),id:d.id};if(p.historyKey){map.set(p.historyKey,p);pcnSynced.set(p.id,JSON.stringify(p));}});pcnHistory=[...map.values()];writeLS(PCN_HISTORY_STORE,pcnHistory);}
     const rows = rawSnap.docs.map(d => ({ ...d.data(), dedupeKey: d.id }))
       .filter(row => row && row.sheetName && (row.relItem || row.dateOut))
       .filter(row => !isTemplateSheet(row.sheetName));
@@ -915,7 +920,7 @@ function refreshFilters() {
   const plan = ui.planSelect.value;
   const criteria = Array.from(new Set(viewRows.filter(r => !plan || r.sheetName === plan).map(r => r.criteria))).sort();
   fillSelect(ui.criteriaSelect, criteria, "전체 Criteria");
-  ui.statusSelect.innerHTML='<option value="alert">알림 대상만 · D-Day / 지연 / 확인 필요</option>';
+  ui.statusSelect.innerHTML='<option value="alert">미완료 지연 일정</option>';
   ui.statusSelect.value='alert';ui.statusSelect.disabled=true;
 }
 
@@ -936,7 +941,7 @@ function filteredRows() {
     if (status === "ongoing" && !row.state.ongoing) return false;
     if (status && !["alert", "alertAll", "recvcheck", "handoff", "ongoing"].includes(status) && row.state.code !== status) return false;
     if (term) {
-      const hay = `${row.relItem} ${row.condition} ${row.assyLot} ${row.ftLot} ${row.criteria} ${row.remark} ${row.planTitle} ${row.relNo}`.toLowerCase();
+      const hay = `${row.relItem} ${row.condition} ${row.assyLot} ${row.ftLot} ${row.criteria} ${row.remark} ${row.planTitle} ${row.relNo} ${row.aiNo||""} ${row.changeFrom||""} ${row.changeTo||""} ${(row.planLots||[]).join(" ")} ${(row.planDevices||[]).join(" ")}`.toLowerCase();
       if (!hay.includes(term)) return false;
     }
     return true;
@@ -983,8 +988,9 @@ function pill(row) {
   return `<span class="st-pill ${cls}" title="${escapeHtml(labelTitle)}">${escapeHtml(label)}</span> ${tags.join(" ")}`;
 }
 
+function relMetaHTML(row){const kind=row.changeFrom||row.changeTo?'PCN':'Reliability';return `<small class="row-subtitle">${kind}${row.changeFrom?'<br>From: '+escapeHtml(row.changeFrom):''}${row.changeTo?'<br>To: '+escapeHtml(row.changeTo):''}${row.aiNo?'<br><a href="../ai-bi-comparison/?ai='+encodeURIComponent(row.aiNo)+'">AI/BI '+escapeHtml(row.aiNo)+' · Para / Rev 비교</a>':''}</small>`;}
 function renderTable() {
-  const rows=filteredRows();
+  const rows=filteredRows().filter(row=>!row.state.done && row.dateOut && row.dateOut<today);
   el("summaryCount").textContent=`${rows.length} checkpoints`;
   ui.scheduleBody.innerHTML=rows.map(row=>{
     const delay=Math.max(0,Number(row.delay)||0)+(row.state.done?0:Math.max(0,dayDiff(today,row.dateOut)||0));
@@ -1052,6 +1058,7 @@ function renderPlanList() {
         sourceFileName: row.sourceFileName || "(local)",
         sheetName: row.sheetName,
         title: row.planTitle || "",
+        aiNo: row.aiNo || "", changeFrom: row.changeFrom || "", changeTo: row.changeTo || "", reportKind: row.changeFrom || row.changeTo ? "PCN" : "Reliability",
         relNo: row.relNo || "",
         count: 0, delayed: 0, lastOut: ""
       });
@@ -1079,7 +1086,7 @@ function renderPlanList() {
           ${muted ? "알림 OFF" : "알림 ON"}
         </button>
       </td>
-      <td>${escapeHtml(item.title)}</td>
+      <td>${escapeHtml(item.title)}<br><b>${escapeHtml(item.reportKind)}</b><br>Change From: ${escapeHtml(item.changeFrom||'—')}<br>Change To: ${escapeHtml(item.changeTo||'—')}<br>${item.aiNo?'<a href="../ai-bi-comparison/?ai='+encodeURIComponent(item.aiNo)+'">AI/BI '+escapeHtml(item.aiNo)+' · Para / 이전 Rev 비교</a>':'AI/BI: —'}</td>
       <td>${escapeHtml(item.relNo)}</td>
       <td class="number">${item.count}</td>
       <td class="number">${item.delayed ? `<b class="danger-text">${item.delayed}</b>` : 0}</td>
@@ -1325,12 +1332,23 @@ function runAlertCycle({ forceAlert = false } = {}) {
 /* ============================================================
    전체 새로고침
    ============================================================ */
+const PCN_HISTORY_STORE='relScheduleAlert.pcnHistory';let pcnHistory=readLS(PCN_HISTORY_STORE,[]);if(!Array.isArray(pcnHistory))pcnHistory=[];const pcnSynced=new Map();let pcnSyncBusy=false;
+function renderPCN(){
+ const current=PCNCore.plans(viewRows),map=new Map(pcnHistory.map(p=>[p.historyKey,p]));for(const p of current)map.set(p.historyKey,{...p,id:makeDocId('PCN::'+p.historyKey)});pcnHistory=[...map.values()];writeLS(PCN_HISTORY_STORE,pcnHistory);
+ const cust=el('pcnCustomer').value,q=el('pcnSearch').value,shown=pcnHistory.filter(p=>PCNCore.matches(p,cust,q));el('pcnCount').textContent=shown.length+' PCN';
+ el('pcnBody').innerHTML=shown.map(p=>`<tr><td>${escapeHtml(p.customer)}</td><td><b>${escapeHtml(p.title)}</b><small class="row-subtitle">${escapeHtml(p.sheetName)} · ${escapeHtml(p.relNo)}</small></td><td>${escapeHtml(p.changeFrom)}</td><td>${escapeHtml(p.changeTo)}</td><td>${p.aiNo?'<a href="../ai-bi-comparison/?ai='+encodeURIComponent(p.aiNo)+'">'+escapeHtml(p.aiNo)+' · Para / 이전 Rev</a>':'AI No 미기재'}</td><td>${escapeHtml(p.status)}<br>${escapeHtml(p.date)}</td><td><details class="pcn-identifiers"><summary>Device ${p.devices.length} · Lot ${p.lots.length} 보기</summary><div class="pcn-identifier-content"><b>Device</b>${p.devices.length?'<ul>'+p.devices.map(v=>'<li>'+escapeHtml(v)+'</li>').join('')+'</ul>':'<p>미기재</p>'}<b>Lot</b>${p.lots.length?'<ul>'+p.lots.map(v=>'<li>'+escapeHtml(v)+'</li>').join('')+'</ul>':'<p>미기재</p>'}</div></details></td></tr>`).join('')||'<tr><td colspan="7" class="empty">PCN 이력이 없습니다. Change From/To가 있는 REL Excel을 업로드하세요.</td></tr>';
+ syncPCNHistory();
+}
+async function syncPCNHistory(){if(pcnSyncBusy||!db||!currentUser)return;const changed=pcnHistory.filter(p=>pcnSynced.get(p.id)!==JSON.stringify(p));if(!changed.length)return;pcnSyncBusy=true;try{for(let i=0;i<changed.length;i+=350){const b=writeBatch(db);for(const p of changed.slice(i,i+350))b.set(doc(db,'pcnHistories',p.id),{...p,uploadedAt:serverTimestamp()});await b.commit();for(const p of changed.slice(i,i+350))pcnSynced.set(p.id,JSON.stringify(p));}}catch(e){el('pcnCount').textContent+=' · DB 저장 대기';}finally{pcnSyncBusy=false;}}
+el('pcnCustomer').addEventListener('change',renderPCN);el('pcnSearch').addEventListener('input',renderPCN);
+
 function refreshAll(options = {}) {
   evaluateRows();
   refreshFilters();
   renderReports();
   renderTable();
   renderPlanList();
+  renderPCN();
   renderGantt();
   runAlertCycle(options);
 }
@@ -1349,6 +1367,8 @@ function exportReport() {
     "Delay(Excel)": formatDelayValue(row.delay),
     "Plan(Sheet)": row.sheetName,
     "Title": row.planTitle,
+    "Type": row.changeFrom || row.changeTo ? "PCN" : "Reliability",
+    "AI No": row.aiNo || "", "Change From": row.changeFrom || "", "Change To": row.changeTo || "",
     "Rel.#": row.relNo,
     "Criteria": row.criteria,
     "Rel item": row.relItem,
@@ -1546,7 +1566,7 @@ async function hydrateWorkbooks(){
 function workbookOptions(name){
  const reports={};for(const v of Object.values(reportStates))if(v.fileName===name){reports[v.sheetName]??={};reports[v.sheetName][v.label]={sent:v.sent,approval:v.approval};}
  const changes=scheduleChanges.filter(c=>c.fileName===name).map(c=>{const row=rawRows.find(r=>r.dedupeKey===c.rowKey&&r.sourceFileName===name);return {...c,dueRef:row?.dueRef||c.dueRef};});
- return {today,changes,reports};
+ return {today,changes,reports,rebuildLayout:false};
 }
 async function downloadWorkbook(name,button){
  const label=button.textContent;button.disabled=true;button.textContent='Excel 준비 중…';

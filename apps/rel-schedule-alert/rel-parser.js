@@ -231,6 +231,9 @@ export function findHeader(rows, maxScan = 500) {
 /* ---------------- meta (Title / Rel.# / Package ...) ---------------- */
 
 const META_RULES = [
+  [k => ["aino","bino","aibino"].includes(k), "aiNo"],
+  [k => k === "changefrom", "changeFrom"],
+  [k => k === "changeto", "changeTo"],
   [k => k === "title", "title"],
   [k => k === "rel" || k === "relno" || k === "reltestno", "relNo"],
   [k => k.startsWith("packagetype") || k === "pkgtype", "packageType"],
@@ -266,6 +269,11 @@ export function extractMeta(rows, headerRowIndex) {
     }
     if (value && !meta[rule[1]]) meta[rule[1]] = value;
   }
+  const lots=[], devices=[];
+  for(let r=0;r<limit;r++){const h=(rows[r]||[]).map(headerKey),lc=h.indexOf('lot'),dc=h.indexOf('device');if(lc<0||dc<0)continue;
+    for(let n=r+1;n<limit;n++){const rr=rows[n]||[];if(!rr.some(v=>normalizeText(v)))break;const lot=normalizeText(rr[lc]),dev=normalizeText(rr[dc]);if(lot)lots.push(lot);if(dev)devices.push(dev);}break;}
+  meta.lots=[...new Set(lots)]; meta.devices=[...new Set(devices)];
+  meta.reportKind=meta.changeFrom||meta.changeTo?'PCN':'Reliability';
   return meta;
 }
 
@@ -334,6 +342,7 @@ export function parseSheetMatrix(sheetName, rows, fileName = "", options = {}) {
       sheetName,
       planTitle: meta.title || meta.device || sheetName,
       relNo: meta.relNo || "",
+      aiNo: meta.aiNo || "", changeFrom: meta.changeFrom || "", changeTo: meta.changeTo || "", reportKind: meta.reportKind, planLots: meta.lots, planDevices: meta.devices,
       packageType: meta.packageType || "",
       pkgSize: meta.pkgSize || "",
       leadSize: meta.leadSize || "",

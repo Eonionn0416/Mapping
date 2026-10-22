@@ -10,10 +10,10 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 
-  <link rel="stylesheet" href="rel-schedule-alert.css?v=3" />
-  <link rel="stylesheet" href="../../shared/qa-theme.css?v=23" />
-  <link rel="stylesheet" href="rel-dashboard.css?v=31" />
-</head>
+  <link rel="stylesheet" href="rel-schedule-alert.css?v=35" />
+  <link rel="stylesheet" href="../../shared/qa-theme.css?v=35" />
+  <link rel="stylesheet" href="rel-dashboard.css?v=37" />
+<link rel="stylesheet" href="../../shared/qa-controls.css?v=37"></head>
 <body>
   <a class="qa-back-link" href="../../index.html">← QA Page</a>
 
@@ -66,7 +66,7 @@
       <div class="panel-header">
         <div>
           <p class="section-kicker">02 / READOUT CHECKPOINTS</p><h2>Summary 일정 <span id="summaryCount" class="count-label"></span></h2>
-          <p>노란 Shipping 표시와 실제 FT readout을 기준으로 묶었습니다. 지연 항목의 ‘오늘로 변경’을 누르면 Delay와 후속 일정이 함께 갱신됩니다.</p>
+          <p>미완료 지연 일정만 표시합니다. 완료된 항목과 PCN 상세 이력은 아래 별도 목록에서 확인합니다. 지연 항목의 ‘오늘로 변경’을 누르면 Delay와 후속 일정이 함께 갱신됩니다.</p>
         </div>
         <button id="exportBtn" type="button" class="secondary">Export Alert Report</button>
       </div>
@@ -90,7 +90,7 @@
         </label>
       </div>
 
-      <label class="prealert-toggle"><input type="checkbox" id="showPrealerts" /> Pre-alert 보기 (D-2 ~ D-1) · D-Day/지연은 항상 표시</label>
+      <label class="prealert-toggle" hidden><input type="checkbox" id="showPrealerts" /> Pre-alert 보기 (D-2 ~ D-1) · D-Day/지연은 항상 표시</label>
       <div class="table-wrap large">
         <table>
           <thead>
@@ -115,6 +115,8 @@
         <canvas id="ganttChart"></canvas>
       </div>
     </section>
+
+    <section class="panel" id="pcn"><div class="panel-header"><div><p class="section-kicker">PCN HISTORY</p><h2>PCN List <span id="pcnCount" class="count-label"></span></h2><p>완료 여부와 관계없이 PCN 이력을 조회합니다. AI/BI 번호를 누르면 Para와 이전 Revision 변경점을 확인합니다.</p></div></div><div class="filters"><label>Customer<select id="pcnCustomer"><option value="">전체</option><option>MNT</option><option>MTK</option><option>AUSTIN</option></select></label><label>PCN / Lot / Device / AI No / From / To<input id="pcnSearch" type="search" placeholder="PCN 이력 검색"></label></div><div class="table-wrap"><table><thead><tr><th>Customer</th><th>PCN / Plan</th><th>Change From</th><th>Change To</th><th>AI/BI Para / Rev</th><th>상태 / 최근 Due</th><th>Device / Lot</th></tr></thead><tbody id="pcnBody"></tbody></table></div></section>
 
     <section class="panel" id="files">
       <div class="panel-header">
@@ -177,6 +179,6 @@
     </section>
   </main>
 
-  <script type="module" src="rel-schedule-alert.js?v=32"></script>
-</body>
+  <script type="module" src="rel-schedule-alert.js?v=37"></script>
+<script defer src="../../shared/qa-context.js?v=35"></script></body>
 </html>

@@ -36,3 +36,14 @@ table{font-size:13px!important;min-width:950px}thead th{background:#eaf0f6!impor
 .alert-modal .modal-foot {background:#f5f8fb;border-top:1px solid #dce5ed;}
 #statusSelect:disabled {opacity:1;color:#234566;background:#f4f7fa;cursor:default;}
 @media(max-width:650px){.alert-modal header,.alert-modal .modal-body{padding:16px}.alert-modal .alert-item{grid-template-columns:minmax(0,1fr);align-items:start;gap:10px}.alert-modal .ai-right{flex-direction:row;gap:12px;text-align:left;justify-content:flex-start}}
+
+/* Keep PCN history compact; disclose long Device / Lot lists on demand. */
+#pcn table{table-layout:fixed;width:100%;min-width:950px}
+#pcn th:nth-child(1){width:8%}#pcn th:nth-child(2){width:24%}#pcn th:nth-child(3),#pcn th:nth-child(4){width:15%}#pcn th:nth-child(5){width:16%}#pcn th:nth-child(6){width:11%}#pcn th:nth-child(7){width:11%}
+#pcn td{white-space:normal;overflow-wrap:anywhere;vertical-align:top}
+#pcn .pcn-identifiers{min-width:0}
+#pcn .pcn-identifiers summary{cursor:pointer;color:#265eb4;font-size:12px;font-weight:600;line-height:1.6;white-space:normal}
+#pcn .pcn-identifiers summary:focus-visible{outline:2px solid #265eb4;outline-offset:3px;border-radius:3px}
+#pcn .pcn-identifier-content{max-height:240px;overflow:auto;margin-top:10px;padding:10px;background:#f5f8fc;border:1px solid #e0e8f1;border-radius:7px;font-size:12px}
+#pcn .pcn-identifier-content ul{margin:5px 0 12px;padding-left:16px}
+#pcn .pcn-identifier-content li{margin:4px 0;overflow-wrap:anywhere}

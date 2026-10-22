@@ -200,7 +200,7 @@ export async function upgradeWorkbook(buffer,fileName,options={}){
   if(options.rebuildLayout!==true){
    // Write only managed values. Never resize, move or recreate the customer's tables.
    const cache=(a,v)=>{if(!a)return;const c=s.cells.get(a);if(!c)return;if(!c.f){if(c.v!==v)setCell(s,a,v);return;}let n=first(c.node,'v');if(!n){n=elem(s.xml,'v');c.node.appendChild(n);}n.textContent=v;c.node.removeAttribute('t');if(typeof v!=='number')c.node.setAttribute('t','str');};
-   for(const row of s.removedReports||[]){
+   for(const row of (options.removeLegacyReports===true?s.removedReports||[]:[])){
     const cols=s.reportHeader.cols;for(const col of Object.values(cols))if(col)setCell(s,s.anchor(row,col),'');
     const rn=children(first(s.xml,'sheetData'),'row').find(n=>+n.getAttribute('r')===row);
     const other=[...s.cells.values()].some(c=>c.r===row&&!Object.values(cols).includes(c.c)&&text(c.v));

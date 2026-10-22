@@ -846,6 +846,7 @@ async function loadHistoriesFromFirestore() {
     const snap = await getDocs(q);
     state.histories = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderHistories();
+    const linkedHistory=new URLSearchParams(location.search).get("qaHistory");if(linkedHistory)await restoreHistoryToMapping(linkedHistory);
   } catch (error) {
     console.error('Firestore history load failed:', error);
     $('requestList').className = 'request-list empty';

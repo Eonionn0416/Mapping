@@ -3,7 +3,7 @@ const $=id=>document.getElementById(id);
 let base=null,revisions=[],all=[],groups=[],summaryText='',limit=20,generation=0,reportMeta=null;
 const snapshots=new WeakMap();
 const readInfo=new WeakMap();
-const APP_VERSION='33';
+const APP_VERSION='35';
 let diagnostics=[];
 function fileError(file,e){
  const message=`${file.name}: 브라우저가 파일 내용을 읽지 못했습니다 (${e.name||'Error'}). Excel 저장을 마친 뒤 파일을 닫고, 아래 ‘다시 읽기’를 누르거나 같은 파일을 다시 선택해 주세요. 계속 실패하면 오류 진단 TXT를 저장해 주세요.`;
@@ -14,6 +14,7 @@ function readerBuffer(file){
  return new Promise((resolve,reject)=>{if(typeof FileReader==='undefined'){reject(new Error('FileReader unavailable'));return;}const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(reader.error||new Error('FileReader failed'));reader.onabort=()=>reject(new DOMException('File read cancelled','AbortError'));reader.readAsArrayBuffer(file);});
 }
 function snapshot(file){
+ if(file.savedBook)return Promise.resolve({buffer:new ArrayBuffer(0)});
  if(snapshots.has(file))return snapshots.get(file);
  const attempts=[];
  const pending=(async()=>{
@@ -38,7 +39,8 @@ async function setFiles(kind,files){
  const loaded=await Promise.all([base,...revisions].filter(Boolean).map(async file=>({file,...await snapshot(file)})));
  if(token!==generation)return;
  const failed=loaded.filter(x=>x.error);
- $('status').textContent=failed.length?failed.map(x=>fileError(x.file,x.error).message).join('\n'):'파일 읽기 완료. 비교 실행을 눌러 주세요.';
+ $('status').textContent=failed.length?failed.map(x=>fileError(x.file,x.error).message).join('\n'):'파일 읽기 완료. 문서 내부 정보를 기준으로 DB에 자동 저장합니다.';
+ if(!failed.length)window.dispatchEvent(new CustomEvent('aibi-files-ready'));
 }
 $('baseFile').addEventListener('change',e=>{const files=Array.from(e.target.files);e.target.value='';return setFiles('base',files);});
 $('revFiles').addEventListener('change',e=>{const files=Array.from(e.target.files);e.target.value='';return setFiles('rev',files);});
@@ -52,6 +54,7 @@ try{$('processTemplate').value=localStorage.getItem('ai-bi-process-template')||'
 $('processTemplate').addEventListener('input',()=>{invalidate();try{localStorage.setItem('ai-bi-process-template',$('processTemplate').value.trim());}catch(e){}});
 for(const [id,kind] of [['baseDrop','base'],['revDrop','rev']]){const el=$(id);el.addEventListener('dragover',e=>{e.preventDefault();el.classList.add('drag');});el.addEventListener('dragleave',()=>el.classList.remove('drag'));el.addEventListener('drop',e=>{e.preventDefault();el.classList.remove('drag');if(kind==='base'&&e.dataTransfer.files.length!==1){$('status').textContent='원본 파일은 하나만 놓아 주세요.';return;}setFiles(kind,e.dataTransfer.files);});}
 async function read(file){
+ if(file.savedBook)return file.savedBook;
  if(!/\.(xlsx|xlsm|xls)$/i.test(file.name))throw new Error(`${file.name}: Excel 파일을 선택해 주세요.`);
  if(file.size>50*1024*1024)throw new Error(`${file.name}: 50MB 이하 파일을 사용해 주세요.`);
  const data=await snapshot(file);if(data.error)throw fileError(file,data.error);
@@ -149,3 +152,5 @@ $('export').addEventListener('click',()=>{
 function download(name,content,type){const url=URL.createObjectURL(new Blob([content],{type})),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 $('reportExport').addEventListener('click',()=>{if(reportMeta)download('AI_BI_Comparison_Report.html',AIBIReport.create(reportMeta,all,groups,blockTable),'text/html;charset=utf-8');});
 $('diagnosticExport').addEventListener('click',()=>download('AI_BI_Diagnostics.txt',JSON.stringify({version:APP_VERSION,time:new Date().toISOString(),browser:navigator.userAgent,page:location.protocol,libraryLoaded:typeof XLSX!=='undefined',files:[base,...revisions].filter(Boolean).map(f=>({name:f.name,size:f.size,lastModified:f.lastModified,read:readInfo.get(f)})),status:$('status').textContent,errors:diagnostics},null,2),'text/plain;charset=utf-8'));
+
+window.AIBIWorkspace={selected:async()=>Promise.all([base,...revisions].filter(Boolean).map(async f=>({file:f.name,book:await read(f),savedMeta:f.savedRecord}))),use:async(side,record,book)=>setFiles(side,[{name:record.number+' ('+record.revision+').xlsx',savedBook:book,savedRecord:record}])};
