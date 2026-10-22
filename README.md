@@ -66,11 +66,11 @@ BUMP-MNT monthly report Excel files are parsed from sheets containing headers li
 - MNT CPK Trend parser now ignores Excel Text Box / Shape / Drawing objects and falls back to direct XML parsing when needed.
 - MNT cache version updated to v9.
 
-## Austin FT Trend Chart
+## Austin WIP and FT status
 
-Path: `apps/austin-ft-trend/`
+Path: `apps/austin-wip-ft-status/`
 
-FT MERGE COMPLETION report의 `时间`, `原批号`, `BIN`, `数量`을 읽어 Date → 原批号 순으로 각 BIN 수량 Trend를 표시합니다. Raw rows are first stored persistently in browser IndexedDB and are restored after refresh/restart. They are also synchronized to Firestore collection `austinFtTrendRaw` when Firebase permission and network are available.
+Bank / WIP snapshots and device-level Assy, Bump and FT yield. IndexedDB local history with JSON backup/restore; see the app README for quantity and week definitions.
 
 ## REL Schedule Alert
 

@@ -7,9 +7,6 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    // 2DID Mapping history.
-    // 기존 Mapping app은 로그인 없이 GitHub Pages에서 바로 저장하는 구조입니다.
-    // 운영용으로 잠글 때는 `if true`를 Auth 조건으로 변경하세요.
     match /mappingHistories/{historyId} {
       allow read, create, update, delete: if true;
 
@@ -18,149 +15,137 @@ service cloud.firestore {
       }
     }
 
-    // MTK Assy Yield raw data.
     match /yieldSummaryTapRaw/{docId} {
       allow read: if signedIn();
-
       allow create, update: if signedIn()
         && request.resource.data.keys().hasAll([
-          'sod',
-          'sckInputLotNo',
-          'inQty',
-          'dedupeKey',
-          'uploadedAt'
+          'sod', 'sckInputLotNo', 'inQty', 'dedupeKey', 'uploadedAt'
         ])
         && request.resource.data.dedupeKey == docId;
-
       allow delete: if signedIn();
     }
 
-    // MTK OS Comparison raw data.
     match /osComparisonRaw/{docId} {
       allow read: if signedIn();
-
       allow create, update: if signedIn()
         && request.resource.data.keys().hasAll([
-          'inputDate',
-          'lotId',
-          'osInQty',
-          'dedupeKey',
-          'uploadedAt'
+          'inputDate', 'lotId', 'osInQty', 'dedupeKey', 'uploadedAt'
         ])
         && request.resource.data.dedupeKey == docId;
-
       allow delete: if signedIn();
     }
 
-
-    // MTK BIN INFORMATION raw data.
     match /binInformationRaw/{docId} {
       allow read: if signedIn();
-
       allow create, update: if signedIn()
         && request.resource.data.keys().hasAll([
-          'reportMonth',
-          'lotId',
-          'inQty',
-          'dedupeKey',
-          'uploadedAt'
+          'reportMonth', 'lotId', 'inQty', 'dedupeKey', 'uploadedAt'
         ])
         && request.resource.data.dedupeKey == docId;
-
       allow delete: if signedIn();
     }
 
-
-    // MNT Monthly CPK/PPK raw data.
     match /mntCpkTrendRaw/{docId} {
       allow read: if signedIn();
-
       allow create, update: if signedIn()
         && request.resource.data.keys().hasAll([
-          'reportMonth',
-          'product',
-          'item',
-          'dedupeKey',
-          'uploadedAt'
+          'reportMonth', 'product', 'item', 'dedupeKey', 'uploadedAt'
         ])
         && request.resource.data.dedupeKey == docId;
-
       allow delete: if signedIn();
     }
 
-
-    // Austin FT MERGE COMPLETION raw data.
-    match /austinFtTrendRaw/{docId} {
-      allow read: if signedIn();
-
-      allow create, update: if signedIn()
-        && request.resource.data.keys().hasAll([
-          'dateKey',
-          'originalLot',
-          'bin',
-          'qty',
-          'dedupeKey',
-          'uploadedAt'
-        ])
-        && request.resource.data.dedupeKey == docId;
-
-      allow delete: if signedIn();
-    }
-
-    // REL Schedule Alert - Reliability test plan raw schedule.
     match /relScheduleRaw/{docId} {
       allow read: if signedIn();
-
       allow create, update: if signedIn()
         && request.resource.data.keys().hasAll([
-          'sheetName',
-          'criteria',
-          'relItem',
-          'dedupeKey',
-          'uploadedAt'
+          'sheetName', 'criteria', 'relItem', 'dedupeKey', 'uploadedAt'
         ])
         && request.resource.data.dedupeKey == docId;
-
       allow delete: if signedIn();
     }
 
-    // REL Schedule Alert - Done / Plan mute 상태.
     match /relScheduleStatus/{docId} {
       allow read: if signedIn();
-
       allow create, update: if signedIn()
         && request.resource.data.keys().hasAll([
-          'kind',
-          'dedupeKey',
-          'updatedAt'
+          'kind', 'dedupeKey', 'updatedAt'
         ])
         && request.resource.data.dedupeKey == docId;
-
       allow delete: if signedIn();
     }
 
-    // REL Schedule Alert - 업로드한 원본 Excel 파일 다운로드 링크 메타데이터.
     match /relScheduleFiles/{docId} {
       allow read: if signedIn();
-
       allow create, update: if signedIn()
         && request.resource.data.keys().hasAll([
-          'fileName',
-          'downloadURL',
-          'uploadedAt'
+          'fileName', 'downloadURL', 'uploadedAt'
         ]);
-
       allow delete: if signedIn();
     }
+    // AI/BI immutable content variants; upload chunks before the manifest.
+    match /aibiDocuments/{docId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn()
+        && request.resource.data.kind in ['AI', 'BI']
+        && request.resource.data.number is string && request.resource.data.number.size() > 0
+        && request.resource.data.revision is string && request.resource.data.revision.size() > 0
+        && request.resource.data.digest is string
+        && request.resource.data.chunkCount is int && request.resource.data.chunkCount > 0;
+      match /chunks/{chunkId} {
+        allow read: if signedIn();
+        allow create, update: if signedIn()
+          && request.resource.data.keys().hasOnly(['index','data'])
+          && request.resource.data.index is int && request.resource.data.index >= 0
+          && request.resource.data.data is string && request.resource.data.data.size() <= 360000;
+      }
+    }
+    match /qaIssueSummary/{docId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn()
+        && request.resource.data.lot is string && request.resource.data.lot.size() > 0
+        && request.resource.data.description is string && request.resource.data.description.size() > 0;
+    }
 
-    // MNT Hold Lot List: isolated event collection (no subcollections).
+
+
     match /mntHoldLotEvents/{docId} {
       allow read, delete: if signedIn();
       allow create, update: if signedIn()
-        && request.resource.data.keys().hasOnly(['event', 'lot'])
-        && request.resource.data.event is string
-        && request.resource.data.lot is string;
+        && request.resource.data.keys().hasOnly(['event','lot'])
+        && request.resource.data.event is string && request.resource.data.lot is string;
     }
+    match /dailyTrackerVersions/{docId} {
+      allow read, delete: if signedIn();
+      allow create, update: if signedIn() && request.resource.data.series is string
+        && request.resource.data.digest is string && request.resource.data.chunkCount is int
+        && request.resource.data.chunkCount > 0;
+      match /chunks/{chunkId} {
+        allow read, delete: if signedIn();
+        allow create, update: if signedIn() && request.resource.data.index is int
+          && request.resource.data.data is string && request.resource.data.data.size() <= 360000;
+      }
+    }
+    match /pcnHistories/{docId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && request.resource.data.historyKey is string
+        && request.resource.data.changeFrom is string && request.resource.data.changeTo is string;
+    }
+    match /faRequestVersions/{docId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && request.resource.data.requestId is string
+        && request.resource.data.digest is string && request.resource.data.chunkCount is int
+        && request.resource.data.chunkCount > 0 && request.resource.data.revision is int;
+      match /chunks/{chunkId} {
+        allow read: if signedIn();
+        allow create, update: if signedIn() && request.resource.data.index is int
+          && request.resource.data.index >= 0 && request.resource.data.data is string
+          && request.resource.data.data.size() <= 360000;
+      }
+    }
+
+
+
 
     match /{document=**} {
       allow read, write: if false;

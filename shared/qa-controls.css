@@ -1,0 +1,10 @@
+/* Match REL filter controls without changing application grids or ordering. */
+:is(.library-side,.issue-panel,.filters) label{font-family:inherit;font-size:12px;font-weight:700;color:#617589}
+:is(.library-side,.issue-panel,.filters) :is(input:not([type=checkbox]):not([type=radio]),select,textarea){box-sizing:border-box;min-height:42px;padding:10px 12px;border:1px solid #d5e1ee;border-radius:7px;background:#fff;color:#19324a;font-family:inherit;font-size:13px;line-height:20px;box-shadow:none;outline:none}
+:is(.library-side,.issue-panel,.filters) :is(input,textarea)::placeholder{color:#7b8b9b;font-weight:400;opacity:1}
+:is(.library-side,.issue-panel,.filters) select{font-weight:600}
+:is(.library-side,.issue-panel,.filters) :is(input,select,textarea):focus-visible{border-color:#6a97ce;box-shadow:0 0 0 3px #265eb419;outline:2px solid transparent;outline-offset:1px}
+.issue-panel :is(input,textarea){max-width:100%}
+.issue-panel #issueText{resize:vertical;margin:8px 0;vertical-align:top}
+.issue-panel input[type=file]{width:100%;margin:0 0 8px;font-size:12px;padding:8px}
+.issue-panel input[type=file]::file-selector-button{font:inherit;border:1px solid #d5e1ee;border-radius:5px;padding:5px 9px;margin-right:8px;background:#f4f7fb;color:#234566;cursor:pointer}

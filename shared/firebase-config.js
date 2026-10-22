@@ -25,8 +25,6 @@ export const mtkYieldFirebaseConfig = {
 // MNT CPK Trend uses the same Firebase project as MTK Yield Trend by default.
 export const mntCpkFirebaseConfig = mtkYieldFirebaseConfig;
 
-// Austin FT Trend uses the same Firebase project as MTK Yield Trend by default.
-export const austinFtFirebaseConfig = mtkYieldFirebaseConfig;
 
 // REL Schedule Alert uses the same Firebase project as MTK Yield Trend by default.
 export const relScheduleFirebaseConfig = mtkYieldFirebaseConfig;
