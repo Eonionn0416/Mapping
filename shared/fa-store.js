@@ -5,7 +5,8 @@ function reload(){const data=JSON.parse(localStorage.getItem(KEY)||'[]');if(!Arr
 function merge(incoming){const m=new Map(versions.map(v=>[v.id,v]));for(const v of incoming)m.set(validate(v).id,copy(v));const next=[...m.values()];localStorage.setItem(KEY,JSON.stringify(next));versions=next;return versions;}
 function latest(){const m=new Map();for(const v of versions){const old=m.get(v.requestId);if(!old||String(v.savedAtText)>String(old.savedAtText)||(v.savedAtText===old.savedAtText&&v.revision>old.revision))m.set(v.requestId,v);}return [...m.values()].sort((a,b)=>String(b.record.date).localeCompare(String(a.record.date))||b.savedAtText.localeCompare(a.savedAtText));}
 function forLot(lot,customer=''){return latest().filter(v=>(!customer||norm(v.record.customer)===norm(customer))&&v.record.lots.some(l=>norm(l)===norm(lot)));}
-function init(seed=[]){reload();const added=seed.filter(s=>!versions.some(v=>v.id===s.id));if(added.length)merge(added);return latest();}
-root.FAStore={KEY,init,reload,merge,latest,forLot,all:()=>copy(versions),validate};
+function init(seed=[]){reload();if(localStorage.getItem("qa-fa-seed-disabled-v1")==="true")return latest();const added=seed.filter(s=>!versions.some(v=>v.id===s.id));if(added.length)merge(added);return latest();}
+function clear(){localStorage.setItem("qa-fa-seed-disabled-v1","true");localStorage.setItem("qa-fa-autoload-disabled-v1","true");localStorage.setItem(KEY,"[]");versions=[];}
+root.FAStore={clear,KEY,init,reload,merge,latest,forLot,all:()=>copy(versions),validate};
 if(typeof module!=='undefined')module.exports=root.FAStore;
 })(typeof globalThis!=='undefined'?globalThis:this);

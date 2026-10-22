@@ -132,12 +132,12 @@ service cloud.firestore {
         && request.resource.data.changeFrom is string && request.resource.data.changeTo is string;
     }
     match /faRequestVersions/{docId} {
-      allow read: if signedIn();
+      allow read, delete: if signedIn();
       allow create, update: if signedIn() && request.resource.data.requestId is string
         && request.resource.data.digest is string && request.resource.data.chunkCount is int
         && request.resource.data.chunkCount > 0 && request.resource.data.revision is int;
       match /chunks/{chunkId} {
-        allow read: if signedIn();
+        allow read, delete: if signedIn();
         allow create, update: if signedIn() && request.resource.data.index is int
           && request.resource.data.index >= 0 && request.resource.data.data is string
           && request.resource.data.data.size() <= 360000;
