@@ -1,4 +1,4 @@
-import {collect,related,link} from '../../shared/search-sources.js?v=38';
+import {collect,related,link} from '../../shared/search-sources.js?v=44';
 const $=id=>document.getElementById(id),C=QACatalog,esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));let data=[],states=[],shown=[],pending=[],busy=false,loaded=false,issues=[],cloud;const STORE='qa-issue-summary-v1';
 try{issues=JSON.parse(localStorage.getItem(STORE)||'[]');if(!Array.isArray(issues))throw Error('이슈 저장 형식 오류');}catch(e){$('issueStatus').textContent=e.message;issues=[];}
 const q=()=>({customer:$('customer').value.trim(),device:$('device').value.trim(),lot:$('lot').value.trim(),ai:$('ai').value.trim(),exactLot:$('match').value==='exact',system:$('system').value});

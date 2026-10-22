@@ -65,6 +65,7 @@ function firestoreErrorMessage(error) {
   if (code.includes('permission-denied')) {
     return 'Firestore 권한이 막혀 있습니다. Firebase Console > Firestore Rules에서 mappingHistories 읽기/쓰기를 허용한 뒤 Publish 해야 합니다.';
   }
+  if(code.includes('resource-exhausted'))return 'Firestore 사용량 한도 초과: 저장 용량 또는 오늘의 읽기/쓰기 한도를 확인하세요. 이력을 삭제해도 일일 사용량은 초기화되지 않습니다. Firebase Console > mapping-17842 > Usage and billing에서 확인하고 필요하면 Blaze 요금제로 변경하세요.';
   return error?.message || String(error);
 }
 
@@ -97,6 +98,9 @@ function normalizeRows(rows) {
     ['LOT ID', 'STRIP ID', 'UNIT ID', 'WAFER ID'].forEach(col => {
       normalized[col] = hasValue(normalized[col]) ? String(normalized[col]).trim() : '';
     });
+    const originalNumber=normalized['#'] ?? normalized['No#'] ?? '';
+    const known=(globalThis.QAUnitNumbers||[]).filter(r=>r.unitId===normalized['UNIT ID']&&r.lot===normalized['LOT ID'].toUpperCase().replace(/\s+/g,''));
+    normalized['#']=originalNumber!==''?originalNumber:known.length===1?known[0].number:'';
     normalized.X = toFiniteNumberOrBlank(normalized.X);
     normalized.Y = toFiniteNumberOrBlank(normalized.Y);
     normalized['WAFER COL'] = toFiniteNumberOrBlank(normalized['WAFER COL']);
@@ -109,6 +113,9 @@ function normalizeRows(rows) {
 function compactRow(row) {
   return {
     __idx: Number(row.__idx),
+    '#': row['#'] ?? '',
+    Device: String(row.Device ?? row.DEVICE ?? row['DEVICE NO'] ?? ''),
+    Run: String(row.Run ?? row.RUN ?? row['RUN NO'] ?? ''),
     'LOT ID': String(row['LOT ID'] ?? ''),
     'STRIP ID': String(row['STRIP ID'] ?? ''),
     X: toFiniteNumberOrBlank(row.X),
@@ -814,7 +821,11 @@ async function saveHistoryToFirestore(item, rows) {
     ft: item.ft,
     bins: item.bins,
     comment: item.comment,
+    softBin: item.softBin,
+    failMode: item.failMode,
+    limit: item.limit,
     snapshot: item.snapshot,
+    searchMeta: [...new Set(rows.flatMap(r=>[r['LOT ID'],r.Device,r.DEVICE,r['DEVICE NO'],r.Run,r.RUN,r['RUN NO']]).filter(Boolean))].join(' '),
     createdAtText: item.createdAtText,
     createdAt: serverTimestamp(),
     rowCount: rowsCompact.length,
@@ -846,7 +857,7 @@ async function loadHistoriesFromFirestore() {
     const snap = await getDocs(q);
     state.histories = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderHistories();
-    const linkedHistory=new URLSearchParams(location.search).get("qaHistory");if(linkedHistory)await restoreHistoryToMapping(linkedHistory);
+    const linkedHistory=new URLSearchParams(location.search).get("qaHistory");if(linkedHistory){await restoreHistoryToMapping(linkedHistory);if(new URLSearchParams(location.search).get('qaReport')==='1'&&state.activeHistoryId===linkedHistory)exportExcelReport();}
   } catch (error) {
     console.error('Firestore history load failed:', error);
     $('requestList').className = 'request-list empty';
@@ -889,6 +900,14 @@ async function clearAllHistoriesFromFirestore() {
   }
 }
 
+function readFailureFields(){
+ const softBin=$('reqSoftBin').value.trim(),failMode=$('reqFailMode').value.trim(),raw=$('reqLimit').value.trim();
+ if(!softBin)throw Error('Soft Bin을 입력하세요.');
+ if(!failMode)throw Error('Fail mode를 입력하세요. 예: Open, Short, Leakage');
+ if(!/^(?:\d+(?:\.\d+)?|\.\d+)\s*%?$/.test(raw))throw Error('Limit을 0.1%처럼 입력하세요.');
+ const value=Number(raw.replace('%','').trim());if(value<0||value>100)throw Error('Limit은 0~100% 범위로 입력하세요.');
+ return {softBin,failMode,limit:String(value)+'%'};
+}
 function setupRequestForm() {
   const binBox = $('binCheckboxes');
   for (let i = 2; i <= 20; i++) {
@@ -904,7 +923,9 @@ function setupRequestForm() {
       alert('먼저 2DID Excel을 업로드하고 Mapping 결과를 만든 뒤 저장하세요.');
       return;
     }
+    let failure;try{failure=readFailureFields();}catch(error){alert(error.message);return;}
     const item = {
+      ...failure,
       id: crypto.randomUUID(),
       createdAtText: new Date().toLocaleString('ko-KR'),
       title: $('reqTitle').value.trim(),
@@ -956,6 +977,7 @@ function renderHistories() {
       <div class="request-meta">
         In Qty: ${Number(s.inQty).toLocaleString()} / Fail Qty: ${Number(s.failQty).toLocaleString()} / Fail Rate: ${Number(s.failRate).toFixed(4)}%<br>
         File: ${escapeHtml(item.snapshot?.sourceFileName || '-')} / Created: ${escapeHtml(item.createdAtText || '-')}<br>
+        Soft Bin: ${escapeHtml(item.softBin || '미기재')} · Fail mode: ${escapeHtml(item.failMode || '미기재')} · Limit: ${escapeHtml(item.limit || '미기재')}<br>
         ${item.comment ? `Comment: ${escapeHtml(item.comment)}` : ''}
       </div>
     `;
@@ -1012,6 +1034,9 @@ async function restoreHistoryToMapping(id, options = {}) {
     $('reqTitle').value = item.title || '';
     $('reqFt').value = item.ft || 'FT1';
     $('reqComment').value = item.comment || '';
+    $('reqSoftBin').value = item.softBin || '';
+    $('reqFailMode').value = item.failMode || '';
+    $('reqLimit').value = item.limit || '';
     $('binCheckboxes').querySelectorAll('input').forEach(input => {
       input.checked = (item.bins || []).includes(input.value);
     });
@@ -1135,7 +1160,8 @@ function buildMapWorksheet(config, filteredSet, options = {}) {
         return;
       }
       const failCount = rows.filter(unit => Number(unit.Fail) > 0).length;
-      if (customDisplay) {
+      if(options.unitNumbers){row.push([...new Set(rows.map(r=>r['#']??r['No#']??'').filter(v=>v!==''&&v!=null).map(v=>'#'+String(v).replace(/^#/,'')))].join(', '));
+      } else if (customDisplay) {
         // Custom MERGE sheet: normal/Input Qty text is removed, fail cells keep Fail Qty only.
         row.push(failCount > 0 ? failCount : '');
       } else {
@@ -1232,6 +1258,9 @@ function makeSummaryWorksheet() {
     ['Title', $('reqTitle').value.trim() || '-'],
     ['FT Step', $('reqFt').value || '-'],
     ['Fail Bin', selectedBins.join(', ') || '-'],
+    ['Soft Bin', $('reqSoftBin').value.trim() || '-'],
+    ['Fail mode', $('reqFailMode').value || '-'],
+    ['Limit', $('reqLimit').value.trim() || '-'],
     ['Comment', $('reqComment').value.trim() || '-'],
     ['Source File', state.sourceFileName || '-'],
     ['Report Includes', 'Strip Map + Wafer Map'],
@@ -1259,10 +1288,12 @@ function makeSummaryWorksheet() {
 }
 
 function makeDataWorksheet(rows, name, filteredSet = null) {
-  const cols = filteredSet ? [...REQUIRED_COLUMNS, 'Included In Current Filter'] : REQUIRED_COLUMNS;
+  const exportColumns=['No#',...REQUIRED_COLUMNS];
+  const cols = filteredSet ? [...exportColumns, 'Included In Current Filter'] : exportColumns;
   const aoa = [cols];
   rows.forEach(row => {
-    const base = toAoaRow(row, REQUIRED_COLUMNS);
+    const number=row['#']??row['No#']??'';
+    const base = toAoaRow({...row,'No#':number===''?'':'#'+String(number).replace(/^#/, '')}, exportColumns);
     if (filteredSet) base.push(filteredSet.has(row.__idx) ? 'Y' : 'N');
     aoa.push(base);
   });
@@ -1466,6 +1497,10 @@ function exportExcelReport() {
     XLSX_LIB.utils.book_append_sheet(wb, makeDataWorksheet(state.rawRows, 'Raw 2DID', filteredSet), uniqueSheetName('2DID Information Detail', used));
     XLSX_LIB.utils.book_append_sheet(wb, makeDataWorksheet(state.rawRows, 'Raw 2DID'), uniqueSheetName('Raw Uploaded 2DID', used));
 
+    const stripRows=rowsForMapType(state.rawRows,'strip');
+    XLSX_LIB.utils.book_append_sheet(wb,buildMapWorksheet({rows:stripRows,titleGroup:'MERGE',isMerge:true,mapType:'strip'},filteredSet,{unitNumbers:true}),uniqueSheetName('Strip_MERGE_No',used));
+    const waferRows=rowsForMapType(state.rawRows,'wafer');
+    XLSX_LIB.utils.book_append_sheet(wb,buildMapWorksheet({rows:waferRows,titleGroup:'MERGE',isMerge:true,mapType:'wafer'},filteredSet,{unitNumbers:true}),uniqueSheetName('Wafer_MERGE_No',used));
     const fileName = buildExcelReportFileName();
     downloadExcelWorkbook(wb, fileName);
   } catch (error) {

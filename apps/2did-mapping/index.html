@@ -98,6 +98,11 @@
               <legend>Fail Bin 지정</legend>
               <div id="binCheckboxes" class="bin-grid"></div>
             </fieldset>
+            <div class="wide" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px">
+              <label>Soft Bin <input id="reqSoftBin" required placeholder="예: SB5 / 5, 6" /></label>
+              <label>Fail mode <input id="reqFailMode" required list="failModeSuggestions" placeholder="예: Open, Short, Leakage 또는 직접 입력" /><datalist id="failModeSuggestions"><option value="Open"></option><option value="Short"></option><option value="Leakage"></option></datalist></label>
+              <label>Limit (%) <input id="reqLimit" required inputmode="decimal" placeholder="예: 0.1%" /></label>
+            </div>
             <label class="wide">Comment <textarea id="reqComment" rows="3" placeholder="요청 배경 / 고객 이슈 / 특이사항"></textarea></label>
             <button class="primary-btn" type="submit">Save mapping result</button>
           </form>
@@ -172,7 +177,7 @@
         <div id="requestList" class="request-list empty">저장된 결과가 없습니다.</div>
       </section>
     </section>
-  </main>
+<section class="card"><h2>Tray Unit 위치 가이드</h2><p>첨부 기준: Tray no.1의 오른쪽 위가 Unit #1이며 첫 행은 왼쪽으로 진행합니다. Tray 방향 참고용이며 Strip / Wafer X·Y 좌표축과는 별도입니다.</p><img src="tray-guide.png?v=41" alt="Tray no.1: 왼쪽 위 모서리 기준점, 오른쪽 위 Unit 1에서 왼쪽으로 진행" style="display:block;width:240px;max-width:100%;height:auto"></section>  </main>
 
   <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.min.js"></script>
   <script>
@@ -181,6 +186,6 @@
       document.write('<script src="https://unpkg.com/xlsx-js-style@1.2.0/dist/xlsx.bundle.min.js"><\/script>');
     }
   </script>
-  <script type="module" src="mapping-app.js"></script>
+  <script src="../../shared/unit-numbers.js?v=41"></script><script type="module" src="mapping-app.js?v=45"></script>
 <script defer src="../../shared/qa-context.js?v=34"></script></body>
 </html>
