@@ -269,9 +269,10 @@ export function extractMeta(rows, headerRowIndex) {
     }
     if (value && !meta[rule[1]]) meta[rule[1]] = value;
   }
-  const lots=[], devices=[];
-  for(let r=0;r<limit;r++){const h=(rows[r]||[]).map(headerKey),lc=h.indexOf('lot'),dc=h.indexOf('device');if(lc<0||dc<0)continue;
-    for(let n=r+1;n<limit;n++){const rr=rows[n]||[];if(!rr.some(v=>normalizeText(v)))break;const lot=normalizeText(rr[lc]),dev=normalizeText(rr[dc]);if(lot)lots.push(lot);if(dev)devices.push(dev);}break;}
+  const lots=[], devices=[], aiNumbers=[];
+  for(let r=0;r<limit;r++){const h=(rows[r]||[]).map(headerKey),lc=h.indexOf('lot'),dc=h.indexOf('device'),ac=h.findIndex(v=>['aino','bino','aibino'].includes(v));if(lc<0||dc<0)continue;
+    for(let n=r+1;n<limit;n++){const rr=rows[n]||[];if(!rr.some(v=>normalizeText(v)))break;const lot=normalizeText(rr[lc]),dev=normalizeText(rr[dc]);if(lot)lots.push(lot);if(dev)devices.push(dev);if(ac>=0&&normalizeText(rr[ac]))aiNumbers.push(normalizeText(rr[ac]));}break;}
+  if(aiNumbers.length)meta.aiNo=[...new Set(aiNumbers)].join(", ");
   meta.lots=[...new Set(lots)]; meta.devices=[...new Set(devices)];
   meta.reportKind=meta.changeFrom||meta.changeTo?'PCN':'Reliability';
   return meta;

@@ -182,8 +182,22 @@ function numericValue(s,a,visiting=new Set()){
 }
 function dueFormula(refs,extra=0){const list=[...new Set(refs)].join(',');return list?`IF(COUNT(${list})=${new Set(refs).size},IF(MIN(${list})>0,MAX(${list})${extra?'+'+extra:''},""),"")`:'""';}
 
+
+function relocateAINumber(s){
+ const cs=[...s.cells.values()],h=cs.find(c=>key(c.v)==='remark'&&cs.some(d=>d.r===c.r&&key(d.v)==='device')&&cs.some(d=>d.r===c.r&&['lot','lotno','lotid'].includes(key(d.v))));if(!h)return;
+ const existing=cs.find(c=>c.r===h.r&&['aino','bino','aibino'].includes(key(c.v)));
+ const merge=s.merges.find(m=>h.r>=m.s.r&&h.r<=m.e.r&&h.c>=m.s.c&&h.c<=m.e.c),dest=existing?.c||(merge?merge.e.c:h.c)+1;
+ const target=column(dest)+h.r;if(!existing&&text(s.value(h.r,dest)))throw Error(s.name+': Remark 우측 셀이 사용 중이라 AI No# 이동을 중지했습니다.');
+ const old=cs.find(c=>c.r<h.r&&['aino','bino','aibino'].includes(key(c.v)));const oldRef=old?s.anchor(old.r,old.c+1):'',ai=old?text(s.cells.get(oldRef)?.v):'';
+ setCell(s,target,'AI No#',h.node.getAttribute('s'));
+ const lotCol=cs.find(c=>c.r===h.r&&['lot','lotno','lotid'].includes(key(c.v))).c;
+ let placed=false;for(let r=h.r+1;r<(s.start||s.header?.r||h.r+1);r++){if(!text(s.value(r,lotCol)))continue;const a=s.anchor(r,dest);if(!text(s.cells.get(a)?.v)&&ai){setCell(s,a,ai);placed=true;}}
+ if(ai&&!placed){const a=s.anchor(h.r+1,dest);const existing=text(s.cells.get(a)?.v);setCell(s,a,existing&&existing!==ai?existing+', '+ai:ai);}
+ if(old){setCell(s,old.a,'');if(oldRef!==old.a)setCell(s,oldRef,'');}
+ const dimension=first(s.xml,'dimension');if(dimension){const range=rect(dimension.getAttribute('ref'));dimension.setAttribute('ref',column(range.s.c)+range.s.r+':'+column(Math.max(range.e.c,dest))+range.e.r);}
+}
 export async function upgradeWorkbook(buffer,fileName,options={}){
- const pkg=await readPlanWorkbook(buffer,fileName);if(pkg.date1904)throw Error('1904 date-system workbook requires conversion to 1900 date system first.');
+ const pkg=await readPlanWorkbook(buffer,fileName);for(const s of pkg.sheets)relocateAINumber(s);if(pkg.date1904)throw Error('1904 date-system workbook requires conversion to 1900 date system first.');
  const today=options.today||seoulToday(),now=dateSerial(today),styles=options.rebuildLayout===true?addStyles(pkg):null,audit=[],tableSpecs=[];
  // Persist manual changes using stable source addresses BEFORE moving the table.
  for(const s of pkg.sheets){for(const change of (options.changes||[]).filter(c=>c.sheetName===s.name)){

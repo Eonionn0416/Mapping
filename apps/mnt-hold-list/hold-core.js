@@ -25,17 +25,29 @@
   }
   function mailDirectives(mail,knownLots,rules=[],scopeLots=[]){
     const results=[];
-    for(const line of topReply(mail)){
+    const lines=topReply(mail).flatMap(line=>{const cuts=[...line.matchAll(/\b(?:please\s+)?(?:release|hold)\s+[A-Z][A-Z0-9_-]*\d[A-Z0-9_-]*\.[A-Z0-9]+/gi)].map(m=>m.index).filter(i=>/\b[A-Z][A-Z0-9_-]*\d[A-Z0-9_-]*\.[A-Z0-9]+/i.test(line.slice(0,i)));return [0,...cuts,line.length].slice(0,-1).map((a,i)=>line.slice(a,[...cuts,line.length][i]).trim()).filter(Boolean);});
+    for(const line of lines){
       const ids=[...new Set((line.match(/\b[A-Z][A-Z0-9_-]*\d[A-Z0-9_-]*\.[A-Z0-9]+\b/gi)||[]).map(lot))];
       let pattern=line;for(const id of ids)pattern=pattern.replace(new RegExp(id.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'gi'),'{LOT}');
       const custom=rules.find(r=>templateKey(r.template)===templateKey(pattern)||(!r.template.includes('{LOT}')&&templateKey(r.template)===templateKey(line)));
-      if(!custom&&!actionLine(line))continue;
+      if(!custom&&!actionLine(line)&&!ids.length)continue;
       // Named instructions target only their named lots; unnamed replies need an explicit sheet/user scope.
       const targets=ids.length?ids:scopeLots;if(!targets.length)continue;
       const status=custom?custom.status:disposition(line),basis=custom?'Verified template: '+custom.template:'Customer reply';
       for(const id of targets){const resolved=resolveLot(id,knownLots);results.push({lot:resolved.id,mentionedLot:lot(id),status:resolved.ambiguous?'Review':status,sentence:text(line),basis:resolved.ambiguous?'Ambiguous lot suffix — select the full lot':basis+(resolved.alias?' (matched '+resolved.alias+')':''),known:resolved.known});}
     }
     return results;
+  }
+  function learnedRules(decisions){
+    const candidates=new Map();
+    for(const d of decisions){
+      for(const clause of mailDirectives(d.sentence,[d.lot],[],[d.lot]).filter(c=>c.lot===d.lot)){
+        const template=clause.sentence.replace(/\b[A-Z][A-Z0-9_-]*\d[A-Z0-9_-]*\.[A-Z0-9]+\b/gi,'{LOT}');
+        const k=templateKey(template),old=candidates.get(k);
+        if(old&&old.status!==d.status)old.conflict=true;else if(!old)candidates.set(k,{template,status:d.status});
+      }
+    }
+    return [...candidates.values()].filter(r=>!r.conflict);
   }
   function mailDecision(mail,id,rules=[],knownLots=[id],scopeLots=knownLots){
     const matches=mailDirectives(mail,knownLots,rules,scopeLots).filter(d=>d.lot===lot(id));
@@ -64,7 +76,12 @@
     const number=Number((sheet.match(/(\d+)\s*$/)||[])[1]);
     if(!number)return {events:[],warnings:[sheet+': sheet name must end in a number.']};
     const headers=[];rows.forEach((r,i)=>{const k=r.map(key);const col=k.findIndex(x=>['lot','lotid','lotno','lotnumber'].includes(x));if(col>=0)headers.push({i,col,k,r});});
-    if(!headers.length)return {events:[],warnings:[sheet+': no lot table found.']};
+    if(!headers.length){
+      const comment=topReply(rows.map(r=>r.map(text).filter(Boolean).join(' ')).join('\n')).join('\n');
+      const ds=mailDirectives(comment,[],rules),ids=[...new Set(ds.map(d=>d.lot))];
+      const events=ids.map((id,i)=>{const d=mailDecision(comment,id,rules,ids,[]);return normalizeEvent({series,sheet,sheetNumber:number,row:i+1,lot:id,comment,status:d.status,disposition:d.sentence,basis:'Customer reply',reason:comment,fields:{},ft:[]});});
+      return {events,warnings:events.length?[]:[sheet+': no lot table or named customer instruction found.']};
+    }
     // Only the top customer reply is eligible as a sheet-wide instruction.
     const lead=rows.slice(0,headers[0].i);let reply=[];
     for(const row of lead){const s=row.map(text).filter(Boolean).join(' ');if(/^(from:|sent:|subject:|发件人:|发送时间:|主题:|best regards|regards)/i.test(s))break;if(s)reply.push(s);}
@@ -102,6 +119,6 @@
     const groups=new Map();for(const e of events){if(!groups.has(e.lot))groups.set(e.lot,[]);groups.get(e.lot).push(e);}
     return [...groups].map(([lot,history])=>{history.sort(compare);const latest=history.at(-1);const fields={};let ft=[],reason='';for(const e of history){Object.assign(fields,e.fields);if(e.ft.length)ft=e.ft;if(e.reason)reason=e.reason;}const same=history.filter(e=>e.sheetNumber===latest.sheetNumber&&e.series===latest.series&&(e.file||'')===(latest.file||'')&&uploadOrder(e)===uploadOrder(latest));const conflict=new Set(same.map(e=>e.status)).size>1;return {lot,status:conflict?'Review':latest.status,latest,fields,ft,reason,history};}).sort((a,b)=>a.lot.localeCompare(b.lot));
   }
-  const api={topReply,ruleText,resolveLot,repairEvents,mailDirectives,mailDecision,parseSheet,summarize,disposition,lot,repairPending,normalizeEvent,sourceKey,uploadOrder};if(typeof module!=='undefined')module.exports=api;root.HoldCore=api;
+  const api={learnedRules,topReply,ruleText,resolveLot,repairEvents,mailDirectives,mailDecision,parseSheet,summarize,disposition,lot,repairPending,normalizeEvent,sourceKey,uploadOrder};if(typeof module!=='undefined')module.exports=api;root.HoldCore=api;
 })(typeof globalThis!=='undefined'?globalThis:this);
 

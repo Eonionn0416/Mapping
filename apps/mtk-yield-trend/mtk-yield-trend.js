@@ -1,3 +1,4 @@
+let qaAutoBusy=true;
 import { mtkYieldFirebaseConfig } from "../../shared/firebase-config.js";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
 import {
@@ -110,7 +111,7 @@ function setFirebaseStatus(text, type = "warning") {
   el.firebaseStatus.classList.add(type);
 }
 
-function setBusy(isBusy) {
+function setBusy(isBusy) {qaAutoBusy=!!isBusy;
   const hasSelectedRows = selectedAssyRows.length > 0 || selectedOsRows.length > 0 || selectedBinRows.length > 0;
   if (el.exportAssyBtn) el.exportAssyBtn.disabled = isBusy || !assyRows.length;
   if (el.exportOsBtn) el.exportOsBtn.disabled = isBusy || !(osRows.length || binRows.length);
@@ -1071,7 +1072,7 @@ async function insertRowsToCollection(collectionName, rows, existingRows) {
   return { inserted, skipped, updated };
 }
 
-async function uploadSelectedToFirebase() {
+async function uploadSelectedToFirebase(auto = false) {
   if (!db || !currentUser) {
     log("Firebase/Auth가 아직 준비되지 않았습니다.");
     return;
@@ -1118,6 +1119,7 @@ async function uploadSelectedToFirebase() {
 
     await loadFirestoreData();
   } catch (error) {
+    if(auto) throw error;
     log(`Upload Error: ${error.message}`);
     log("Firestore Rules / Anonymous Auth / collection name(yieldSummaryTapRaw, osComparisonRaw, binInformationRaw)을 확인해주세요.");
   } finally {
@@ -2392,3 +2394,7 @@ setupEvents();
 renderSelectedFiles();
 renderMetrics();
 initFirebase();
+
+document.getElementById('exportOsRawBtn').addEventListener('click',()=>{if(!osRows.length){log('저장된 OS Raw Data가 없습니다.');return;}const cols={LOT_ID:'lotId',CUSTOMER:'customer',DEVICE:'device',LEAD:'lead',PCB_VENDOR:'pcbVendor',TOTAL_QTY:'osInQty',TEST_QTY:'testQty',OS_SS:'osSs',TOTAL_OS_REJ:'totalOsRej',OPEN:'openQty',SHORT:'shortQty',REJECT_RATE:'reportRejectRate',OPEN_RATE:'reportOpenRate',SHORT_RATE:'reportShortRate',REMARK:'remark',INPUT_TIME:'inputTime',SOURCE_FILE:'sourceFileName'};const rows=osRows.map(r=>Object.fromEntries(Object.entries(cols).map(([k,v])=>[k,r[v]??'']))),w=XLSX.utils.book_new();XLSX.utils.book_append_sheet(w,XLSX.utils.json_to_sheet(rows),'OS_Raw');XLSX.writeFile(w,'OS_Raw_Data_'+new Date().toISOString().slice(0,10)+'.xlsx');log(rows.length+'개 OS 원본 행 Export 완료');});
+
+QAAutoMail.start('mtk',()=>!!db&&!!currentUser&&!qaAutoBusy&&selectedFiles.length===0,async file=>{const r=await readReportFile(file);if(!r.assyRows.length&&!r.osRows.length&&!r.binRows.length)throw Error('유효한 데이터 없음: '+file.name);selectedFiles=[file];selectedAssyRows=r.assyRows;selectedOsRows=r.osRows;selectedBinRows=r.binRows;renderSelectedFiles();try{await uploadSelectedToFirebase(true);}finally{selectedFiles=[];selectedAssyRows=[];selectedOsRows=[];selectedBinRows=[];}});
