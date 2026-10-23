@@ -147,6 +147,14 @@ service cloud.firestore {
 
 
 
+    match /npiVersions/{id} {
+      allow read, delete: if signedIn();
+      allow create, update: if signedIn() && request.resource.data.digest is string && request.resource.data.chunkCount is int && request.resource.data.savedAtText is string;
+      match /chunks/{chunkId} {
+        allow read, delete: if signedIn();
+        allow create, update: if signedIn() && request.resource.data.index is int && request.resource.data.data is string && request.resource.data.data.size() <= 360000;
+      }
+    }
     match /{document=**} {
       allow read, write: if false;
     }
