@@ -3,19 +3,25 @@ const $=id=>document.getElementById(id);
 let base=null,revisions=[],all=[],groups=[],summaryText='',limit=20,generation=0,reportMeta=null;
 const snapshots=new WeakMap();
 const readInfo=new WeakMap();
-const APP_VERSION='50';
+const APP_VERSION='52';
 let diagnostics=[];
+const selectionVersion={base:0,rev:0}, failedSelection={base:null,rev:null};
+let pendingSelections=0;
+function selectionReady(){return !pendingSelections&&!failedSelection.base&&!failedSelection.rev;}
+function updateSelectionState(){$('compare').disabled=!selectionReady();}
+
 function fileError(file,e){
- const message=`${file.name}: 브라우저가 파일 내용을 읽지 못했습니다 (${e.name||'Error'}). Excel 저장을 마친 뒤 파일을 닫고, 아래 ‘다시 읽기’를 누르거나 같은 파일을 다시 선택해 주세요. 계속 실패하면 오류 진단 TXT를 저장해 주세요.`;
+ const message=`${file.name}: 브라우저가 파일 내용을 읽지 못했습니다 (${e.name||'Error'}). 파일의 내용을 읽는 단계에서 실패했습니다. ‘다시 읽기’로 새 파일 참조를 선택해 주세요. 서식·하이퍼링크 수정은 필요하지 않습니다. 계속 실패하면 오류 진단 TXT를 저장해 주세요.`;
  diagnostics.push({time:new Date().toISOString(),stage:'file-read',file:file.name,size:file.size,lastModified:file.lastModified,error:e.name,message:e.message,...readInfo.get(file)});
  return new Error(message);
 }
 async function pickFresh(kind){
- if(!window.showOpenFilePicker){$('status').textContent='직접 선택은 Chrome / Edge에서 지원됩니다. 아래 파일 선택을 사용하세요.';return;}
- try{const handles=await window.showOpenFilePicker({multiple:kind==='rev',types:[{description:'Excel',accept:{'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':['.xlsx','.xlsm'],'application/vnd.ms-excel':['.xls']}}]});
- const files=[];for(const handle of handles){let file=await handle.getFile();let buffer;try{buffer=await file.arrayBuffer();}catch{file=await handle.getFile();buffer=await file.arrayBuffer();}if(buffer.byteLength!==file.size)throw Error('파일 읽기가 완료되지 않았습니다.');const stable=new File([buffer],file.name,{type:file.type,lastModified:file.lastModified});snapshots.set(stable,Promise.resolve({buffer}));readInfo.set(stable,{method:'direct-picker-memory',attempts:[]});files.push(stable);}
- await setFiles(kind,files);
- }catch(e){if(e.name!=='AbortError')$('status').textContent='직접 선택 실패: '+e.message;}
+ if(!window.showOpenFilePicker){$(kind==='base'?'baseFile':'revFiles').click();return;}
+ try{
+  const handles=await window.showOpenFilePicker({id:'aibi-'+kind,multiple:kind==='rev',types:[{description:'Excel',accept:{'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':['.xlsx','.xlsm'],'application/vnd.ms-excel':['.xls']}}]});
+  const files=[];for(const handle of handles){const file=await handle.getFile();file.freshHandle=handle;files.push(file);}
+  await setFiles(kind,files);
+ }catch(e){if(e.name!=='AbortError'){$('status').textContent='새 파일 선택 실패: '+e.message;failedSelection[kind]=[];updateSelectionState();diagnostics.push({time:new Date().toISOString(),stage:'direct-picker',side:kind,error:e.name,message:e.message});}}
 }
 $('pickBase').onclick=()=>pickFresh('base');$('pickRev').onclick=()=>pickFresh('rev');
 function readerBuffer(file){
@@ -26,7 +32,7 @@ function snapshot(file){
  if(snapshots.has(file))return snapshots.get(file);
  const attempts=[];
  const pending=(async()=>{
-  for(const [method,read] of [['arrayBuffer',()=>file.arrayBuffer()],['FileReader',()=>readerBuffer(file)]]){
+  for(const [method,read] of [['arrayBuffer',()=>file.arrayBuffer()],['FileReader',()=>readerBuffer(file)],...(file.freshHandle?[['freshHandle',async()=>{const fresh=await file.freshHandle.getFile();if(fresh.size!==file.size||fresh.lastModified!==file.lastModified)throw Error('선택 후 파일이 변경되었습니다. 다시 선택하세요.');return fresh.arrayBuffer();}]]:[])]){
    try{const buffer=await read();if(buffer==null||typeof buffer.byteLength!=='number'||buffer.byteLength!==file.size)throw Error('Incomplete file read');readInfo.set(file,{method,attempts});return {buffer};}
    catch(e){attempts.push({method,error:e.name,message:e.message});}
   }
@@ -40,22 +46,39 @@ function snapshot(file){
 const escapeHTML=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function invalidate(){generation++;all=[];groups=[];summaryText='';reportMeta=null;$('results').hidden=true;}
 async function setFiles(kind,files){
- invalidate();const token=generation,selected=kind==='base'?Array.from(files).slice(0,1):Array.from(files);
- if(kind==='base'){base=selected[0]||null;$('baseName').textContent=base?.name||'선택한 파일 없음';}
- else{revisions=selected;$('revNames').textContent=revisions.map(f=>f.name).join(', ')||'선택한 파일 없음';}
- $('status').textContent='선택한 파일을 읽고 있습니다…';
- const loaded=await Promise.all([base,...revisions].filter(Boolean).map(async file=>({file,...await snapshot(file)})));
- if(token!==generation)return;
- const failed=loaded.filter(x=>x.error);
- $('status').textContent=failed.length?failed.map(x=>fileError(x.file,x.error).message).join('\n'):'파일 읽기 완료. 문서 내부 정보를 기준으로 DB에 자동 저장합니다.';
- if(!failed.length)window.dispatchEvent(new CustomEvent('aibi-files-ready'));
+ const selected=kind==='base'?Array.from(files).slice(0,1):Array.from(files);if(!selected.length)return;
+ const ticket=++selectionVersion[kind];pendingSelections++;updateSelectionState();
+ $('status').textContent=(kind==='base'?'원본':'개정')+' 파일을 메모리에 읽고 있습니다…';
+ try{
+  const stable=[];
+  for(const file of selected){
+   if(file.savedBook){stable.push(file);continue;}
+   if(!/\.(xlsx|xlsm|xls)$/i.test(file.name)||file.size>50*1024*1024)throw Error('50MB 이하 Excel 파일을 선택하세요.');
+   const data=await snapshot(file);if(data.error)throw fileError(file,data.error);
+   // Detach from the OS file reference once bytes are successfully read.
+   const memory=new File([data.buffer],file.name,{type:file.type,lastModified:file.lastModified});
+   snapshots.set(memory,Promise.resolve({buffer:data.buffer}));readInfo.set(memory,{...readInfo.get(file),retainedInMemory:true});
+   stable.push(memory);
+  }
+  if(ticket!==selectionVersion[kind])return;
+  invalidate();failedSelection[kind]=null;
+  if(kind==='base'){base=stable[0];$('baseName').textContent=base.name+' · 읽기 완료';}
+  else{revisions=stable;$('revNames').textContent=revisions.map(f=>f.name).join(', ')+' · 읽기 완료';}
+  $('status').textContent='파일 읽기 완료. 성공한 파일은 메모리에서 유지됩니다.';
+  window.dispatchEvent(new CustomEvent('aibi-files-ready'));
+ }catch(e){if(ticket!==selectionVersion[kind])return;failedSelection[kind]=selected;
+  $('status').textContent=e.message+' 기존에 읽은 파일은 유지했습니다. 실패한 '+(kind==='base'?'원본':'개정')+'을 다시 선택해 주세요.';
+ }finally{pendingSelections--;updateSelectionState();}
+}
+for(const [id,kind] of [['baseFile','base'],['revFiles','rev']]){
+ $(id).addEventListener('click',e=>{if(window.showOpenFilePicker){e.preventDefault();pickFresh(kind);}});
 }
 $('baseFile').addEventListener('change',e=>{const files=Array.from(e.target.files);return setFiles('base',files);});
 $('revFiles').addEventListener('change',e=>{const files=Array.from(e.target.files);return setFiles('rev',files);});
 $('retryRead').addEventListener('click',async()=>{
- invalidate();const token=generation,files=[base,...revisions].filter(Boolean);if(!files.length){$('status').textContent='먼저 원본과 개정 파일을 선택해 주세요.';return;}
- $('retryRead').disabled=true;$('status').textContent='파일을 다시 읽고 있습니다…';
- try{files.forEach(f=>snapshots.delete(f));const loaded=await Promise.all(files.map(async file=>({file,...await snapshot(file)})));if(token!==generation)return;const failed=loaded.filter(x=>x.error);$('status').textContent=failed.length?failed.map(x=>fileError(x.file,x.error).message).join('\n'):'파일 다시 읽기 완료. 비교 실행을 눌러 주세요.';}finally{$('retryRead').disabled=false;}
+ const kind=failedSelection.base?'base':failedSelection.rev?'rev':!base?'base':!revisions.length?'rev':null;
+ if(!kind){$('status').textContent='두 파일 모두 읽기 완료 상태입니다. 비교 실행을 누르세요. 파일이 변경되었다면 해당 파일을 새로 선택하세요.';return;}
+ await pickFresh(kind);
 });
 $('whitespace').addEventListener('change',invalidate);
 try{$('processTemplate').value=localStorage.getItem('ai-bi-process-template')||'';}catch(e){}
@@ -78,6 +101,7 @@ async function read(file){
  }return book;
 }
 $('compare').addEventListener('click',async()=>{
+ if(!selectionReady()){$('status').textContent='실패한 파일을 다시 선택하거나 진행 중인 읽기가 끝날 때까지 기다려 주세요.';return;}
  if(!base||!revisions.length){$('status').textContent='원본 하나와 개정 파일을 선택해 주세요.';return;}
  if(typeof XLSX==='undefined'){$('status').textContent='Excel 읽기 파일을 불러오지 못했습니다. shared/vendor 폴더가 함께 설치되었는지 확인해 주세요.';return;}
  const token=++generation,source=base,files=[...revisions],options={ignoreWhitespace:$('whitespace').checked,processTemplate:$('processTemplate').value.trim()};all=[];groups=[];summaryText='';$('results').hidden=true;$('compare').disabled=true;$('status').textContent='파일을 읽고 비교하고 있습니다…';
@@ -144,7 +168,7 @@ function render(){
  $('more').hidden=filtered.length<=limit;
 }
 for(const id of ['fileFilter','processFilter','typeFilter','search'])$(id).addEventListener('input',()=>{limit=20;render();});$('more').addEventListener('click',()=>{limit+=20;render();});
-$('reset').addEventListener('click',()=>{invalidate();base=null;revisions=[];$('baseFile').value='';$('revFiles').value='';$('baseName').textContent=$('revNames').textContent='선택한 파일 없음';$('status').textContent='원본과 개정 파일을 선택해 주세요.';});
+$('reset').addEventListener('click',()=>{invalidate();base=null;revisions=[];selectionVersion.base++;selectionVersion.rev++;failedSelection.base=failedSelection.rev=null;updateSelectionState();$('baseFile').value='';$('revFiles').value='';$('baseName').textContent=$('revNames').textContent='선택한 파일 없음';$('status').textContent='원본과 개정 파일을 선택해 주세요.';});
 $('summaryExport').addEventListener('click',()=>{
  if(!summaryText)return;
  const url=URL.createObjectURL(new Blob(['\ufeff'+summaryText],{type:'text/plain;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download='AI_BI_Gap_Summary.txt';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
@@ -159,6 +183,6 @@ $('export').addEventListener('click',()=>{
 
 function download(name,content,type){const url=URL.createObjectURL(new Blob([content],{type})),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 $('reportExport').addEventListener('click',()=>{if(reportMeta)download('AI_BI_Comparison_Report.html',AIBIReport.create(reportMeta,all,groups,blockTable),'text/html;charset=utf-8');});
-$('diagnosticExport').addEventListener('click',()=>download('AI_BI_Diagnostics.txt',JSON.stringify({version:APP_VERSION,time:new Date().toISOString(),browser:navigator.userAgent,page:location.origin+location.pathname,libraryLoaded:typeof XLSX!=='undefined',files:[base,...revisions].filter(Boolean).map(f=>({name:f.name,size:f.size,lastModified:f.lastModified,read:readInfo.get(f)})),status:$('status').textContent,errors:diagnostics},null,2),'text/plain;charset=utf-8'));
+$('diagnosticExport').addEventListener('click',()=>download('AI_BI_Diagnostics.txt',JSON.stringify({version:APP_VERSION,time:new Date().toISOString(),browser:navigator.userAgent,page:location.origin+location.pathname,libraryLoaded:typeof XLSX!=='undefined',failedFiles:Object.fromEntries(Object.entries(failedSelection).map(([side,files])=>[side,(files||[]).map(f=>({name:f.name,size:f.size,read:readInfo.get(f)}))])),files:[base,...revisions].filter(Boolean).map(f=>({name:f.name,size:f.size,lastModified:f.lastModified,read:readInfo.get(f)})),status:$('status').textContent,errors:diagnostics},null,2),'text/plain;charset=utf-8'));
 
 window.AIBIWorkspace={selected:async()=>Promise.all([base,...revisions].filter(Boolean).map(async f=>({file:f.name,book:await read(f),savedMeta:f.savedRecord}))),use:async(side,record,book)=>setFiles(side,[{name:record.number+' ('+record.revision+').xlsx',savedBook:book,savedRecord:record}])};
