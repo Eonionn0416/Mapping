@@ -59,6 +59,7 @@ let defectTrendRows = [];
 let binTrendRows = [];
 let weeklyDeviceVendorData = { devices: [], wwColumns: [], osMap: new Map(), binMap: new Map() };
 let trendStartMonth = "";
+let trendDurationMonths = 6;
 
 let yieldTrendCharts = [];
 let osTrendCharts = [];
@@ -95,6 +96,8 @@ const el = {
   binTrendCharts: document.getElementById("binTrendCharts"),
   defectLimitSelect: document.getElementById("defectLimitSelect"),
   trendStartMonthSelect: document.getElementById("trendStartMonthSelect"),
+  trendDurationSelect: document.getElementById("trendDurationSelect"),
+  trendPeriodLabel: document.getElementById("trendPeriodLabel"),
   defectPpmBody: document.getElementById("defectPpmBody"),
   assyRawBody: document.getElementById("assyRawBody"),
   osTrendBody: document.getElementById("osTrendBody"),
@@ -328,12 +331,12 @@ function monthLabel(month) {
 }
 
 function isMonthInTrendWindow(month) {
-  if (!trendStartMonth) return true;
+  if (trendDurationMonths === 0 || !trendStartMonth) return true;
   const idx = monthToIndex(month);
   const start = monthToIndex(trendStartMonth);
-  const end = monthToIndex(addMonths(trendStartMonth, 12));
-  if (idx === null || start === null || end === null) return true;
-  return idx >= start && idx <= end;
+  const end = monthToIndex(addMonths(trendStartMonth, trendDurationMonths));
+  if (idx === null || start === null || end === null) return false;
+  return idx >= start && idx < end;
 }
 
 function isCompactDateInTrendWindow(value) {
@@ -360,26 +363,16 @@ function getAvailableTrendMonths() {
 
 function refreshTrendMonthOptions() {
   if (!el.trendStartMonthSelect) return;
-  const months = getAvailableTrendMonths();
-  const previous = el.trendStartMonthSelect.value || trendStartMonth;
-
-  if (!months.length) {
-    trendStartMonth = "";
-    el.trendStartMonthSelect.innerHTML = `<option value="">No data</option>`;
-    return;
-  }
-
-  el.trendStartMonthSelect.innerHTML = months
-    .map(month => `<option value="${escapeHtml(month)}">${escapeHtml(monthLabel(month))} ~ ${escapeHtml(monthLabel(addMonths(month, 12)))}</option>`)
-    .join("");
-
-  if (previous && months.includes(previous)) {
-    trendStartMonth = previous;
-  } else {
-    trendStartMonth = months[Math.max(0, months.length - 12)];
-  }
-
-  el.trendStartMonthSelect.value = trendStartMonth;
+  const available=getAvailableTrendMonths().filter(m=>/^\d{4}-(0[1-9]|1[0-2])$/.test(m));
+  const previous=el.trendStartMonthSelect.value||trendStartMonth;
+  el.trendStartMonthSelect.disabled=trendDurationMonths===0;
+  if(!available.length){trendStartMonth='';el.trendStartMonthSelect.innerHTML='<option value="">No data</option>';el.trendPeriodLabel.textContent='데이터 없음';return;}
+  const latest=available.at(-1),defaultStart=addMonths(latest,-5),first=[available[0],defaultStart,previous].filter(Boolean).sort()[0],months=[];
+  for(let m=first;m<=latest;m=addMonths(m,1))months.push(m);
+  trendStartMonth=previous&&months.includes(previous)?previous:defaultStart;
+  el.trendStartMonthSelect.innerHTML=months.map(m=>`<option value="${escapeHtml(m)}">${escapeHtml(monthLabel(m))}</option>`).join('');
+  el.trendStartMonthSelect.value=trendStartMonth;
+  el.trendPeriodLabel.textContent=trendDurationMonths===0?'전체 저장 기간':`${monthLabel(trendStartMonth)} ~ ${monthLabel(addMonths(trendStartMonth,trendDurationMonths-1))} · ${trendDurationMonths}개월`;
 }
 
 function parseInputDate(value) {
@@ -2269,7 +2262,7 @@ function exportBinReport() {
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(ftWeeklyByLeadRows), "FT_Weekly_by_Lead");
   }
 
-  const trendRows = buildBinTrendRows(allRows).map(makeBinExportTrendRow);
+  const trendRows = buildBinTrendRows(allRows.filter(row=>isMonthInTrendWindow(normalizeReportMonth(getBinReportWeek(row)) || normalizeReportMonth(row.reportMonth)))).map(makeBinExportTrendRow);
   const rawRows = allRows.map(makeBinExportRawRow);
 
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(trendRows), "BIN_Weekly_Trend");
@@ -2334,6 +2327,11 @@ function setupEvents() {
 
   el.trendStartMonthSelect.addEventListener("change", () => {
     trendStartMonth = el.trendStartMonthSelect.value;
+    rebuildDerivedData();
+    renderFirestoreViews();
+  });
+  el.trendDurationSelect.addEventListener("change", () => {
+    trendDurationMonths=Number(el.trendDurationSelect.value);
     rebuildDerivedData();
     renderFirestoreViews();
   });

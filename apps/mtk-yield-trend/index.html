@@ -51,12 +51,15 @@
     <section class="panel period-panel">
       <div class="panel-header">
         <div>
-          <h2>Trend Period</h2>
-          <p>시작 Month를 선택하면 선택 Month부터 1년 후 같은 Month까지 표시합니다. 예: 2026 May → 2026 May ~ 2027 May.</p>
+          <h2>Trend Period</h2><p id="trendPeriodLabel" aria-live="polite"></p>
+          <p>시작 월과 조회 기간을 선택하세요. 기본값은 최신 데이터 월을 포함한 최근 6개월입니다. 예: 2026 May부터 6개월 → 2026 Oct까지.</p>
         </div>
         <label class="inline-control">
           Start Month
           <select id="trendStartMonthSelect"></select>
+        </label>
+        <label class="inline-control">기간
+          <select id="trendDurationSelect"><option value="1">1개월</option><option value="3">3개월</option><option value="6" selected>6개월</option><option value="12">12개월</option><option value="24">24개월</option><option value="0">전체</option></select>
         </label>
       </div>
     </section>
@@ -172,6 +175,6 @@
     </section>
   </main>
 
-  <script src="../../shared/auto-mail-client.js?v=49"></script><script type="module" src="mtk-yield-trend.js?v=54"></script>
+  <script src="../../shared/auto-mail-client.js?v=49"></script><script type="module" src="mtk-yield-trend.js?v=55"></script>
 <script defer src="../../shared/qa-context.js?v=34"></script></body>
 </html>
