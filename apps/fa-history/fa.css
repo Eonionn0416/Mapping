@@ -17,3 +17,5 @@
 #units [data-unlink-unit]{display:none}
 
 .fa-delete-actions{display:flex;gap:14px;flex-wrap:wrap;margin-top:22px;padding-top:18px;border-top:1px solid #dce4ef}.fa-delete-actions button{min-height:42px;background:#fff;color:#a23131;border:1px solid #e3baba}.fa-delete-actions #clearFAAll{background:#a23131;color:#fff}
+
+.panel > .filters { margin-bottom: 22px; row-gap: 16px; }

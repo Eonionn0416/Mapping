@@ -62,6 +62,14 @@ let trendStartMonth = "";
 
 let yieldTrendCharts = [];
 let osTrendCharts = [];
+const qaTrendColors=['#1397e5','#03c7df','#8a18c5','#d72baf','#f33dbd','#e49528','#4aaf79'];
+function styleQaTrend(config){
+ config.data.datasets.forEach((d,i)=>{d.borderColor=d.borderColor||(d.borderDash?'#8a98aa':d.type==='line'&&config.data.datasets.some(x=>x.type==='bar')?'#13b8ca':qaTrendColors[i%qaTrendColors.length]);d.backgroundColor=d.backgroundColor||d.borderColor;if(d.type==='line'){d.tension=0;d.spanGaps=false;d.pointRadius=d.borderDash?0:3;d.borderWidth=d.borderWidth||2;}});
+ for(const axis of Object.values(config.options.scales||{})){axis.ticks={...axis.ticks,color:'#74869a',font:{family:'Malgun Gothic',size:11}};axis.grid={color:'#e1e9f0',...axis.grid};}
+ config.options.layout={padding:{top:22,right:12}};
+ config.options.plugins.legend={position:'bottom',labels:{usePointStyle:true,font:{family:'Malgun Gothic',size:11}}};
+ config.plugins=[...(config.plugins||[]),{id:'qaTrendLabels',afterDatasetsDraw(chart){if(chart.data.labels.length>15)return;const ctx=chart.ctx;ctx.save();ctx.font='11px Malgun Gothic';ctx.textAlign='center';chart.data.datasets.forEach((ds,i)=>{if(ds.borderDash||!chart.isDatasetVisible(i))return;chart.getDatasetMeta(i).data.forEach((point,j)=>{const value=ds.data[j];if(value==null||value===0)return;const bar=ds.type==='bar';if(bar&&Math.abs(point.base-point.y)<18)return;ctx.fillStyle=bar?'#ffffff':ds.borderColor;ctx.fillText(Number(value).toLocaleString('en-US',{maximumFractionDigits:2}),point.x,bar?(point.y+point.base)/2+4:point.y-10);});});ctx.restore();}}];return config;
+}
 let defectTrendCharts = [];
 let binTrendCharts = [];
 
@@ -1383,7 +1391,7 @@ function renderChartCollection(container, chartList, groups, chartFactory, empty
   }
   visibleGroups.forEach(group => {
     const canvas = makeChartCard(container, group.title);
-    chartList.push(new Chart(canvas, chartFactory(group.rows, group.title)));
+    chartList.push(new Chart(canvas, styleQaTrend(chartFactory(group.rows, group.title))));
   });
 }
 
@@ -1566,36 +1574,9 @@ function getDefectsFromRow(row) {
 }
 
 function buildDefectTrendRows(rows) {
-  const grouped = new Map();
-
-  for (const row of rows) {
-    const sod = normalizeText(row.sod) || "NO_SOD";
-    const inQty = normalizeNumber(row.inQty) || 0;
-    if (inQty <= 0) continue;
-
-    const rowDefects = getDefectsFromRow(row);
-    for (const [defect, qty] of rowDefects.entries()) {
-      const key = `${sod}__${defect}`;
-      if (!grouped.has(key)) {
-        grouped.set(key, { sod, defect, defectQty: 0, inQty: 0, ppm: 0 });
-      }
-
-      const item = grouped.get(key);
-      item.defectQty += qty;
-      item.inQty += inQty;
-    }
-  }
-
-  return Array.from(grouped.values())
-    .map(item => ({
-      ...item,
-      ppm: item.inQty > 0 ? (item.defectQty / item.inQty) * 1_000_000 : null
-    }))
-    .sort((a, b) => {
-      const sodCompare = String(a.sod).localeCompare(String(b.sod));
-      if (sodCompare !== 0) return sodCompare;
-      return (b.ppm || 0) - (a.ppm || 0);
-    });
+  const dates=new Map();
+  for(const row of rows){const sod=normalizeText(row.sod)||'NO_SOD',input=normalizeNumber(row.inQty)||0;if(input<=0)continue;const g=dates.get(sod)||{input:0,defects:new Map()};g.input+=input;for(const [name,qty] of getDefectsFromRow(row))g.defects.set(name,(g.defects.get(name)||0)+qty);dates.set(sod,g);}
+  return [...dates].flatMap(([sod,g])=>[...g.defects].map(([defect,defectQty])=>({sod,defect,defectQty,inQty:g.input,ppm:defectQty/g.input*1e6}))).sort((a,b)=>a.sod.localeCompare(b.sod)||(b.ppm||0)-(a.ppm||0));
 }
 
 function getTopDefects(limitValue, rows = defectTrendRows) {
@@ -1716,14 +1697,15 @@ function makeYieldChartConfig(rows) {
       scales: {
         rateAxis: {
           type: "linear",
-          position: "left",
+          position: "right",
+          grid: { drawOnChartArea: false },
           ticks: { callback: value => `${value}%` },
           title: { display: true, text: "Assy Yield (%)" }
         },
         qtyAxis: {
           type: "linear",
-          position: "right",
-          grid: { drawOnChartArea: false },
+          position: "left",
+          beginAtZero: true,
           title: { display: true, text: "Qty" }
         }
       },
@@ -1896,38 +1878,10 @@ function renderBinTrendTable() {
 }
 
 function makeDefectChartConfig(rows) {
-  const sodKeys = Array.from(new Set(rows.map(row => row.sod))).sort();
-  const labels = sodKeys.map(compactDateToLabel);
-  const selectedDefects = getTopDefects(el.defectLimitSelect.value, rows);
-
-  const datasets = selectedDefects.map(defect => ({
-    type: "line",
-    label: defect,
-    data: sodKeys.map(sod => {
-      const found = rows.find(row => row.sod === sod && row.defect === defect);
-      return found ? Number(found.ppm.toFixed(2)) : null;
-    }),
-    tension: 0.2,
-    spanGaps: true
-  }));
-
-  return {
-    data: { labels, datasets },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: { mode: "index", intersect: false },
-      scales: {
-        y: {
-          title: { display: true, text: "PPM" },
-          beginAtZero: true
-        }
-      },
-      plugins: {
-        legend: { position: "bottom" }
-      }
-    }
-  };
+ const keys=[...new Set(rows.map(r=>r.sod))].sort(),selected=getTopDefects(el.defectLimitSelect.value,rows);
+ const datasets=selected.map((name,i)=>({type:'bar',label:name,yAxisID:'qtyAxis',stack:'defects',backgroundColor:qaTrendColors[i%qaTrendColors.length],data:keys.map(k=>rows.filter(r=>r.sod===k&&r.defect===name).reduce((n,r)=>n+r.defectQty,0))}));
+ datasets.push({type:'line',label:'보고된 Top 5 합계 DPPM',yAxisID:'rateAxis',borderColor:'#13b8ca',backgroundColor:'#13b8ca',pointRadius:3.5,tension:0,spanGaps:false,order:-1,data:keys.map(k=>{const rr=rows.filter(r=>r.sod===k),input=rr[0]?.inQty;return input?rr.reduce((n,r)=>n+r.defectQty,0)/input*1e6:null;})});
+ return {data:{labels:keys.map(compactDateToLabel),datasets},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},scales:{x:{stacked:true},qtyAxis:{position:'left',stacked:true,beginAtZero:true,title:{display:true,text:'Defect Qty'}},rateAxis:{position:'right',beginAtZero:true,grid:{drawOnChartArea:false},title:{display:true,text:'DPPM'}}},plugins:{legend:{position:'bottom'}}}};
 }
 
 function renderDefectTrendChart() {

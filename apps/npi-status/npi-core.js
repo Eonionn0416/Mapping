@@ -29,6 +29,8 @@
    if(table){for(let i=r+1;i<rows.length;i++){if(rows[i].some(v=>priorities.includes(key(v)))||!text(rows[i][c]))break;if(valid(rows[i][c]))codes.add(customerCode(rows[i][c]));}}
    else {const right=rows[r].slice(c+1).find(v=>text(v));const below=rows[r+1]?.[c];if(valid(right))codes.add(customerCode(right));else if(valid(below))codes.add(customerCode(below));}
   }
+  const fileMnt=/(?:^|[^A-Z0-9])MNT(?:[^A-Z0-9]|$)/i.test(text(fileName));
+  if(fileMnt && codes.has('CPI') && [...codes].every(c=>c==='CPI'||c==='MNT')) return {code:'MNT',source:'MNT file name · CPI test vehicle'};
   if(codes.size===1)return {code:[...codes][0],source:'Customer field'};
   if(codes.size>1)throw Error('Multiple customer codes found: '+[...codes].join(', ')+'. Import one customer per workbook.');
   const stem=text(fileName).replace(/\.(xlsx|xlsm|xls)$/i,'');

@@ -3,7 +3,7 @@ const $=id=>document.getElementById(id);
 let base=null,revisions=[],all=[],groups=[],summaryText='',limit=20,generation=0,reportMeta=null;
 const snapshots=new WeakMap();
 const readInfo=new WeakMap();
-const APP_VERSION='52';
+const APP_VERSION='54';
 let diagnostics=[];
 const selectionVersion={base:0,rev:0}, failedSelection={base:null,rev:null};
 let pendingSelections=0;
@@ -15,13 +15,10 @@ function fileError(file,e){
  diagnostics.push({time:new Date().toISOString(),stage:'file-read',file:file.name,size:file.size,lastModified:file.lastModified,error:e.name,message:e.message,...readInfo.get(file)});
  return new Error(message);
 }
-async function pickFresh(kind){
- if(!window.showOpenFilePicker){$(kind==='base'?'baseFile':'revFiles').click();return;}
- try{
-  const handles=await window.showOpenFilePicker({id:'aibi-'+kind,multiple:kind==='rev',types:[{description:'Excel',accept:{'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':['.xlsx','.xlsm'],'application/vnd.ms-excel':['.xls']}}]});
-  const files=[];for(const handle of handles){const file=await handle.getFile();file.freshHandle=handle;files.push(file);}
-  await setFiles(kind,files);
- }catch(e){if(e.name!=='AbortError'){$('status').textContent='새 파일 선택 실패: '+e.message;failedSelection[kind]=[];updateSelectionState();diagnostics.push({time:new Date().toISOString(),stage:'direct-picker',side:kind,error:e.name,message:e.message});}}
+function pickFresh(kind){
+ const input=$(kind==='base'?'baseFile':'revFiles');
+ // Reset only when opening a new chooser; active bytes are held separately.
+ input.value='';input.click();
 }
 $('pickBase').onclick=()=>pickFresh('base');$('pickRev').onclick=()=>pickFresh('rev');
 function readerBuffer(file){
@@ -32,8 +29,8 @@ function snapshot(file){
  if(snapshots.has(file))return snapshots.get(file);
  const attempts=[];
  const pending=(async()=>{
-  for(const [method,read] of [['arrayBuffer',()=>file.arrayBuffer()],['FileReader',()=>readerBuffer(file)],...(file.freshHandle?[['freshHandle',async()=>{const fresh=await file.freshHandle.getFile();if(fresh.size!==file.size||fresh.lastModified!==file.lastModified)throw Error('선택 후 파일이 변경되었습니다. 다시 선택하세요.');return fresh.arrayBuffer();}]]:[])]){
-   try{const buffer=await read();if(buffer==null||typeof buffer.byteLength!=='number'||buffer.byteLength!==file.size)throw Error('Incomplete file read');readInfo.set(file,{method,attempts});return {buffer};}
+  for(const [method,read] of [['arrayBuffer',()=>file.arrayBuffer()],['FileReader',()=>readerBuffer(file)]]){
+   try{const buffer=await read();if(buffer==null||typeof buffer.byteLength!=='number'||buffer.byteLength!==file.size)throw Error('Incomplete file read');readInfo.set(file,{method,attempts,picker:'native-file-input-or-drop'});return {buffer};}
    catch(e){attempts.push({method,error:e.name,message:e.message});}
   }
   const last=attempts.at(-1),error=new Error(last.message);error.name=last.error;readInfo.set(file,{attempts});return {error};
@@ -56,8 +53,10 @@ async function setFiles(kind,files){
    if(!/\.(xlsx|xlsm|xls)$/i.test(file.name)||file.size>50*1024*1024)throw Error('50MB 이하 Excel 파일을 선택하세요.');
    const data=await snapshot(file);if(data.error)throw fileError(file,data.error);
    // Detach from the OS file reference once bytes are successfully read.
-   const memory=new File([data.buffer],file.name,{type:file.type,lastModified:file.lastModified});
-   snapshots.set(memory,Promise.resolve({buffer:data.buffer}));readInfo.set(memory,{...readInfo.get(file),retainedInMemory:true});
+   const clean=$('textOnly').checked;
+   const buffer=clean?await AIBITextWorkbook.normalize(data.buffer,XLSX,JSZip):data.buffer;
+   const memory=new File([buffer],file.name,{type:file.type,lastModified:file.lastModified});
+   snapshots.set(memory,Promise.resolve({buffer}));readInfo.set(memory,{...readInfo.get(file),retainedInMemory:true,textOnly:clean});
    stable.push(memory);
   }
   if(ticket!==selectionVersion[kind])return;
@@ -69,9 +68,6 @@ async function setFiles(kind,files){
  }catch(e){if(ticket!==selectionVersion[kind])return;failedSelection[kind]=selected;
   $('status').textContent=e.message+' 기존에 읽은 파일은 유지했습니다. 실패한 '+(kind==='base'?'원본':'개정')+'을 다시 선택해 주세요.';
  }finally{pendingSelections--;updateSelectionState();}
-}
-for(const [id,kind] of [['baseFile','base'],['revFiles','rev']]){
- $(id).addEventListener('click',e=>{if(window.showOpenFilePicker){e.preventDefault();pickFresh(kind);}});
 }
 $('baseFile').addEventListener('change',e=>{const files=Array.from(e.target.files);return setFiles('base',files);});
 $('revFiles').addEventListener('change',e=>{const files=Array.from(e.target.files);return setFiles('rev',files);});
@@ -186,3 +182,8 @@ $('reportExport').addEventListener('click',()=>{if(reportMeta)download('AI_BI_Co
 $('diagnosticExport').addEventListener('click',()=>download('AI_BI_Diagnostics.txt',JSON.stringify({version:APP_VERSION,time:new Date().toISOString(),browser:navigator.userAgent,page:location.origin+location.pathname,libraryLoaded:typeof XLSX!=='undefined',failedFiles:Object.fromEntries(Object.entries(failedSelection).map(([side,files])=>[side,(files||[]).map(f=>({name:f.name,size:f.size,read:readInfo.get(f)}))])),files:[base,...revisions].filter(Boolean).map(f=>({name:f.name,size:f.size,lastModified:f.lastModified,read:readInfo.get(f)})),status:$('status').textContent,errors:diagnostics},null,2),'text/plain;charset=utf-8'));
 
 window.AIBIWorkspace={selected:async()=>Promise.all([base,...revisions].filter(Boolean).map(async f=>({file:f.name,book:await read(f),savedMeta:f.savedRecord}))),use:async(side,record,book)=>setFiles(side,[{name:record.number+' ('+record.revision+').xlsx',savedBook:book,savedRecord:record}])};
+
+
+document.body.classList.toggle('text-only',$('textOnly').checked);
+$('textOnly').onchange=()=>{document.body.classList.toggle('text-only',$('textOnly').checked);$('status').textContent='변경한 정리 설정은 다음에 첨부하는 파일부터 적용됩니다.';};
+$('cleanDownload').onclick=async()=>{try{const files=[base,...revisions].filter(f=>f&&!f.savedBook);if(!files.length)throw Error('먼저 Excel 파일을 첨부하세요.');for(const f of files){const data=await snapshot(f);if(data.error)throw data.error;const buffer=await AIBITextWorkbook.normalize(data.buffer,XLSX,JSZip);download(f.name.replace(/\.(xlsx|xlsm|xls)$/i,'')+'_text.xlsx',buffer,'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');}}catch(e){$('status').textContent=e.message;}};
