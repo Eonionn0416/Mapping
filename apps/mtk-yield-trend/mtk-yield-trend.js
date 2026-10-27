@@ -1872,9 +1872,9 @@ function renderBinTrendTable() {
 
 function makeDefectChartConfig(rows) {
  const keys=[...new Set(rows.map(r=>r.sod))].sort(),selected=getTopDefects(el.defectLimitSelect.value,rows);
- const datasets=selected.map((name,i)=>({type:'bar',label:name,yAxisID:'qtyAxis',stack:'defects',backgroundColor:qaTrendColors[i%qaTrendColors.length],data:keys.map(k=>rows.filter(r=>r.sod===k&&r.defect===name).reduce((n,r)=>n+r.defectQty,0))}));
+ const datasets=selected.map((name,i)=>({type:'bar',label:name,yAxisID:'dppmAxis',stack:'defects',backgroundColor:qaTrendColors[i%qaTrendColors.length],data:keys.map(k=>{const rr=rows.filter(r=>r.sod===k),input=rr[0]?.inQty;return input>0?rr.filter(r=>r.defect===name).reduce((n,r)=>n+r.defectQty,0)/input*1e6:null;})}));
  datasets.push({type:'line',label:'보고된 Top 5 합계 DPPM',yAxisID:'rateAxis',borderColor:'#13b8ca',backgroundColor:'#13b8ca',pointRadius:3.5,tension:0,spanGaps:false,order:-1,data:keys.map(k=>{const rr=rows.filter(r=>r.sod===k),input=rr[0]?.inQty;return input?rr.reduce((n,r)=>n+r.defectQty,0)/input*1e6:null;})});
- return {data:{labels:keys.map(compactDateToLabel),datasets},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},scales:{x:{stacked:true},qtyAxis:{position:'left',stacked:true,beginAtZero:true,title:{display:true,text:'Defect Qty'}},rateAxis:{position:'right',beginAtZero:true,grid:{drawOnChartArea:false},title:{display:true,text:'DPPM'}}},plugins:{legend:{position:'bottom'}}}};
+ return {data:{labels:keys.map(compactDateToLabel),datasets},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},scales:{x:{stacked:true},dppmAxis:{position:'left',stacked:true,beginAtZero:true,title:{display:true,text:'Defect DPPM'}},rateAxis:{position:'right',beginAtZero:true,grid:{drawOnChartArea:false},title:{display:true,text:'DPPM'}}},plugins:{legend:{position:'bottom'},tooltip:{callbacks:{label:ctx=>`${ctx.dataset.label}: ${ctx.parsed.y==null?'—':ctx.parsed.y.toLocaleString('en-US',{maximumFractionDigits:2})} DPPM`}}}}};
 }
 
 function renderDefectTrendChart() {
