@@ -1,0 +1,5 @@
+(function(){
+'use strict';const nav=document.getElementById('trendTabs');if(!nav)return;const tabs=[...nav.querySelectorAll('[data-trend-tab]')],panels=[...document.querySelectorAll('[data-trend-panel]')];
+function select(tab,focus=false){for(const b of tabs){const active=b===tab;b.classList.toggle('active',active);b.setAttribute('aria-selected',String(active));b.tabIndex=active?0:-1;}for(const panel of panels)panel.hidden=panel.dataset.trendPanel!==tab.dataset.trendTab;if(focus)tab.focus();window.dispatchEvent(new CustomEvent('mtk-trend-tab',{detail:tab.dataset.trendTab}));}
+nav.addEventListener('click',event=>{const tab=event.target.closest('[data-trend-tab]');if(tab&&tabs.includes(tab))select(tab);});nav.addEventListener('keydown',event=>{const i=tabs.indexOf(document.activeElement);if(i<0)return;const keys={ArrowRight:(i+1)%tabs.length,ArrowLeft:(i+tabs.length-1)%tabs.length,Home:0,End:tabs.length-1};if(Object.hasOwn(keys,event.key)){event.preventDefault();select(tabs[keys[event.key]],true);}});
+})();
