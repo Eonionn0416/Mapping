@@ -78,6 +78,7 @@ let auth = null;
 let storage = null;
 let currentUser = null;
 
+let relImportBusy=false,relAutoReady=false;
 let rawRows = [];                 // 파싱/Firestore raw records
 let statusMap = new Map();        // dedupeKey -> { manualDone, updatedAt }
 let planStatusMap = new Map();    // sheetName -> { muted }
@@ -377,7 +378,7 @@ async function parseExcelFile(file) {
   return {records,skipped,sheetCount:model.sheets.length,buffer};
 }
 
-async function handleFiles(files) {
+async function handleFilesImpl(files,strict=false) {
   const list = Array.from(files || []).filter(f => /\.(xlsx|xlsm)$/i.test(f.name));
   if (!list.length) { setNotice('Excel에서 XLSX 형식으로 저장한 파일을 업로드해 주세요.',true); return; }
   selectedFiles = list;
@@ -397,16 +398,19 @@ async function handleFiles(files) {
         log(`${file.name}: 파일 읽기·일정 분석은 성공했지만 서버 파일 저장에 실패했습니다: ${error.message}`);
         fileReadStatus.set(file.name,`${records.length} items · 로컬 저장 완료 / 서버 파일 저장 실패`);
         setNotice(`${file.name}: 일정은 읽었습니다. 서버 파일 저장에 실패하여 다른 기기에서 다운로드하려면 재업로드가 필요합니다. ${error.message}`,true);
+        if(strict)throw error;
       }
     } catch (error) {
       console.error(error);
       fileReadStatus.set(file.name, `업로드 실패: ${error.message}`);
       setNotice(`${file.name}: ${error.message}`,true);
+      if(strict)throw error;
     }
     renderSelectedFileList();
   }
 
   if (!parsedAll.length) {
+    if(strict)throw Error("인식된 REL 일정 행이 없습니다.");
     log("인식된 Rel schedule row가 없습니다.");
     return;
   }
@@ -424,13 +428,13 @@ async function handleFiles(files) {
     log(`  ↻ ${row.sheetName} · ${row.criteria} · ${row.relItem} — ${(row.__changes || []).join(", ")}`);
   });
 
-  refreshAll({ forceAlert: true });
+  refreshAll({ forceAlert: !strict });
 
-  const changedOnly = diff.created.concat(diff.updated);
-  if (changedOnly.length) await uploadRows(changedOnly);
+  const changedOnly = strict?parsedAll:diff.created.concat(diff.updated);
+  if (changedOnly.length) await uploadRows(changedOnly,strict);
   else log("변경된 row가 없어 Firestore 업로드를 생략했습니다.");
 
-  if (removedRows.length) await deleteRemovedRows(removedRows);
+  if (removedRows.length) await deleteRemovedRows(removedRows,strict);
   if (ui.excelFiles) ui.excelFiles.value = "";
 }
 
@@ -502,7 +506,7 @@ function mergeRows(incoming) {
  * Sheet 내에서 사라진(=지워진) row를 Local status + Firestore(relScheduleRaw/relScheduleStatus)에서 정리합니다.
  * 그대로 두면 Excel에서 지워진 row가 영원히 누적되어 Storage 용량을 계속 갉아먹기 때문입니다.
  */
-async function deleteRemovedRows(rows) {
+async function deleteRemovedRows(rows,strict=false) {
   if (!rows.length) return;
 
   let statusChanged = false;
@@ -531,6 +535,7 @@ async function deleteRemovedRows(rows) {
     const hint = describeFirebaseError(error);
     log(`정리 삭제 실패: ${error.message}${hint ? ` — ${hint}` : ""}`);
     setFirebaseStatus(hint || "Firestore delete error", "danger");
+    if(strict)throw error;
   }
 }
 
@@ -594,7 +599,7 @@ async function uploadOriginalFile(file, buffer) {
 /* ============================================================
    Firestore
    ============================================================ */
-async function uploadRows(records) {
+async function uploadRows(records,strict=false) {
   if (!db || !currentUser) { log("Firebase 준비 전이라 로컬에만 저장했습니다."); return; }
   try {
     let batch = writeBatch(db);
@@ -615,6 +620,7 @@ async function uploadRows(records) {
     const hint = describeFirebaseError(error);
     log(`Upload Error: ${error.message}${hint ? ` — ${hint}` : ""}`);
     setFirebaseStatus(hint || "Firestore upload error", "danger");
+    if(strict)throw error;
   }
 }
 
@@ -1683,6 +1689,7 @@ function initFirebase() {
         // 부팅 시 restoreCache() 직후 이미 refreshAll({forceAlert:true})로 알림을 한 번 띄웠으므로,
         // Auth 완료 후 Firestore 데이터로 다시 그릴 때는 강제로 재오픈하지 않아 중복 팝업을 막습니다.
         await loadFirestoreData({ forceAlert: false });
+        relAutoReady=true;
       } else {
         ui.authStatus.textContent = "Auth 필요";
         setFirebaseStatus("Auth required", "warning");
@@ -1705,3 +1712,13 @@ restoreCache();
 refreshAll({ forceAlert: true });
 initFirebase();
 
+
+async function handleFiles(files,strict=false){
+ if(relImportBusy){if(strict)throw Error('다른 파일을 처리 중입니다.');return;}
+ relImportBusy=true;
+ const beforeRows=rawRows.slice(),beforeStatus=new Map(statusMap);
+ try{return await handleFilesImpl(files,strict);}
+ catch(error){if(strict){rawRows=beforeRows;statusMap.clear();for(const [k,v] of beforeStatus)statusMap.set(k,v);cacheRows();cacheStatus();refreshAll({forceAlert:false});}throw error;}
+ finally{relImportBusy=false;}
+}
+QAAutoMail.start('rel',()=>relAutoReady&&!!db&&!!currentUser&&!relImportBusy,async file=>{await handleFiles([file],true);});

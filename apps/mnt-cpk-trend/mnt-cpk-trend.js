@@ -38,6 +38,7 @@ let trendRows = [];
 let assyTrendRows = [];
 let trendStartMonth = "";
 let assyTrendStartMonth = "";
+let lowFocusChart=null;
 let lowRows = []; // Monthly Low CPK/PPK 표 + 우측 Floating list가 함께 참조하는 현재 Low CPK/PPK 행 목록
 
 const el = {
@@ -75,6 +76,7 @@ const el = {
 };
 
 function log(message) {
+  const state=document.getElementById("uploadState");if(state)state.textContent=message;
   const time = new Date().toLocaleTimeString();
   console.log(`[${time}] ${message}`);
 }
@@ -995,6 +997,7 @@ function updateMetrics(patch = {}) {
 }
 
 function renderUploadedFiles() {
+  const count=document.getElementById("uploadCount");if(count)count.textContent=`${uploadedFileRows.length}개 파일 · ${rawRows.length.toLocaleString()}개 항목`;
   if (!uploadedFileRows.length) {
     el.uploadedFilesBody.innerHTML = `<tr><td colspan="6" class="empty">아직 Upload된 파일이 없습니다.</td></tr>`;
     return;
@@ -1180,6 +1183,7 @@ function buildTrendRows(rows, mode) {
 }
 
 function renderTrend() {
+  clearLowFocus();
   const filteredBump = getFilteredBumpRows();
   trendRows = buildTrendRows(filteredBump, "BUMP");
   renderBumpTrendChart();
@@ -1377,7 +1381,7 @@ function renderLowTable() {
   if (el.lowCpkFloatCount) el.lowCpkFloatCount.textContent = lows.length.toLocaleString();
 
   if (!lows.length) {
-    el.lowBody.innerHTML = `<tr><td colspan="12" class="empty">Low CPK/PPK Data가 없습니다.</td></tr>`;
+    el.lowBody.innerHTML = `<tr><td colspan="3" class="empty">Low CPK/PPK Data가 없습니다.</td></tr>`;
     if (el.lowCpkFloatList) el.lowCpkFloatList.innerHTML = `<p class="low-cpk-float-empty">Low CPK/PPK Data가 없습니다.</p>`;
     return;
   }
@@ -1385,21 +1389,7 @@ function renderLowTable() {
     const status = lowStatus(row);
     const cls = status === "Below 1.33" ? "low-danger" : "low-warning";
     const type = row.reportType || "BUMP";
-    return `
-      <tr data-idx="${idx}" tabindex="0" title="클릭하면 해당 Item/Characteristics Chart로 이동합니다">
-        <td>${escapeHtml(row.reportLabel || monthLabel(row.reportMonth))}</td>
-        <td><span class="type-pill ${type === "ASSY" ? "assy" : "bump"}">${escapeHtml(type)}</span></td>
-        <td>${escapeHtml(type === "ASSY" ? row.device : row.product)}</td>
-        <td>${escapeHtml(type === "ASSY" ? row.process : row.dataType || "")}</td>
-        <td>${escapeHtml(type === "ASSY" ? row.characteristics : row.item)}</td>
-        <td>${escapeHtml(row.specLimit)}</td>
-        <td class="number">${fmtNumber(row.avg, 4)}</td>
-        <td class="number">${fmtNumber(row.std, 4)}</td>
-        <td class="number">${fmtNumber(row.cpk, 4)}</td>
-        <td class="number">${fmtNumber(row.ppk, 4)}</td>
-        <td class="${cls}">${escapeHtml(status)}</td>
-        <td>${escapeHtml(row.sourceFileName)}</td>
-      </tr>`;
+    return `<tr data-idx="${idx}" tabindex="0" title="선택 항목 그래프 보기"><td><strong>${escapeHtml(type==='ASSY'?row.device:row.product)}</strong><small>${escapeHtml(type==='ASSY'?row.process+' / '+row.characteristics:row.item+' / '+(row.dataType||''))}</small><small>${escapeHtml(row.reportLabel||monthLabel(row.reportMonth))} · <span class="${cls}">${escapeHtml(status)}</span></small><details><summary>Source details</summary><div>Spec: ${escapeHtml(row.specLimit)}<br>Avg: ${fmtNumber(row.avg,4)} · Std: ${fmtNumber(row.std,4)}<br>${escapeHtml(row.sourceFileName)}</div></details></td><td class="number">${fmtNumber(row.cpk,4)}</td><td class="number">${fmtNumber(row.ppk,4)}</td></tr>`;
   }).join("");
 
   renderLowCpkFloatList(lows);
@@ -1469,50 +1459,22 @@ function ensureMonthOption(select, month) {
   select.value = month;
 }
 
-// Monthly Low CPK/PPK 표(또는 우측 Floating list)에서 행을 클릭하면 해당 Item/Characteristics의
-// CPK & PPK Trend Chart로 바로 이동합니다. Chart가 실제로 보이도록 Product/Device, Data type,
-// Start Month 필터를 그 행 기준으로 맞춘 뒤 Chart를 다시 그리고, 해당 Chart Card로 Scroll + 강조합니다.
-// Start Month는 클릭한 행의 달을 "끝"으로 하는 지난 1년(예: 2026-08 클릭 → 2025-08 ~ 2026-08)으로 맞춰서,
-// 이 항목이 Low CPK/PPK가 되기 전까지의 이력을 바로 볼 수 있게 합니다.
+// Low-list selection never mutates page filters or rebuilds the list.
+function clearLowFocus(){if(lowFocusChart){lowFocusChart.destroy();lowFocusChart=null;}document.getElementById('lowFocus')?.remove();}
+function lowSelectionRows(row){
+ const type=row.reportType||'BUMP',start=type==='ASSY'?assyTrendStartMonth:trendStartMonth;
+ return rawRows.filter(r=>(r.reportType||'BUMP')===type&&isMonthInWindow(r.reportMonth,start)&&(type==='ASSY'?r.device===row.device&&r.process===row.process&&r.characteristics===row.characteristics:r.product===row.product&&r.item===row.item&&(r.dataType||'')===(row.dataType||'')));
+}
 function jumpToLowCpkChart(idx) {
-  const row = lowRows[idx];
-  if (!row) return;
-  const type = row.reportType || "BUMP";
-  const windowStart = addMonths(row.reportMonth, -12);
-
-  if (type === "ASSY") {
-    trySetSelectValue(el.assyDeviceSelect, row.device);
-    refreshAssyFilters();
-    trySetSelectValue(el.assyDeviceSelect, row.device);
-    ensureMonthOption(el.assyStartMonthSelect, windowStart);
-    assyTrendStartMonth = windowStart;
-  } else {
-    trySetSelectValue(el.productSelect, row.product);
-    refreshBumpFilters();
-    trySetSelectValue(el.productSelect, row.product);
-    if (el.dataTypeSelect) el.dataTypeSelect.value = "__ALL__";
-    ensureMonthOption(el.trendStartMonthSelect, windowStart);
-    trendStartMonth = windowStart;
-  }
-
-  renderTrend();
-
-  const container = type === "ASSY" ? el.assyTrendCharts : el.cpkTrendCharts;
-  const targetTitle = type === "ASSY"
-    ? `${row.device || "Device"} / ${row.process || "Blank Process"} / ${row.characteristics || "Blank Characteristics"}`
-    : `${row.product || "Product"} / ${row.item || "Blank Item"}`;
-
-  requestAnimationFrame(() => {
-    if (!container) return;
-    const card = Array.from(container.querySelectorAll(".chart-card"))
-      .find(cardEl => cardEl.querySelector("h3")?.textContent === targetTitle);
-    const target = card || container;
-    target.scrollIntoView({ behavior: "smooth", block: "center" });
-    if (card) {
-      card.classList.add("chart-flash");
-      setTimeout(() => card.classList.remove("chart-flash"), 2200);
-    }
-  });
+ const row=lowRows[idx];if(!row)return;
+ clearLowFocus();
+ const type=row.reportType||'BUMP',container=type==='ASSY'?el.assyTrendCharts:el.cpkTrendCharts;
+ const focus=document.createElement('section');focus.id='lowFocus';focus.className='low-focus';
+ const title=type==='ASSY'?`${row.device} / ${row.process} / ${row.characteristics}`:`${row.product} / ${row.item} / ${row.dataType||''}`;
+ const toolbar=document.createElement('div');toolbar.className='low-focus-title';const caption=document.createElement('p');caption.textContent='선택 항목 · 현재 조회 기간';const close=document.createElement('button');close.textContent='닫기';close.onclick=clearLowFocus;toolbar.append(caption,close);focus.appendChild(toolbar);container.parentElement.insertBefore(focus,container);
+ const rows=buildTrendRows(lowSelectionRows(row),type);const canvas=makeChartCard(focus,title);
+ lowFocusChart=new Chart(canvas,{type:'line',data:{labels:rows.map(r=>r.reportLabel||monthLabel(r.reportMonth)),datasets:trendDatasets(rows)},options:chartOptions(title,'CPK / PPK')});
+ focus.scrollIntoView({behavior:'smooth',block:'center'});
 }
 
 function exportReport() {
@@ -1604,7 +1566,7 @@ function exportReport() {
 
 function setupEvents() {
   el.excelFiles.addEventListener("click", event => event.stopPropagation());
-  el.dropZone.addEventListener("click", event => { event.preventDefault(); event.stopPropagation(); el.excelFiles.click(); });
+  document.getElementById("pickMntFile").addEventListener("click",()=>el.excelFiles.click());
   el.dropZone.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); el.excelFiles.click(); } });
   el.excelFiles.addEventListener("change", event => handleFiles(Array.from(event.target.files || [])));
   ["dragenter", "dragover"].forEach(eventName => {
@@ -1629,12 +1591,14 @@ function setupEvents() {
 
   // Monthly Low CPK / PPK 표에서 행을 클릭하면 해당 Item/Characteristics Chart로 이동합니다.
   el.lowBody.addEventListener("click", event => {
+    if(event.target.closest("details"))return;
     const tr = event.target.closest("tr[data-idx]");
     if (!tr) return;
     jumpToLowCpkChart(Number(tr.dataset.idx));
   });
   el.lowBody.addEventListener("keydown", event => {
     if (event.key !== "Enter" && event.key !== " ") return;
+    if(event.target.closest("details"))return;
     const tr = event.target.closest("tr[data-idx]");
     if (!tr) return;
     event.preventDefault();
@@ -1703,8 +1667,7 @@ function selectMntProcess(type){
   document.querySelectorAll('[data-mnt-type]').forEach(b=>{const active=b.dataset.mntType===activeMntType;b.classList.toggle('active',active);b.setAttribute('aria-selected',String(active));b.tabIndex=active?0:-1;});
   document.getElementById('bumpPanel').hidden=activeMntType!=='BUMP';
   document.getElementById('assyPanel').hidden=activeMntType!=='ASSY';
-  const target=activeMntType==='ASSY'?el.assyTrendCharts:el.cpkTrendCharts;
-  target.parentElement.insertBefore(el.lowCpkPanel,target);
+  clearLowFocus();
   document.getElementById('lowProcessTitle').textContent=activeMntType==='ASSY'?'Assy':'Bump';
   renderLowTable();
   requestAnimationFrame(()=>{for(const chart of activeMntType==='ASSY'?assyTrendCharts:cpkTrendCharts){chart.resize();chart.update('none');}});

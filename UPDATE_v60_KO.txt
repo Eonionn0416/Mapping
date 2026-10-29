@@ -1,0 +1,15 @@
+﻿QA v60 업데이트
+
+쓰기 권한이 부여되지 않아 C:\System project\wafer_strip_mapping_app 원본에는 아직 적용하지 못했습니다.
+이 ZIP의 apps / shared / automation 폴더를 해당 원본 폴더의 같은 경로에 덮어써 적용하세요.
+GitHub 사이트에는 apps / shared 폴더의 변경 파일을 같은 경로에 업로드하고 배포 후 Ctrl+F5 하세요.
+
+REL 자동 가져오기: 적용 후 로컬 automation/QA-Automail-Start.vbs를 한 번 더 실행해 서버를 갱신하세요.
+REL 페이지를 열면 인증 준비 후 지정 Reliability Schedule 폴더를 확인하며, 60초마다 변경을 확인합니다. 지금 확인 버튼으로 수동 확인도 가능합니다.
+대상: Rel test plan*.xlsx / .xlsm. 임시 파일(~$)은 제외합니다.
+
+변경: MNT 차트 2열, 우측 sticky Low CPK/PPK 목록, 목록 선택 시 필터 유지 및 선택 그래프 표시, Austin 형태 첨부 영역.
+FA/Daily Tracker 컨트롤 높이 통일, Hold 메일 버튼 간격, NPI 원본 설명을 Source details 팝업으로 이동.
+
+검증: Bump/Assy 목록 선택 상태 유지, REL 실제 파일 3개 해석, 저장 실패 복원/재시도, JS 구문 및 HTML ID 확인.
+브라우저 화면 검증과 실제 Firestore 업로드는 이 환경에서 수행하지 않았습니다.
