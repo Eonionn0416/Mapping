@@ -583,18 +583,19 @@ function hasAllHeaders(row, headers) {
 }
 
 function findSheetRowsByHeaders(workbook, preferredSheetName, requiredHeaders) {
-  const sheetNames = workbook.SheetNames || [];
-  const candidates = [preferredSheetName, ...sheetNames.filter(name => name !== preferredSheetName)].filter(Boolean);
-
-  for (const sheetName of candidates) {
-    if (!sheetNames.includes(sheetName)) continue;
-    const sheet = workbook.Sheets[sheetName];
-    const rawRows = XLSX.utils.sheet_to_json(sheet, { defval: null });
-    if (!rawRows.length) continue;
-    if (hasAllHeaders(rawRows[0], requiredHeaders)) return { sheetName, rawRows };
+  const names=workbook.SheetNames||[];
+  const candidates=[preferredSheetName,...names.filter(n=>n!==preferredSheetName)];
+  for(const sheetName of candidates){
+    if(!names.includes(sheetName))continue;
+    const matrix=XLSX.utils.sheet_to_json(workbook.Sheets[sheetName],{header:1,defval:null,blankrows:true});
+    for(let i=0;i<Math.min(matrix.length,40);i++){
+      const headers=(matrix[i]||[]).map(v=>normalizeText(v).toUpperCase());
+      if(!requiredHeaders.every(h=>headers.includes(h.toUpperCase())))continue;
+      const rawRows=matrix.slice(i+1).filter(r=>r.some(v=>v!==null&&v!==undefined&&String(v).trim()!=='')).map(r=>Object.fromEntries(headers.map((h,j)=>[h,r[j]??null]).filter(([h])=>h)));
+      return {sheetName,rawRows};
+    }
   }
-
-  return { sheetName: "", rawRows: [] };
+  return {sheetName:'',rawRows:[]};
 }
 
 function calculateRate(qty, baseQty) {
@@ -842,11 +843,12 @@ async function initFirebase() {
 async function readReportFile(file) {
   const buffer = await file.arrayBuffer();
   const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
-  const result = { assyRows: [], osRows: [], binRows: [], messages: [] };
+  const result = { assyRows: [], osRows: [], binRows: [], messages: [], sourceRowCount: 0 };
 
   if (workbook.SheetNames.includes(ASSY_SHEET_NAME)) {
     const sheet = workbook.Sheets[ASSY_SHEET_NAME];
     const rawRows = XLSX.utils.sheet_to_json(sheet, { defval: null });
+    result.sourceRowCount += rawRows.length;
     result.assyRows = rawRows
       .map(row => convertAssyRow(row, file.name))
       .filter(isValidAssyRow);
@@ -864,7 +866,8 @@ async function readReportFile(file) {
 
 
   const binSheet = findSheetRowsByHeaders(workbook, BIN_SHEET_NAME, BIN_REQUIRED_HEADERS);
-  if (binSheet.rawRows.length) {
+  if (binSheet.sheetName) {
+    result.sourceRowCount += binSheet.rawRows.length;
     const reportDate = getReportDateFromFile(file);
     const reportMonth = getReportMonthFromFile(file);
     const reportWeek = reportDate ? getWeekStartDateKey(reportDate) : reportMonth;
@@ -2349,6 +2352,6 @@ initFirebase();
 
 document.getElementById('exportOsRawBtn').addEventListener('click',()=>{if(!osRows.length){log('저장된 OS Raw Data가 없습니다.');return;}const cols={LOT_ID:'lotId',CUSTOMER:'customer',DEVICE:'device',LEAD:'lead',PCB_VENDOR:'pcbVendor',TOTAL_QTY:'osInQty',TEST_QTY:'testQty',OS_SS:'osSs',TOTAL_OS_REJ:'totalOsRej',OPEN:'openQty',SHORT:'shortQty',REJECT_RATE:'reportRejectRate',OPEN_RATE:'reportOpenRate',SHORT_RATE:'reportShortRate',REMARK:'remark',INPUT_TIME:'inputTime',SOURCE_FILE:'sourceFileName'};const rows=osRows.map(r=>Object.fromEntries(Object.entries(cols).map(([k,v])=>[k,r[v]??'']))),w=XLSX.utils.book_new();XLSX.utils.book_append_sheet(w,XLSX.utils.json_to_sheet(rows),'OS_Raw');XLSX.writeFile(w,'OS_Raw_Data_'+new Date().toISOString().slice(0,10)+'.xlsx');log(rows.length+'개 OS 원본 행 Export 완료');});
 
-QAAutoMail.start('mtk',()=>!!db&&!!currentUser&&!qaAutoBusy&&selectedFiles.length===0,async file=>{const r=await readReportFile(file);if(!r.assyRows.length&&!r.osRows.length&&!r.binRows.length)throw Error('유효한 데이터 없음: '+file.name);selectedFiles=[file];selectedAssyRows=r.assyRows;selectedOsRows=r.osRows;selectedBinRows=r.binRows;renderSelectedFiles();try{await uploadSelectedToFirebase(true);}finally{selectedFiles=[];selectedAssyRows=[];selectedOsRows=[];selectedBinRows=[];}});
+QAAutoMail.start('mtk',()=>!!db&&!!currentUser&&!qaAutoBusy&&selectedFiles.length===0,async file=>{const r=await readReportFile(file);if(!r.assyRows.length&&!r.osRows.length&&!r.binRows.length){if(r.sourceRowCount===0){log(file.name+': 정상 양식 · 데이터 0행');return {empty:true};}throw Error('유효한 데이터 없음: '+file.name);}selectedFiles=[file];selectedAssyRows=r.assyRows;selectedOsRows=r.osRows;selectedBinRows=r.binRows;renderSelectedFiles();try{await uploadSelectedToFirebase(true);}finally{selectedFiles=[];selectedAssyRows=[];selectedOsRows=[];selectedBinRows=[];}});
 
 window.addEventListener('mtk-trend-tab',event=>{const lists={assy:yieldTrendCharts,defect:defectTrendCharts,os:osTrendCharts,bin:binTrendCharts};requestAnimationFrame(()=>{for(const chart of lists[event.detail]||[]){chart.resize();chart.update('none');}});});

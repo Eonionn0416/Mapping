@@ -1,69 +1,10 @@
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>MNT CPK Trend Chart</title>
-  <link rel="icon" href="data:," />
-
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
-
-  <link rel="stylesheet" href="mnt-cpk-trend.css?v=22" />
-  <link rel="stylesheet" href="../../shared/qa-theme.css?v=23" />
-</head>
-<body>
-  <a class="qa-back-link" href="../../index.html">← QA Page</a>
-
-  <aside id="lowCpkFloat" class="low-cpk-float">
-    <div id="lowCpkFloatHeader" class="low-cpk-float-header" role="button" tabindex="0">
-      <span>Low CPK/PPK 항목 <strong id="lowCpkFloatCount">0</strong></span>
-      <span class="low-cpk-float-toggle" aria-hidden="true">▾</span>
-    </div>
-    <div id="lowCpkFloatList" class="low-cpk-float-list">
-      <p class="low-cpk-float-empty">Low CPK/PPK Data가 없습니다.</p>
-    </div>
-  </aside>
-
-  <main class="page">
-    <section class="hero">
-      <div>
-        <p class="eyebrow">MNT Monthly Report analyser</p>
-        <h1>MNT CPK Trend Chart</h1>
-        <p class="subtitle">
-          BUMP-MNT / ASSY-MNT Monthly Report Excel을 계속 Drag & Drop 하면 Firestore Raw Data에 누적 저장하고,
-          Bump는 Product / Item 기준, Assy는 Device / Process / Characteristics 기준으로 CPK & PPK Trend를 확인합니다.
-        </p>
-      </div>
-      <div class="hero-card">
-        <span id="firebaseStatus" class="status warning">Firebase connecting...</span>
-        <p>중복 기준</p>
-        <strong>Bump: Month + Product + Item<br>Assy: Month + Device + Process + Characteristics</strong>
-        <small id="authStatus">Auth 대기 중</small>
-      </div>
-    </section>
-
-    <section class="grid seven">
-      <article class="metric-card"><p>Selected Rows</p><strong id="selectedRows">0</strong></article>
-      <article class="metric-card"><p>Inserted</p><strong id="insertedRows">0</strong></article>
-      <article class="metric-card"><p>Skipped Duplicate</p><strong id="skippedRows">0</strong></article>
-      <article class="metric-card"><p>Firestore Rows</p><strong id="firestoreRows">0</strong></article>
-      <article class="metric-card"><p>Products / Devices</p><strong id="productCount">0</strong></article>
-      <article class="metric-card"><p>Uploaded Files</p><strong id="uploadedFiles">0</strong></article>
-      <article class="metric-card clickable" id="lowCpkCard" role="button" tabindex="0"><p>Low CPK/PPK 항목</p><strong id="lowCpkCount">0</strong></article>
-    </section>
-
-    <section class="panel">
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MNT CPK Trend Chart</title><link rel="icon" href="data:,"><script src="../../shared/vendor/xlsx.full.min.js"></script><script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script><script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script><link rel="stylesheet" href="mnt-cpk-trend.css?v=22"><link rel="stylesheet" href="austin-layout.css?v=58"><link rel="stylesheet" href="mnt-layout.css?v=58"></head><body><main><a class="back" href="../customer-quality-trend/">← Customer Quality Trend Chart</a><header><div><div class="eyebrow">QA SYSTEM · MNT</div><h1>MNT CPK / PPK Trend</h1></div><div class="connection"><span id="firebaseStatus" class="status warning">연결 중</span><small id="authStatus">Auth 대기 중</small></div></header><section class="upload"><div><h2>보고서 업데이트</h2><div id="dropZone" class="drop-zone" role="button" tabindex="0" aria-label="Excel 첨부 또는 Drag & Drop"><input id="excelFiles" type="file" accept=".xlsx,.xls" multiple hidden><span class="primary">Excel 첨부</span><span>또는 파일을 여기에 놓으세요</span></div></div><div><details><summary>선택한 파일</summary><ul id="selectedFileList" class="file-list"></ul></details></div></section><nav role="tablist" aria-label="MNT 공정"><button id="bumpTab" role="tab" aria-selected="true" aria-controls="bumpPanel" data-mnt-type="BUMP" class="active">Bump</button><button id="assyTab" role="tab" aria-selected="false" aria-controls="assyPanel" data-mnt-type="ASSY" tabindex="-1">Assy</button></nav><div class="export-actions"><button id="exportBtn">Export MNT CPK Report</button></div><section class="panel" id="bumpPanel" role="tabpanel" aria-labelledby="bumpTab">
       <div class="panel-header">
         <div>
           <h2>Bump Product / Item CPK & PPK Trend</h2>
-          <p>
-            BUMP report 기준 Product / Item / Data type별 1년 Trend입니다.
-            기준선은 <b>1.67</b>과 <b>1.33</b>입니다. Spec Limit, Min, Max, Avg, Standard deviation을 같이 표시합니다.
-          </p>
+          
         </div>
-        <button id="exportBtn" type="button" class="secondary">Export MNT CPK Report</button>
+        
       </div>
 
       <div class="filters three">
@@ -81,42 +22,14 @@
         </label>
       </div>
 
-      <div id="cpkTrendCharts" class="chart-grid"></div>
-    </section>
-
-    <section class="panel">
+      <section class="panel" id="lowCpkPanel">
       <div class="panel-header">
         <div>
-          <h2>Assy Device / Process / Characteristics CPK & PPK Trend</h2>
-          <p>
-            ASSY-MNT report는 각 Sheet를 Device로 보고, Process별 Characteristics의 CPK / PPK Trend를 별도 표시합니다.
-            Spec Limit, Min, Max, Avg, Standard deviation을 같이 표시합니다.
-          </p>
+          <h2><span id="lowProcessTitle">Bump</span> Low CPK / PPK List</h2>
+          
         </div>
       </div>
-
-      <div class="filters two">
-        <label>
-          Start Month
-          <select id="assyStartMonthSelect"></select>
-        </label>
-        <label>
-          Device
-          <select id="assyDeviceSelect"></select>
-        </label>
-      </div>
-
-      <div id="assyTrendCharts" class="chart-grid"></div>
-    </section>
-
-    <section class="panel" id="lowCpkPanel">
-      <div class="panel-header">
-        <div>
-          <h2>Monthly Low CPK / PPK</h2>
-          <p>Bump / Assy 전체 중 선택 기간 기준 CPK 또는 PPK가 1.67 미만인 항목을 표시합니다. 위쪽 <b>Low CPK/PPK 항목</b> 카드를 클릭하면 이 표로 바로 이동하고, 이 표(또는 우측에 떠 있는 요약 목록)의 행을 클릭하면 반대로 해당 Item/Characteristics의 CPK & PPK Trend Chart로 바로 이동합니다.</p>
-        </div>
-      </div>
-      <div id="lowTableWrap" class="table-wrap large">
+      <p>CPK 또는 PPK &lt; 1.67 · 행을 선택하면 해당 그래프로 이동합니다.</p><div id="lowTableWrap" class="table-wrap large">
         <table>
           <thead>
             <tr>
@@ -139,39 +52,40 @@
           </tbody>
         </table>
       </div>
-    </section>
-
-    <section class="panel">
+    </section><div id="cpkTrendCharts" class="chart-grid"></div>
+    </section><section class="panel" id="assyPanel" role="tabpanel" aria-labelledby="assyTab" hidden>
       <div class="panel-header">
         <div>
-          <h2>Monthly Report Upload</h2>
-          <p>
-            BUMP-MNT 또는 ASSY-MNT monthly report Excel을 아래 영역에 Drag & Drop 하면 자동으로 Firestore에 저장합니다.
-            BUMP는 <b>Product / ITEM / Cpk / Ppk</b>, ASSY는 <b>PROCESS / CHARACTERISTICS / Cpk / Ppk</b> header를 자동 인식합니다.
-          </p>
+          <h2>Assy Device / Process / Characteristics CPK & PPK Trend</h2>
+          
         </div>
       </div>
 
-      <div id="dropZone" class="drop-zone" role="button" tabindex="0">
-        <input id="excelFiles" type="file" accept=".xlsx,.xls" multiple />
-        <div class="drop-icon">⬇</div>
-        <span>Monthly report를 여기에 Drag & Drop 하면 자동 Upload</span>
-        <small>또는 이 영역을 클릭해서 파일 선택 · 여러 개 한 번에 가능</small>
+      <div class="filters two">
+        <label>
+          Start Month
+          <select id="assyStartMonthSelect"></select>
+        </label>
+        <label>
+          Device
+          <select id="assyDeviceSelect"></select>
+        </label>
       </div>
 
-      <div class="file-row single">
-        <div>
-          <h3>Selected / Last Dropped Files</h3>
-          <ul id="selectedFileList" class="file-list"><li class="empty-li">선택된 파일이 없습니다.</li></ul>
-        </div>
-      </div>
-    </section>
-
-    <section class="panel">
+      <div id="assyTrendCharts" class="chart-grid"></div>
+    </section><details class="history"><summary>업로드 이력 / 저장 상태</summary><section class="grid seven">
+      <article class="metric-card"><p>Selected Rows</p><strong id="selectedRows">0</strong></article>
+      <article class="metric-card"><p>Inserted</p><strong id="insertedRows">0</strong></article>
+      <article class="metric-card"><p>Skipped Duplicate</p><strong id="skippedRows">0</strong></article>
+      <article class="metric-card"><p>Firestore Rows</p><strong id="firestoreRows">0</strong></article>
+      <article class="metric-card"><p>Products / Devices</p><strong id="productCount">0</strong></article>
+      <article class="metric-card"><p>Uploaded Files</p><strong id="uploadedFiles">0</strong></article>
+      <article class="metric-card clickable" id="lowCpkCard" role="button" tabindex="0"><p>Low CPK/PPK 항목</p><strong id="lowCpkCount">0</strong></article>
+    </section><section class="panel">
       <div class="panel-header">
         <div>
           <h2>Uploaded File List</h2>
-          <p>Firestore Raw Data의 <b>sourceFileName</b> 기준입니다. 같은 report를 다시 넣으면 중복 row는 추가되지 않습니다.</p>
+          
         </div>
       </div>
       <div class="table-wrap compact">
@@ -191,9 +105,4 @@
           </tbody>
         </table>
       </div>
-    </section>
-  </main>
-
-  <script type="module" src="mnt-cpk-trend.js?v=22"></script>
-</body>
-</html>
+    </section></details></main><script src="../../shared/auto-mail-client.js?v=58"></script><script type="module" src="mnt-cpk-trend.js?v=58"></script></body></html>

@@ -26,6 +26,7 @@ let db = null;
 let auth = null;
 let currentUser = null;
 
+let activeMntType="BUMP", mntBusy=false;
 let selectedFiles = [];
 let selectedRows = [];
 let fileReadStatus = new Map();
@@ -85,6 +86,7 @@ function setFirebaseStatus(text, type = "warning") {
 }
 
 function setBusy(isBusy) {
+  mntBusy=isBusy;
   const hasSelectedRows = selectedRows.length > 0;
   if (el.exportBtn) el.exportBtn.disabled = isBusy || !rawRows.length;
 }
@@ -896,7 +898,7 @@ function renderSelectedFileList() {
   }).join("");
 }
 
-async function uploadSelectedRows() {
+async function uploadSelectedRows(strict=false) {
   if (!db || !currentUser) { log("Firebase Auth가 아직 준비되지 않았습니다."); return; }
   if (!selectedRows.length) { log("Upload할 row가 없습니다."); return; }
 
@@ -930,6 +932,7 @@ async function uploadSelectedRows() {
     console.error(error);
     log(`Upload Error: ${error.message}`);
     setFirebaseStatus("Firestore upload error", "danger");
+    if(strict)throw error;
   } finally { setBusy(false); }
 }
 
@@ -1362,12 +1365,9 @@ function lowStatus(row) {
 
 function renderLowTable() {
   if (!el.lowBody) return;
-  const selectedMonths = new Set([
-    ...bumpRows().filter(row => isMonthInWindow(row.reportMonth, trendStartMonth)).map(row => row.reportMonth),
-    ...assyRows().filter(row => isMonthInWindow(row.reportMonth, assyTrendStartMonth)).map(row => row.reportMonth)
-  ]);
   const lows = rawRows
-    .filter(row => selectedMonths.has(row.reportMonth))
+    .filter(row => (row.reportType||'BUMP')===activeMntType)
+    .filter(row => isMonthInWindow(row.reportMonth,activeMntType==='ASSY'?assyTrendStartMonth:trendStartMonth))
     .filter(row => lowStatus(row))
     .sort((a, b) => sortByMonth(a, b) || String(a.reportType).localeCompare(String(b.reportType)) || (normalizeNumber(a.cpk) ?? 999) - (normalizeNumber(b.cpk) ?? 999));
 
@@ -1697,3 +1697,24 @@ function initFirebase() {
 setupEvents();
 setBusy(true);
 initFirebase();
+
+function selectMntProcess(type){
+  activeMntType=type==='ASSY'?'ASSY':'BUMP';
+  document.querySelectorAll('[data-mnt-type]').forEach(b=>{const active=b.dataset.mntType===activeMntType;b.classList.toggle('active',active);b.setAttribute('aria-selected',String(active));b.tabIndex=active?0:-1;});
+  document.getElementById('bumpPanel').hidden=activeMntType!=='BUMP';
+  document.getElementById('assyPanel').hidden=activeMntType!=='ASSY';
+  const target=activeMntType==='ASSY'?el.assyTrendCharts:el.cpkTrendCharts;
+  target.parentElement.insertBefore(el.lowCpkPanel,target);
+  document.getElementById('lowProcessTitle').textContent=activeMntType==='ASSY'?'Assy':'Bump';
+  renderLowTable();
+  requestAnimationFrame(()=>{for(const chart of activeMntType==='ASSY'?assyTrendCharts:cpkTrendCharts){chart.resize();chart.update('none');}});
+}
+document.querySelectorAll('[data-mnt-type]').forEach(b=>{
+  b.addEventListener('click',()=>selectMntProcess(b.dataset.mntType));
+  b.addEventListener('keydown',e=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;e.preventDefault();const type=e.key==='Home'?'BUMP':e.key==='End'?'ASSY':activeMntType==='BUMP'?'ASSY':'BUMP';selectMntProcess(type);document.querySelector(`[data-mnt-type="${type}"]`).focus();});
+});
+QAAutoMail.start('mnt',()=>!!db&&!!currentUser&&!mntBusy,async file=>{
+  setBusy(true);
+  try{const rows=await readExcelBuffer(file.name,await file.arrayBuffer());selectedFiles=[file];selectedRows=rows;renderSelectedFileList();await uploadSelectedRows(true);}
+  finally{selectedRows=[];selectedFiles=[];setBusy(false);}
+});
