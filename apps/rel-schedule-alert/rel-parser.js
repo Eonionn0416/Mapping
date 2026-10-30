@@ -513,7 +513,7 @@ export function isAlerting(code) {
 // Plain legacy remarks retain their existing completion behavior.
 export function shippingSlots(value, referenceYear = new Date().getFullYear()) {
  const text=String(value||'').normalize('NFKC'), slots=[];
- for(const m of text.matchAll(/\(([^()]*)\)\s*(?:To\s*(FT|FGS|Rel)\b|(Invoice\s+receive)\b)/gi)){
+ for(const m of text.matchAll(/\(([^()]*)\)\s*(?:To\s*([A-Z][A-Z0-9_-]*)\b|(Invoice\s+receive)\b)/gi)){
   const raw=m[1].trim();let y=referenceYear,month,day;
   const full=/^(\d{4}|\d{2})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{1,2})\.?$/.exec(raw);
   const short=/^(\d{1,2})\s*[-/.]\s*(\d{1,2})\.?$/.exec(raw)||/^(\d{1,2})\s*월\s*(\d{1,2})\s*일$/.exec(raw);
@@ -574,6 +574,16 @@ function isFtRelItem(relItem) {
  *
  * @returns {Map<string, {kind:"toRel"|"toFT", dateOut:string}>} dedupeKey -> 알림 정보
  */
+export function shipmentContext(records,row,today=todayIso()){
+ if(!/^shipment\b/i.test(normalizeText(row.relItem)))return null;
+ const peers=records.filter(r=>r.sourceFileName===row.sourceFileName&&r.sheetName===row.sheetName&&r.criteria===row.criteria).sort((a,b)=>a.rowNumber-b.rowNumber);
+ const parent=peers.filter(r=>r.rowNumber<row.rowNumber&&!/^shipment\b/i.test(normalizeText(r.relItem))).at(-1);
+ const slots=shippingSlots(row.remark,Number(today.slice(0,4))).filter(s=>s.destination!=='RECEIVE');
+ const legacyDate=normalizeText(row.remark).match(/^(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2})\s+to\s+/i);
+ const complete=slots.length?slots.every(s=>s.complete):!!legacyDate&&shippingSlots('('+legacyDate[1]+') To Rel',Number(today.slice(0,4)))[0].complete;
+ return {label:(parent?parent.relItem+' ':'')+'Shipment',complete,destinations:slots.filter(s=>!s.complete).map(s=>s.destination)};
+}
+function followedByShipment(records,row){return records.filter(r=>r.sourceFileName===row.sourceFileName&&r.sheetName===row.sheetName&&r.criteria===row.criteria&&r.rowNumber>row.rowNumber).sort((a,b)=>a.rowNumber-b.rowNumber).slice(0,1).some(r=>/^shipment\b/i.test(normalizeText(r.relItem)));}
 export function markHandoffCheck(records, statusMap = new Map(), today = todayIso()) {
   const groups = new Map();
   records.forEach(record => {
@@ -592,7 +602,7 @@ export function markHandoffCheck(records, statusMap = new Map(), today = todayIs
 
   const flagged = new Map();
   blocks.forEach(({ sorted, lastRow }) => {
-    if (shippingSlots(lastRow.remark).length || normalizeText(lastRow.remark)) return;
+    if (followedByShipment(records,lastRow) || /^shipment\b/i.test(normalizeText(lastRow.relItem)) || shippingSlots(lastRow.remark).length || normalizeText(lastRow.remark)) return;
 
     const dated = sorted.filter(row => row.dateOut);
     if (!dated.length) return;
@@ -620,13 +630,15 @@ export function markHandoffCheck(records, statusMap = new Map(), today = todayIs
   });
   records.forEach(row=>{
     if(isTemplateSheet(row.sheetName))return;
+    const shipment=shipmentContext(records,row,today);
     const slots=shippingSlots(row.remark,Number(today.slice(0,4))).filter(s=>s.destination!=='RECEIVE');
-    if(!slots.length)return;
-    const pending=slots.filter(s=>!s.complete);if(!pending.length)return;
+    if(shipment?.complete)return;
+    if(!shipment&&!slots.length)return;
+    const pending=slots.filter(s=>!s.complete);if(!shipment&&!pending.length)return;
     // Workbook import resolves merged Date out anchors. Older records may need block fallback.
     const related=records.filter(r=>r.sourceFileName===row.sourceFileName&&r.sheetName===row.sheetName&&r.statusBlock===row.statusBlock&&r.rowNumber<=row.rowNumber&&r.dateOut).sort((a,b)=>a.rowNumber-b.rowNumber);
     const anchor=row.dateOut?row:related.at(-1);if(!anchor||dayDiff(today,anchor.dateOut)<0)return;
-    const destinations=[...new Set(pending.map(s=>s.destination))];
+    const destinations=[...new Set(pending.map(s=>s.destination))];if(!destinations.length&&shipment)destinations.push('Shipment');
     flagged.set(row.dedupeKey,{kind:destinations[0]==='REL'?'toRel':destinations[0]==='FGS'?'toFGS':'toFT',destinations,parenthesized:true,dateOut:anchor.dateOut,dateIn:anchor.dateIn||'',assyLot:row.assyLot||anchor.assyLot||'',ftLot:row.ftLot||anchor.ftLot||'',qty:row.qty??anchor.qty??null,refRelItem:row.relItem});
   });
   return flagged;

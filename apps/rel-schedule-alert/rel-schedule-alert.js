@@ -38,6 +38,7 @@ import {
   markOngoing,
   markSampleReceiptCheck,
   markHandoffCheck,
+  shipmentContext,
   isTemplateSheet,
   evaluateAlert,
   isAlerting,
@@ -48,7 +49,7 @@ import {
   normalizeNumber,
   formatDelayValue,
   makeDocId
-} from "./rel-parser.js?v=62";
+} from "./rel-parser.js?v=63";
 
 /* ============================================================
    상수
@@ -78,7 +79,7 @@ let auth = null;
 let storage = null;
 let currentUser = null;
 
-let relImportBusy=false,relAutoReady=false;
+let relImportBusy=false,relAutoReady=false,relClearing=false,relAutoPaused=localStorage.getItem("relScheduleAlert.autoPaused")==="1";
 let rawRows = [];                 // 파싱/Firestore raw records
 let statusMap = new Map();        // dedupeKey -> { manualDone, updatedAt }
 let planStatusMap = new Map();    // sheetName -> { muted }
@@ -700,16 +701,16 @@ async function deleteAllDocsInCollection(collectionName) {
 
 /** Uploaded Plan List 전체를 Local(localStorage) + Firestore에서 삭제합니다. */
 async function clearAllUploadedData() {
+  if(relImportBusy||relClearing){setNotice("가져오기가 끝난 후 삭제해 주세요.",true);return;}
   const total = rawRows.length;
-  if (!total && !statusMap.size && !planStatusMap.size) {
-    log("삭제할 Upload 데이터가 없습니다.");
-    return;
-  }
   const confirmed = window.confirm(
-    `Uploaded Plan List 전체(${total.toLocaleString()} rows)를 Local과 Firestore에서 모두 삭제하시겠습니까?\n` +
+    `Uploaded Plan List 전체(${total.toLocaleString()} rows)와 PCN 이력을 Local과 Firestore에서 모두 삭제하시겠습니까?\n` +
     `이 작업은 되돌릴 수 없습니다.`
   );
   if (!confirmed) return;
+  relClearing=true;relAutoPaused=true;localStorage.setItem("relScheduleAlert.autoPaused","1");
+  const deadline=Date.now()+30000;while(pcnSyncBusy&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,50));
+  if(pcnSyncBusy){relClearing=false;setNotice("PCN 저장 중입니다. 잠시 후 삭제를 다시 실행하세요.",true);return;}
 
   if (ui.clearAllBtn) { ui.clearAllBtn.disabled = true; ui.clearAllBtn.textContent = "삭제 중..."; }
 
@@ -718,7 +719,8 @@ async function clearAllUploadedData() {
     try {
       const [rawDeleted, statusDeleted] = await Promise.all([
         deleteAllDocsInCollection(RAW_COLLECTION),
-        deleteAllDocsInCollection(STATUS_COLLECTION)
+        deleteAllDocsInCollection(STATUS_COLLECTION),
+        deleteAllDocsInCollection("pcnHistories")
       ]);
       log(`Firestore 삭제 완료: ${RAW_COLLECTION} ${rawDeleted}건 / ${STATUS_COLLECTION} ${statusDeleted}건.`);
       // 원본 파일 다운로드 링크 메타데이터도 함께 정리합니다 (Storage의 실제 파일은 남아있어도
@@ -728,7 +730,7 @@ async function clearAllUploadedData() {
         sourceFileMap = new Map();
         if (filesDeleted) log(`Firestore 삭제 완료: ${FILES_COLLECTION} ${filesDeleted}건.`);
       } catch (fileError) {
-        console.error(fileError);
+        firestoreOk=false;console.error(fileError);
       }
     } catch (error) {
       firestoreOk = false;
@@ -742,7 +744,9 @@ async function clearAllUploadedData() {
     log("Firebase 준비 전이라 Local 데이터만 삭제했습니다.");
   }
 
-  // Local 상태 초기화
+  // Local state, including PCN and report overrides, belongs to the deleted dataset.
+  pcnHistory=[];pcnSynced.clear();reportStates={};scheduleChanges=[];workbookModels.clear();sourceFileMap.clear();
+  writeLS(PCN_HISTORY_STORE,[]);writeLS("relScheduleAlert.reports",{});writeLS("relScheduleAlert.changes",[]);
   rawRows = [];
   statusMap = new Map();
   planStatusMap = new Map();
@@ -755,6 +759,7 @@ async function clearAllUploadedData() {
   if (ui.m.firestore) ui.m.firestore.textContent = "0";
 
   refreshAll({ forceAlert: true });
+  relClearing=false;
   log(firestoreOk
     ? "Uploaded Plan List를 Local + Firestore에서 모두 삭제했습니다."
     : "Local Upload 데이터를 삭제했습니다. (Firestore는 삭제하지 못했으니 위 오류를 확인해주세요)");
@@ -996,7 +1001,7 @@ function pill(row) {
 
 function relMetaHTML(row){const kind=row.changeFrom||row.changeTo?'PCN':'Reliability';return `<small class="row-subtitle">${kind}${row.changeFrom?'<br>From: '+escapeHtml(row.changeFrom):''}${row.changeTo?'<br>To: '+escapeHtml(row.changeTo):''}${row.aiNo?'<br><a href="../ai-bi-comparison/?ai='+encodeURIComponent(row.aiNo)+'">AI/BI '+escapeHtml(row.aiNo)+' · Para / Rev 비교</a>':''}</small>`;}
 function renderTable() {
-  const rows=filteredRows().filter(row=>!row.state.done && row.dateOut && row.dateOut<today);
+  const rows=filteredRows().filter(row=>row.handoff||row.recvCheck||(!row.state.done&&row.dateOut&&(row.dateOut<=today||el("showPrealerts").checked)));
   el("summaryCount").textContent=`${rows.length} checkpoints`;
   ui.scheduleBody.innerHTML=rows.map(row=>{
     const delay=Math.max(0,Number(row.delay)||0)+(row.state.done?0:Math.max(0,dayDiff(today,row.dateOut)||0));
@@ -1006,7 +1011,7 @@ function renderTable() {
       <td><b>${escapeHtml(row.sheetName)}</b><small class="row-subtitle">${escapeHtml(row.relNo)}</small></td>
       <td>${escapeHtml(row.criteria)}</td><td>${escapeHtml(row.relItem)}</td>
       <td class="date-cell">${escapeHtml(row.dateOut||'미정')} ${!row.state.done&&row.dateOut===today?'<span class="st-pill due">D-Day</span>':''}</td>
-      <td>${row.state.done?'<span class="st-pill done">Done</span>':escapeHtml(row.status||'미입력')}</td>
+      <td>${row.handoff?escapeHtml(handoffLabel(row.handoff)+' 전달확인'):row.recvCheck?'수령확인':row.state.done?'<span class="st-pill done">Done</span>':escapeHtml(row.status||'미입력')}</td>
       <td class="${late?'danger-text':''}">${delay?`+${delay}일`:'—'}</td>
       <td>${late?`<button class="delay-apply" data-key="${escapeHtml(row.dedupeKey)}">오늘로 변경 (+${dayDiff(today,row.dateOut)}일)</button>`:'—'}</td>
     </tr>`;
@@ -1248,7 +1253,7 @@ function popupGroups(alerts) {
   check:alerts.filter(r=>(r.handoff||r.recvCheck)&&r.state.code!=='delay'&&(r.state.done||r.dateOut!==today))
  };
 }
-function handoffLabel(h){return (h.destinations||[h.kind==='toRel'?'REL':h.kind==='toFGS'?'FGS':'FT']).map(d=>'to '+(d==='REL'?'Rel':d)).join(' / ');}
+function handoffLabel(h){return (h.destinations||[h.kind==='toRel'?'REL':h.kind==='toFGS'?'FGS':'FT']).map(d=>d==='Shipment'?'Shipment':'to '+(d==='REL'?'Rel':d)).join(' / ');}
 function alertItemHtml(row) {
  const label=row.state.code==='delay'?`+${dayDiff(today,row.dateOut)}일 지연`:!row.state.done&&row.dateOut===today?'D-Day':'확인 필요';
  const check=row.handoff?(handoffLabel(row.handoff)+' 전달확인'):row.recvCheck?'Rel team 수령확인':'';
@@ -1346,7 +1351,7 @@ function renderPCN(){
  el('pcnBody').innerHTML=shown.map(p=>`<tr><td>${escapeHtml(p.customer)}</td><td><b>${escapeHtml(p.title)}</b><small class="row-subtitle">${escapeHtml(p.sheetName)} · ${escapeHtml(p.relNo)}</small></td><td>${escapeHtml(p.changeFrom)}</td><td>${escapeHtml(p.changeTo)}</td><td>${p.aiNo?'<a href="../ai-bi-comparison/?ai='+encodeURIComponent(p.aiNo)+'">'+escapeHtml(p.aiNo)+' · Para / 이전 Rev</a>':'AI No 미기재'}</td><td>${escapeHtml(p.status)}<br>${escapeHtml(p.date)}</td><td><details class="pcn-identifiers"><summary>Device ${p.devices.length} · Lot ${p.lots.length} 보기</summary><div class="pcn-identifier-content"><b>Device</b>${p.devices.length?'<ul>'+p.devices.map(v=>'<li>'+escapeHtml(v)+'</li>').join('')+'</ul>':'<p>미기재</p>'}<b>Lot</b>${p.lots.length?'<ul>'+p.lots.map(v=>'<li>'+escapeHtml(v)+'</li>').join('')+'</ul>':'<p>미기재</p>'}</div></details></td></tr>`).join('')||'<tr><td colspan="7" class="empty">PCN 이력이 없습니다. Change From/To가 있는 REL Excel을 업로드하세요.</td></tr>';
  syncPCNHistory();
 }
-async function syncPCNHistory(){if(pcnSyncBusy||!db||!currentUser)return;const changed=pcnHistory.filter(p=>pcnSynced.get(p.id)!==JSON.stringify(p));if(!changed.length)return;pcnSyncBusy=true;try{for(let i=0;i<changed.length;i+=350){const b=writeBatch(db);for(const p of changed.slice(i,i+350))b.set(doc(db,'pcnHistories',p.id),{...p,uploadedAt:serverTimestamp()});await b.commit();for(const p of changed.slice(i,i+350))pcnSynced.set(p.id,JSON.stringify(p));}}catch(e){el('pcnCount').textContent+=' · DB 저장 대기';}finally{pcnSyncBusy=false;}}
+async function syncPCNHistory(){if(relClearing||pcnSyncBusy||!db||!currentUser)return;const changed=pcnHistory.filter(p=>pcnSynced.get(p.id)!==JSON.stringify(p));if(!changed.length)return;pcnSyncBusy=true;try{for(let i=0;i<changed.length;i+=350){const b=writeBatch(db);for(const p of changed.slice(i,i+350))b.set(doc(db,'pcnHistories',p.id),{...p,uploadedAt:serverTimestamp()});await b.commit();for(const p of changed.slice(i,i+350))pcnSynced.set(p.id,JSON.stringify(p));}}catch(e){el('pcnCount').textContent+=' · DB 저장 대기';}finally{pcnSyncBusy=false;}}
 el('pcnCustomer').addEventListener('change',renderPCN);el('pcnSearch').addEventListener('input',renderPCN);
 
 function refreshAll(options = {}) {
@@ -1584,14 +1589,16 @@ async function downloadWorkbook(name,button){
  }catch(e){setNotice(e.message,true);}finally{button.disabled=false;button.textContent=label;}
 }
 function setNotice(message,error=false){const n=el('actionNotice');n.textContent=message;n.hidden=false;n.classList.toggle('error',error);}
+function shippingState(row,state){const sh=shipmentContext(rawRows,row,today);if(!sh)return state;return sh.complete?{...state,done:true,code:"done",label:"배송 확인 완료"}:evaluateAlert({...row,status:"",result:""},null,today,ALERT_LEAD_DAYS,"shipping");}
 function summaryViewRows(){
- const rows=viewRows.filter(r=>r.handoff?.parenthesized || r.recvCheck?.parenthesized || r.summarySelected===true || (r.summarySelected===undefined&&/^(FT\b|FT\(|.*SAT)/i.test(r.relItem)));
+ const rows=viewRows.filter(r=>shipmentContext(rawRows,r,today) || r.handoff?.parenthesized || r.recvCheck?.parenthesized || r.summarySelected===true || (r.summarySelected===undefined&&/^(FT\b|FT\(|.*SAT)/i.test(r.relItem)));
  return rows.map(r=>{
-  const manual=statusMap.get(r.dedupeKey),state=evaluateAlert({...r,result:''},manual,today,ALERT_LEAD_DAYS,/on\s*going/i.test(r.status)?'explicit':'');
+  const manual=statusMap.get(r.dedupeKey),baseState=evaluateAlert({...r,result:''},manual,today,ALERT_LEAD_DAYS,/on\s*going/i.test(r.status)?'explicit':'');
+  const state=shippingState(r,baseState);
   const related=viewRows.filter(x=>x.sourceFileName===r.sourceFileName&&x.sheetName===r.sheetName&&x.criteria===r.criteria&&(x.dueRef===r.dueRef||x.statusRef&&x.statusRef===r.statusRef&&x.dateOut===r.dateOut));
   const handoff=r.handoff||related.find(x=>x.handoff)?.handoff||null;
   const recvCheck=r.recvCheck||related.find(x=>x.recvCheck)?.recvCheck||null;
-  return {...r,relItem:r.summaryLabel||r.relItem,state,handoff,recvCheck};
+  return {...r,relItem:shipmentContext(rawRows,r,today)?.label||r.summaryLabel||r.relItem,state,handoff,recvCheck};
  });
 }
 
@@ -1722,4 +1729,4 @@ async function handleFiles(files,strict=false){
  catch(error){if(strict){rawRows=beforeRows;statusMap.clear();for(const [k,v] of beforeStatus)statusMap.set(k,v);cacheRows();cacheStatus();refreshAll({forceAlert:false});}throw error;}
  finally{relImportBusy=false;}
 }
-QAAutoMail.start('rel',()=>relAutoReady&&!!db&&!!currentUser&&!relImportBusy,async file=>{await handleFiles([file],true);});
+QAAutoMail.start('rel',()=>relAutoReady&&!!db&&!!currentUser&&!relImportBusy&&!relClearing&&!relAutoPaused,async file=>{await handleFiles([file],true);},{forceOnClick:true,onManual:()=>{relAutoPaused=false;localStorage.removeItem('relScheduleAlert.autoPaused');}});

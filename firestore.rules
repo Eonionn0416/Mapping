@@ -127,7 +127,7 @@ service cloud.firestore {
       }
     }
     match /pcnHistories/{docId} {
-      allow read: if signedIn();
+      allow read, delete: if signedIn();
       allow create, update: if signedIn() && request.resource.data.historyKey is string
         && request.resource.data.changeFrom is string && request.resource.data.changeTo is string;
     }
