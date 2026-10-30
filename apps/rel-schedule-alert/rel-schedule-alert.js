@@ -1,3 +1,4 @@
+import { renderMtkGantt } from "./mtk-readout-gantt.js?v=66";
 import * as PCNCore from "./pcn-core.js?v=35";
 import { readPlanWorkbook, upgradeWorkbook, serialDate, dateSerial, seoulToday } from "./rel-workbook.js?v=46";
 import { fileCache } from "./rel-file-cache.js";
@@ -1362,6 +1363,7 @@ function refreshAll(options = {}) {
   renderPlanList();
   renderPCN();
   renderGantt();
+  renderMtkGantt(rawRows);
   runAlertCycle(options);
 }
 
