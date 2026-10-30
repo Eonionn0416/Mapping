@@ -13,7 +13,7 @@
   <link rel="stylesheet" href="rel-schedule-alert.css?v=35" />
   <link rel="stylesheet" href="../../shared/qa-theme.css?v=35" />
   <link rel="stylesheet" href="rel-dashboard.css?v=37" />
-<link rel="stylesheet" href="../../shared/qa-controls.css?v=37"><style>#mtk-gantt-panel .panel-header,#mtk-gantt-panel .filters{display:flex;gap:16px;align-items:center;justify-content:space-between;flex-wrap:wrap}#mtk-gantt-panel label{display:grid;gap:6px}#mtk-gantt-panel select,#mtk-gantt-panel button{min-height:42px;padding:8px 14px}#mtkReadoutGantt{max-height:650px;overflow:auto;margin-top:16px}.mtk-gantt{border-collapse:collapse;min-width:100%;font-size:12px}.mtk-gantt th{position:sticky;top:0;background:#e9f0f7;z-index:1}.mtk-gantt td,.mtk-gantt th{padding:8px;border:1px solid #dce5ef;white-space:nowrap}.mtk-gantt td:nth-child(n+5){text-align:center;min-width:44px}.mtk-gantt .out{background:#1c73b8;color:white}.mtk-gantt .bar-FT{background:#e2f0d9}.mtk-gantt .bar-SAT,.mtk-gantt .bar-PRECON{background:#d9edf7}.mtk-gantt .bar-STRESS{background:#ffe2bc}</style><style>#mtkReadoutGantt{max-height:none;border:0}.mtk-plan-gantt{margin:24px 0}.mtk-plan-scroll{overflow:auto;max-height:650px}.mtk-gantt th{background:#ffc000;color:#111;border:1px solid #777;text-align:center}.mtk-gantt thead tr:nth-child(2) th{top:35px}.mtk-gantt td{border:1px solid #777;color:#111;height:30px}.mtk-gantt td:nth-child(n+5){min-width:90px}.mtk-gantt .gantt-s3{background:#92d050}.mtk-gantt .gantt-s4{background:#ffeb3b}.mtk-gantt .gantt-s5{background:#e8edf2}</style></head>
+<link rel="stylesheet" href="../../shared/qa-controls.css?v=37"><style>#mtk-gantt-panel .panel-header{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}#mtkReadoutGantt{max-height:480px;overflow:auto;margin-top:16px}.mtk-export-list{width:100%;border-collapse:collapse}.mtk-export-list th{position:sticky;top:0;background:#e9f0f7;z-index:1;text-align:left}.mtk-export-list th,.mtk-export-list td{padding:10px 14px;border-bottom:1px solid #dce5ef}.mtk-export-list td:first-child{overflow-wrap:anywhere}.mtk-export-list button{min-height:40px;padding:8px 16px;white-space:nowrap}</style></head>
 <body>
   <a class="qa-back-link" href="../../index.html">← QA Page</a>
 
@@ -177,9 +177,9 @@
         </table>
       </div>
     </section>
-<section class="panel" id="mtk-gantt-panel"><div class="panel-header"><h2>MTK REL · Readout Gantt</h2><button id="mtkGanttExport" class="primary">Export Gantt Excel</button></div><div class="filters"><label>Plan (Sheet)<select id="mtkGanttPlan"><option value="">전체 Plan</option></select></label><span id="mtkGanttCount" role="status"></span></div><p class="hint">노란색: On going · 초록색: Done · 회색: 예정 · 칸 안 날짜: 원본 Date Out (미완료 ~M/D · 완료 M/D) · WW: ISO 주차</p><div id="mtkReadoutGantt" class="table-wrap"></div></section>
+<section class="panel" id="mtk-gantt-panel"><div class="panel-header"><h2>MTK REL · Gantt Export</h2><span id="mtkGanttCount" role="status"></span></div><div id="mtkReadoutGantt" class="table-wrap"></div></section>
   </main>
 
-  <script src="../../shared/auto-mail-client.js?v=63"></script><script type="module" src="rel-schedule-alert.js?v=66"></script>
+  <script src="../../shared/auto-mail-client.js?v=63"></script><script type="module" src="rel-schedule-alert.js?v=67"></script>
 <script defer src="../../shared/qa-context.js?v=35"></script></body>
 </html>
