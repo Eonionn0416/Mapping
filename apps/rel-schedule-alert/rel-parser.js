@@ -508,6 +508,23 @@ export function isAlerting(code) {
  *
  * @returns {Map<string, {receiveDate:string}>} dedupeKey -> 알림 정보
  */
+
+// Explicit Shipping templates require a real date INSIDE each associated pair.
+// Plain legacy remarks retain their existing completion behavior.
+export function shippingSlots(value, referenceYear = new Date().getFullYear()) {
+ const text=String(value||'').normalize('NFKC'), slots=[];
+ for(const m of text.matchAll(/\(([^()]*)\)\s*(?:To\s*(FT|FGS|Rel)\b|(Invoice\s+receive)\b)/gi)){
+  const raw=m[1].trim();let y=referenceYear,month,day;
+  const full=/^(\d{4}|\d{2})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{1,2})\.?$/.exec(raw);
+  const short=/^(\d{1,2})\s*[-/.]\s*(\d{1,2})\.?$/.exec(raw)||/^(\d{1,2})\s*월\s*(\d{1,2})\s*일$/.exec(raw);
+  if(full){y=+full[1]+(full[1].length===2?2000:0);month=+full[2];day=+full[3];}else if(short){month=+short[1];day=+short[2];}
+  const date=new Date(Date.UTC(y,(month||0)-1,day||0));
+  const complete=!!month&&!!day&&date.getUTCFullYear()===y&&date.getUTCMonth()===month-1&&date.getUTCDate()===day;
+  slots.push({destination:m[2]?m[2].toUpperCase():'RECEIVE',complete,date:complete?`${y}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`:''});
+ }
+ return slots;
+}
+
 export function markSampleReceiptCheck(records, statusMap = new Map(), today = todayIso()) {
   const firstBySheet = new Map();
   records.forEach(record => {
@@ -520,12 +537,13 @@ export function markSampleReceiptCheck(records, statusMap = new Map(), today = t
 
   const flagged = new Map();
   firstBySheet.forEach(record => {
-    if (normalizeText(record.remark)) return;
+    const slots=shippingSlots(record.remark,Number(today.slice(0,4))).filter(s=>s.destination==='RECEIVE');
+    if(slots.length?slots.every(s=>s.complete):normalizeText(record.remark))return;
     if (!record.receiveDate) return;
     if (dayDiff(today, record.receiveDate) < 0) return;
     const statusDoc = statusMap.get(record.dedupeKey) || null;
-    if (statusDoc && statusDoc.manualDone === true) return;
-    flagged.set(record.dedupeKey, { receiveDate: record.receiveDate });
+    if (!slots.length && statusDoc && statusDoc.manualDone === true) return;
+    flagged.set(record.dedupeKey, { receiveDate: record.receiveDate, parenthesized:!!slots.length });
   });
   return flagged;
 }
@@ -574,7 +592,7 @@ export function markHandoffCheck(records, statusMap = new Map(), today = todayIs
 
   const flagged = new Map();
   blocks.forEach(({ sorted, lastRow }) => {
-    if (normalizeText(lastRow.remark)) return;
+    if (shippingSlots(lastRow.remark).length || normalizeText(lastRow.remark)) return;
 
     const dated = sorted.filter(row => row.dateOut);
     if (!dated.length) return;
@@ -599,6 +617,17 @@ export function markHandoffCheck(records, statusMap = new Map(), today = todayIs
       qty: anchorRow.qty ?? null,
       refRelItem: anchorRow.relItem || lastRow.relItem
     });
+  });
+  records.forEach(row=>{
+    if(isTemplateSheet(row.sheetName))return;
+    const slots=shippingSlots(row.remark,Number(today.slice(0,4))).filter(s=>s.destination!=='RECEIVE');
+    if(!slots.length)return;
+    const pending=slots.filter(s=>!s.complete);if(!pending.length)return;
+    // Workbook import resolves merged Date out anchors. Older records may need block fallback.
+    const related=records.filter(r=>r.sourceFileName===row.sourceFileName&&r.sheetName===row.sheetName&&r.statusBlock===row.statusBlock&&r.rowNumber<=row.rowNumber&&r.dateOut).sort((a,b)=>a.rowNumber-b.rowNumber);
+    const anchor=row.dateOut?row:related.at(-1);if(!anchor||dayDiff(today,anchor.dateOut)<0)return;
+    const destinations=[...new Set(pending.map(s=>s.destination))];
+    flagged.set(row.dedupeKey,{kind:destinations[0]==='REL'?'toRel':destinations[0]==='FGS'?'toFGS':'toFT',destinations,parenthesized:true,dateOut:anchor.dateOut,dateIn:anchor.dateIn||'',assyLot:row.assyLot||anchor.assyLot||'',ftLot:row.ftLot||anchor.ftLot||'',qty:row.qty??anchor.qty??null,refRelItem:row.relItem});
   });
   return flagged;
 }

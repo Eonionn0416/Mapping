@@ -48,7 +48,7 @@ import {
   normalizeNumber,
   formatDelayValue,
   makeDocId
-} from "./rel-parser.js?v=46";
+} from "./rel-parser.js?v=62";
 
 /* ============================================================
    상수
@@ -986,8 +986,8 @@ function pill(row) {
     tags.push(`<span class="st-pill recv" title="Receive date ${escapeHtml(row.recvCheck.receiveDate)} 경과 · Remark 미기재">수령확인 필요</span>`);
   }
   if (row.handoff) {
-    const label = row.handoff.kind === "toRel" ? "to Rel 확인 필요" : "to FT 확인 필요";
-    tags.push(`<span class="st-pill recv" title="Date out ${escapeHtml(row.handoff.dateOut)} 경과 · Remark 미기재">${escapeHtml(label)}</span>`);
+    const label = handoffLabel(row.handoff)+" 확인 필요";
+    tags.push(`<span class="st-pill recv" title="Date out ${escapeHtml(row.handoff.dateOut)} 경과 · Shipping 날짜 확인 필요">${escapeHtml(label)}</span>`);
   }
   if (row.state.ongoing === "explicit") tags.push(`<span class="st-pill soon">On going</span>`);
   if (row.muted && isAlerting(row.state.code)) tags.push(`<span class="st-pill none">Muted</span>`);
@@ -1248,9 +1248,10 @@ function popupGroups(alerts) {
   check:alerts.filter(r=>(r.handoff||r.recvCheck)&&r.state.code!=='delay'&&(r.state.done||r.dateOut!==today))
  };
 }
+function handoffLabel(h){return (h.destinations||[h.kind==='toRel'?'REL':h.kind==='toFGS'?'FGS':'FT']).map(d=>'to '+(d==='REL'?'Rel':d)).join(' / ');}
 function alertItemHtml(row) {
  const label=row.state.code==='delay'?`+${dayDiff(today,row.dateOut)}일 지연`:!row.state.done&&row.dateOut===today?'D-Day':'확인 필요';
- const check=row.handoff?(row.handoff.kind==='toRel'?'to Rel 전달확인':'to FT 전달확인'):row.recvCheck?'Rel team 수령확인':'';
+ const check=row.handoff?(handoffLabel(row.handoff)+' 전달확인'):row.recvCheck?'Rel team 수령확인':'';
  return `<div class="alert-item ${row.state.code==='delay'?'delayed':'due'}">
   <div class="ai-main"><button type="button" class="ai-title go-row" data-goto="${escapeHtml(row.dedupeKey)}">${escapeHtml(row.sheetName)} · ${escapeHtml(row.relItem)} <span aria-hidden="true">↗</span></button>
   <div class="ai-sub">${escapeHtml(row.criteria)} · ${escapeHtml(row.relNo)}${check?' · '+escapeHtml(check):''}</div></div>
@@ -1584,7 +1585,7 @@ async function downloadWorkbook(name,button){
 }
 function setNotice(message,error=false){const n=el('actionNotice');n.textContent=message;n.hidden=false;n.classList.toggle('error',error);}
 function summaryViewRows(){
- const rows=viewRows.filter(r=>r.summarySelected===true || (r.summarySelected===undefined&&/^(FT\b|FT\(|.*SAT)/i.test(r.relItem)));
+ const rows=viewRows.filter(r=>r.handoff?.parenthesized || r.recvCheck?.parenthesized || r.summarySelected===true || (r.summarySelected===undefined&&/^(FT\b|FT\(|.*SAT)/i.test(r.relItem)));
  return rows.map(r=>{
   const manual=statusMap.get(r.dedupeKey),state=evaluateAlert({...r,result:''},manual,today,ALERT_LEAD_DAYS,/on\s*going/i.test(r.status)?'explicit':'');
   const related=viewRows.filter(x=>x.sourceFileName===r.sourceFileName&&x.sheetName===r.sheetName&&x.criteria===r.criteria&&(x.dueRef===r.dueRef||x.statusRef&&x.statusRef===r.statusRef&&x.dateOut===r.dateOut));
