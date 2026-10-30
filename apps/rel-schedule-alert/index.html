@@ -13,7 +13,7 @@
   <link rel="stylesheet" href="rel-schedule-alert.css?v=35" />
   <link rel="stylesheet" href="../../shared/qa-theme.css?v=35" />
   <link rel="stylesheet" href="rel-dashboard.css?v=37" />
-<link rel="stylesheet" href="../../shared/qa-controls.css?v=37"><style>#mtk-gantt-panel .panel-header{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}#mtkReadoutGantt{max-height:480px;overflow:auto;margin-top:16px}.mtk-export-list{width:100%;border-collapse:collapse}.mtk-export-list th{position:sticky;top:0;background:#e9f0f7;z-index:1;text-align:left}.mtk-export-list th,.mtk-export-list td{padding:10px 14px;border-bottom:1px solid #dce5ef}.mtk-export-list td:first-child{overflow-wrap:anywhere}.mtk-export-list button{min-height:40px;padding:8px 16px;white-space:nowrap}</style></head>
+<link rel="stylesheet" href="../../shared/qa-controls.css?v=37"><style>#mtk-gantt-panel .panel-header{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}#mtkReadoutGantt{max-height:480px;overflow:auto;margin-top:16px}.mtk-export-list{width:100%;border-collapse:collapse}.mtk-export-list th{position:sticky;top:0;background:#e9f0f7;z-index:1;text-align:left}.mtk-export-list th,.mtk-export-list td{padding:10px 14px;border-bottom:1px solid #dce5ef}.mtk-export-list td:first-child{overflow-wrap:anywhere}.mtk-export-list button{min-height:40px;padding:8px 16px;white-space:nowrap}</style><style>.gantt-search-fields{display:flex;align-items:flex-end;flex-wrap:wrap;gap:16px;margin:16px 0}.gantt-search-fields label{display:flex;flex:1 1 190px;flex-direction:column;gap:6px;font-size:13px;font-weight:600;color:#59718d}.gantt-search-fields input,.gantt-search-fields select{width:100%;box-sizing:border-box;height:42px;border:1px solid #ccdbee;border-radius:7px;padding:8px 12px;background:#fff;color:#173753;font:inherit}.gantt-search-fields button{height:42px}.mtk-export-list td:last-child,.mtk-export-list th:last-child{text-align:right;width:180px}</style></head>
 <body>
   <a class="qa-back-link" href="../../index.html">← QA Page</a>
 
@@ -45,7 +45,7 @@
     <section class="hero">
       <div><p class="eyebrow">QUALITY ASSURANCE / RELIABILITY</p><h1>REL Schedule</h1>
         <p class="subtitle">고객 Report와 주요 readout 일정을 한곳에서 관리합니다.</p>
-        <nav class="section-nav"><a href="#reports">Report 발송</a><a href="#summary">Summary 일정</a><a href="#delays">지연 보기</a><a href="#files">Excel 파일</a><a href="#mtk-gantt-panel">MTK Gantt</a></nav>
+        <nav class="section-nav"><a href="#reports">Report 발송</a><a href="#summary">Summary 일정</a><a href="#delays">지연 보기</a><a href="#files">Excel 파일</a><a href="#mtk-gantt-panel">REL Gantt</a></nav>
       </div>
       <div class="hero-card"><span id="firebaseStatus" class="status warning">연결 중…</span><p>오늘</p><strong id="todayLabel">—</strong><small id="authStatus">Auth 대기 중</small></div>
     </section>
@@ -177,9 +177,9 @@
         </table>
       </div>
     </section>
-<section class="panel" id="mtk-gantt-panel"><div class="panel-header"><h2>MTK REL · Gantt Export</h2><span id="mtkGanttCount" role="status"></span></div><div id="mtkReadoutGantt" class="table-wrap"></div></section>
+<section class="panel" id="mtk-gantt-panel"><div class="panel-header"><h2>REL · Gantt Export</h2><span id="mtkGanttCount" role="status"></span></div><div class="gantt-search-fields"><label>Customer<select id="ganttCustomer"><option value="">전체 고객</option></select></label><label>Sheet / REL No / 파일명<input id="ganttSearch" type="search" placeholder="시트명 또는 문서번호"></label><label>Device<input id="ganttDevice" type="search" placeholder="Device 일부 또는 전체"></label><label>Lot<input id="ganttLot" type="search" placeholder="Assy / FT Lot 일부 또는 전체"></label><button id="ganttReset" type="button" class="secondary">검색 초기화</button></div><div id="mtkReadoutGantt" class="table-wrap"></div></section>
   </main>
 
-  <script src="../../shared/auto-mail-client.js?v=63"></script><script type="module" src="rel-schedule-alert.js?v=67"></script>
+  <script src="../../shared/auto-mail-client.js?v=63"></script><script type="module" src="rel-schedule-alert.js?v=69"></script>
 <script defer src="../../shared/qa-context.js?v=35"></script></body>
 </html>

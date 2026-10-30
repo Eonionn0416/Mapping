@@ -5,8 +5,8 @@ const ft=v=>/^(?:FT(?:\b|\()|re-?FT|Final Test|Function\s*Test)/i.test(v);
 const ship=v=>/^shipment\b/i.test(v);
 const sat=v=>/SAT|T-SAM/i.test(v);
 const iso=v=>/^\d{4}-\d{2}-\d{2}$/.test(txt(v))?v:'';
-export function buildMtkReadouts(records){
- const plans=new Map();for(const r of records){if(!/\bMTK(?:\d|\b)/i.test(r.sourceFileName||'')||/^REL[_\s]*[가-힣]{2,10}$/i.test(r.sheetName))continue;const key=r.sourceFileName+'|'+r.sheetName;if(!plans.has(key))plans.set(key,[]);plans.get(key).push(r);}
+export function buildMtkReadouts(records,{allCustomers=false}={}){
+ const plans=new Map();for(const r of records){if((!allCustomers&&!/\bMTK(?:\d|\b)/i.test(r.sourceFileName||''))||/^REL[_\s]*[가-힣]{2,10}$/i.test(r.sheetName))continue;const key=r.sourceFileName+'|'+r.sheetName;if(!plans.has(key))plans.set(key,[]);plans.get(key).push(r);}
  const result=[];
  for(const rows of plans.values()){
   rows.sort((a,b)=>a.rowNumber-b.rowNumber);const preRows=rows.filter(r=>pre(r.criteria));const branches=new Set(preRows.filter(r=>ft(r.relItem)).map(r=>family(r.relItem)).filter(Boolean));const preStart=preRows.map(r=>iso(r.dateIn)).filter(Boolean).sort()[0]||'';const points=[];
@@ -45,7 +45,7 @@ export function weekInfo(w){const d=new Date(stamp(w)+3*day),year=d.getUTCFullYe
 export function monthGroups(weeks){const out=[];weeks.forEach((w,i)=>{const month=weekInfo(w).month,last=out.at(-1);if(last?.label===month)last.count++;else out.push({label:month,start:i,count:1});});return out;}
 export function ganttCell(r,w){const mark=timelineMark(r,w),status=ganttStatus(r);return {active:!!mark,text:mark==='◆'?(status==='Done'?'':'~')+Number(r.end.slice(5,7))+'/'+Number(r.end.slice(8,10)):'',style:mark?(status==='Done'?3:status==='On going'?4:5):0};}
 export async function exportMtkGantt(rows,Zip,{singlePlan=false}={}){
- if(!rows.length)throw Error('내보낼 MTK 일정이 없습니다.');const zip=new Zip(),sheets=singlePlan?[]:[{name:'All Plans',rows}],names=new Set(['all plans','source details']);
+ if(!rows.length)throw Error('내보낼 REL 일정이 없습니다.');const zip=new Zip(),sheets=singlePlan?[]:[{name:'All Plans',rows}],names=new Set(['all plans','source details']);
  for(const plan of new Set(rows.map(r=>r.plan))){let base=plan.replace(/[\\/*?:\[\]]/g,' ').slice(0,31)||'Plan',name=base,n=1;while(names.has(name.toLowerCase()))name=base.slice(0,27)+'_'+n++;names.add(name.toLowerCase());sheets.push({name,rows:rows.filter(r=>r.plan===plan)});}
  sheets.push({name:'Source Details',rows,details:true});const ns='http://schemas.openxmlformats.org/spreadsheetml/2006/main';
  const cell=(r,c,v,style=0,date=false)=>{const ref=col(c)+r;if(date&&v)return `<c r="${ref}" s="2"><v>${Math.round((stamp(v)-epoch)/day)}</v></c>`;return `<c r="${ref}" s="${style}" t="inlineStr"><is><t xml:space="preserve">${esc(v)}</t></is></c>`;};
@@ -58,14 +58,30 @@ export async function exportMtkGantt(rows,Zip,{singlePlan=false}={}){
  zip.file('xl/styles.xml',`<styleSheet xmlns="${ns}"><numFmts count="1"><numFmt numFmtId="164" formatCode="yyyy-mm-dd"/></numFmts><fonts count="2"><font><sz val="10"/><name val="맑은 고딕"/></font><font><b/><sz val="10"/><name val="맑은 고딕"/></font></fonts><fills count="6"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>${['FFFFC000','FF92D050','FFFFEB3B','FFE8EDF2'].map(c=>`<fill><patternFill patternType="solid"><fgColor rgb="${c}"/><bgColor indexed="64"/></patternFill></fill>`).join('')}</fills><borders count="1"><border>${['left','right','top','bottom'].map(x=>`<${x} style="thin"><color rgb="FF777777"/></${x}>`).join('')}</border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="6">${[0,2,0,3,4,5].map((fill,i)=>`<xf numFmtId="${i===2?164:0}" fontId="${i===1?1:0}" fillId="${fill}" borderId="0" xfId="0" applyAlignment="1" applyFill="1" applyBorder="1"${i===2?' applyNumberFormat="1"':''}><alignment vertical="center" wrapText="1"${i!==0?' horizontal="center"':''}/></xf>`).join('')}</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>`);
  const relns='http://schemas.openxmlformats.org/package/2006/relationships';zip.file('_rels/.rels',`<Relationships xmlns="${relns}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`);zip.file('xl/workbook.xml',`<workbook xmlns="${ns}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheets.map((s,i)=>`<sheet name="${esc(s.name)}" sheetId="${i+1}" r:id="rId${i+1}"/>`).join('')}</sheets></workbook>`);zip.file('xl/_rels/workbook.xml.rels',`<Relationships xmlns="${relns}">${sheets.map((s,i)=>`<Relationship Id="rId${i+1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i+1}.xml"/>`).join('')}<Relationship Id="styles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`);zip.file('[Content_Types].xml',`<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((s,i)=>`<Override PartName="/xl/worksheets/sheet${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')}</Types>`);return zip.generateAsync({type:'uint8array',compression:'DEFLATE'});
 }
+const searchText=value=>(Array.isArray(value)?value.flat(Infinity).join(' '):String(value??'')).normalize('NFKC').toLowerCase().trim();
+const planKey=r=>(r.sourceFileName||r.file||'')+'|'+(r.sheetName||r.plan||'');
+function planCustomer(rows){const file=rows[0]?.sourceFileName||'';const known=file.match(/\b(MNT|MTK|BDR|AST|ION|MSL)(?=\d|\b)/i)?.[1];if(known)return known.toUpperCase();return txt(rows.find(r=>txt(r.customer))?.customer).toUpperCase()||'OTHER';}
+export function buildGanttPlans(records){
+ const source=new Map(),groups=new Map();
+ for(const r of records){const key=planKey(r);if(!source.has(key))source.set(key,[]);source.get(key).push(r);}
+ for(const r of buildMtkReadouts(records,{allCustomers:true})){const key=planKey(r);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(r);}
+ return [...groups].map(([key,rows])=>{const raw=source.get(key)||[];return {rows,customer:planCustomer(raw),title:searchText([rows[0].plan,rows[0].relNo,rows[0].file]),devices:searchText(raw.flatMap(r=>[r.planDevices,r.devices,r.device].flat(Infinity).filter(Boolean))),lots:searchText(raw.flatMap(r=>[r.planLots,r.lots,r.assyLot,r.ftLot,r.lot].flat(Infinity).filter(Boolean)))};});
+}
+export function filterGanttPlans(plans,{customer='',title='',device='',lot=''}={}){
+ return plans.filter(p=>(!customer||p.customer===customer)&&p.title.includes(searchText(title))&&p.devices.includes(searchText(device))&&p.lots.includes(searchText(lot)));
+}
 export function renderMtkGantt(records){
  const host=document.getElementById('mtkReadoutGantt');if(!host)return;
- const all=buildMtkReadouts(records),groups=new Map();
- for(const row of all){const key=row.file+'|'+row.plan;if(!groups.has(key))groups.set(key,[]);groups.get(key).push(row);}
- const plans=[...groups.values()],count=document.getElementById('mtkGanttCount');count.textContent=`${plans.length} Plans`;
- host.innerHTML=plans.length?`<table class="mtk-export-list"><thead><tr><th>Plan (Sheet)</th><th>REL No</th><th>Excel</th></tr></thead><tbody>${plans.map((rows,i)=>`<tr><td><strong>${esc(rows[0].plan)}</strong></td><td>${esc(rows[0].relNo||'—')}</td><td><button type="button" class="secondary" data-mtk-export="${i}" aria-label="${esc(rows[0].plan)} Gantt Excel 내보내기">Export Excel</button></td></tr>`).join('')}</tbody></table>`:'<p>MTK REL 파일을 가져오면 Plan 목록이 표시됩니다.</p>';
- host.querySelectorAll('[data-mtk-export]').forEach(button=>{button.onclick=async()=>{
-  const rows=plans[Number(button.dataset.mtkExport)];if(!rows)return;button.disabled=true;button.textContent='Export 중…';
-  try{const bytes=await exportMtkGantt(rows,window.JSZip,{singlePlan:true});const url=URL.createObjectURL(new Blob([bytes],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'})),link=document.createElement('a');link.href=url;link.download=rows[0].plan.replace(/[<>:"/\\|?*\x00-\x1f]/g,'_').slice(0,120)+'_Gantt.xlsx';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);count.textContent=`${plans.length} Plans · ${rows[0].plan} 다운로드 완료`;}catch(e){count.textContent='Export 실패: '+e.message;}finally{button.disabled=false;button.textContent='Export Excel';}
- };});
+ const all=buildGanttPlans(records),count=document.getElementById('mtkGanttCount'),customer=document.getElementById('ganttCustomer'),title=document.getElementById('ganttSearch'),device=document.getElementById('ganttDevice'),lot=document.getElementById('ganttLot');
+ const previous=customer.value;customer.innerHTML='<option value="">전체 고객</option>'+[...new Set(all.map(p=>p.customer))].sort().map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');customer.value=all.some(p=>p.customer===previous)?previous:'';
+ function draw(){
+  const plans=filterGanttPlans(all,{customer:customer.value,title:title.value,device:device.value,lot:lot.value});count.textContent=`${plans.length} / ${all.length} Plans`;
+  host.innerHTML=plans.length?`<table class="mtk-export-list"><thead><tr><th>Customer</th><th>Plan (Sheet)</th><th>Excel</th></tr></thead><tbody>${plans.map((p,i)=>`<tr><td>${esc(p.customer)}</td><td><strong>${esc(p.rows[0].plan)}</strong></td><td><button type="button" class="secondary" data-mtk-export="${i}" aria-label="${esc(p.rows[0].plan)} Gantt Excel 내보내기">Export Excel</button></td></tr>`).join('')}</tbody></table>`:`<p>${all.length?'검색 조건에 맞는 Plan이 없습니다.':'REL 파일을 가져오면 Plan 목록이 표시됩니다.'}</p>`;
+  host.querySelectorAll('[data-mtk-export]').forEach(button=>{button.onclick=async()=>{
+   const rows=plans[Number(button.dataset.mtkExport)]?.rows;if(!rows)return;button.disabled=true;button.textContent='Export 중…';
+   try{const bytes=await exportMtkGantt(rows,window.JSZip,{singlePlan:true}),url=URL.createObjectURL(new Blob([bytes],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'})),link=document.createElement('a');link.href=url;link.download=rows[0].plan.replace(/[<>:"/\\|?*\u0000-\u001f]/g,'_').slice(0,120)+'_Gantt.xlsx';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(e){count.textContent='Export 실패: '+e.message;}finally{button.disabled=false;button.textContent='Export Excel';}
+  };});
+ }
+ customer.onchange=draw;title.oninput=draw;device.oninput=draw;lot.oninput=draw;
+ document.getElementById('ganttReset').onclick=()=>{customer.value='';title.value='';device.value='';lot.value='';draw();};draw();
 }
