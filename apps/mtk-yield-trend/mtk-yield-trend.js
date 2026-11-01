@@ -59,7 +59,7 @@ let defectTrendRows = [];
 let binTrendRows = [];
 let weeklyDeviceVendorData = { devices: [], wwColumns: [], osMap: new Map(), binMap: new Map() };
 let trendStartMonth = "";
-let trendDurationMonths = 6;
+let trendDurationMonths = 1;
 
 let yieldTrendCharts = [];
 let osTrendCharts = [];
@@ -367,7 +367,7 @@ function refreshTrendMonthOptions() {
   const previous=el.trendStartMonthSelect.value||trendStartMonth;
   el.trendStartMonthSelect.disabled=trendDurationMonths===0;
   if(!available.length){trendStartMonth='';el.trendStartMonthSelect.innerHTML='<option value="">No data</option>';el.trendPeriodLabel.textContent='데이터 없음';return;}
-  const latest=available.at(-1),defaultStart=addMonths(latest,-5),first=[available[0],defaultStart,previous].filter(Boolean).sort()[0],months=[];
+  const latest=available.at(-1),defaultStart=addMonths(latest,1-Math.max(1,trendDurationMonths)),first=[available[0],defaultStart,previous].filter(Boolean).sort()[0],months=[];
   for(let m=first;m<=latest;m=addMonths(m,1))months.push(m);
   trendStartMonth=previous&&months.includes(previous)?previous:defaultStart;
   el.trendStartMonthSelect.innerHTML=months.map(m=>`<option value="${escapeHtml(m)}">${escapeHtml(monthLabel(m))}</option>`).join('');
