@@ -361,14 +361,23 @@ function getAvailableTrendMonths() {
   return Array.from(months).sort();
 }
 
+function resetTrendStartForDuration(now = new Date()) {
+  if (trendDurationMonths <= 0) return;
+  const parts = new Intl.DateTimeFormat('en', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit' }).formatToParts(now);
+  const currentMonth = parts.find(p => p.type === 'year').value + '-' + parts.find(p => p.type === 'month').value;
+  trendStartMonth = addMonths(currentMonth, -trendDurationMonths);
+  el.trendStartMonthSelect.value = '';
+}
+
 function refreshTrendMonthOptions() {
   if (!el.trendStartMonthSelect) return;
   const available=getAvailableTrendMonths().filter(m=>/^\d{4}-(0[1-9]|1[0-2])$/.test(m));
   const previous=el.trendStartMonthSelect.value||trendStartMonth;
   el.trendStartMonthSelect.disabled=trendDurationMonths===0;
-  if(!available.length){trendStartMonth='';el.trendStartMonthSelect.innerHTML='<option value="">No data</option>';el.trendPeriodLabel.textContent='데이터 없음';return;}
+  if(!available.length){el.trendStartMonthSelect.innerHTML='<option value="">No data</option>';el.trendPeriodLabel.textContent='데이터 없음';return;}
   const latest=available.at(-1),defaultStart=addMonths(latest,1-Math.max(1,trendDurationMonths)),first=[available[0],defaultStart,previous].filter(Boolean).sort()[0],months=[];
-  for(let m=first;m<=latest;m=addMonths(m,1))months.push(m);
+  const last=[latest,previous].filter(Boolean).sort().at(-1);
+  for(let m=first;m<=last;m=addMonths(m,1))months.push(m);
   trendStartMonth=previous&&months.includes(previous)?previous:defaultStart;
   el.trendStartMonthSelect.innerHTML=months.map(m=>`<option value="${escapeHtml(m)}">${escapeHtml(monthLabel(m))}</option>`).join('');
   el.trendStartMonthSelect.value=trendStartMonth;
@@ -2335,6 +2344,7 @@ function setupEvents() {
   });
   el.trendDurationSelect.addEventListener("change", () => {
     trendDurationMonths=Number(el.trendDurationSelect.value);
+    resetTrendStartForDuration();
     rebuildDerivedData();
     renderFirestoreViews();
   });
