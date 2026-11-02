@@ -1,8 +1,8 @@
 (function(root){
 'use strict';
 const text=v=>String(v??'').replace(/\u00a0/g,' ').trim(),norm=v=>text(v).toUpperCase().replace(/\s+/g,''),key=v=>norm(v).replace(/[^A-Z0-9가-힣]/g,''),clone=v=>JSON.parse(JSON.stringify(v));
-const TESTS=['Visual inspection','X-Ray','3D X-Ray','IV Curve Trace','SAT','P-Lap(SEM)','Decap(SEM)','X-section(SEM)','EDX','Die level Visual','Die level IV'];
-const lots=v=>[...new Set((text(v).match(/\b[A-Z][A-Z0-9_-]*\d[A-Z0-9_-]*\.\d+(?:\s*[A-Z](?![A-Z0-9]))?/gi)||[]).map(norm))];
+const TESTS=['Visual inspection','X-Ray','3D X-Ray','IV Curve Trace','SAT','P-Lap(SEM)','Decap(SEM)','X-section(SEM)','EDX','Die level Visual','Die level IV','RC','CA'];
+const lots=v=>[...new Set((text(v).match(/\b[A-Z][A-Z0-9_-]*\d[A-Z0-9_-]*\.\d+(?:[-_][A-Z0-9]+|[A-Z]+)*(?:\s+[A-Z0-9]+(?:[-_][A-Z0-9]+)*(?=\s*(?:[,;\r\n()]|$)))?/gi)||[]).map(norm))];
 const binKey=v=>{const m=norm(v).match(/^(?:HBIN|BIN|B)(\d+)$/);return m?'B'+Number(m[1]):norm(v)==='JAM'?'JAM':'';};
 function excelDate(v,X){if(typeof v==='number'){const d=X.SSF.parse_date_code(v);return d?`${d.y}-${String(d.m).padStart(2,'0')}-${String(d.d).padStart(2,'0')}`:'';}return text(v).slice(0,10);}
 function summaryValues(s){const number=v=>v!==''&&v!=null&&Number.isFinite(Number(v));if(!number(s.input)||!number(s.fail))return s;const good=Number(s.input)-Number(s.fail);return {...s,good,yield:Number(s.input)>0?good/Number(s.input):''};}
@@ -29,7 +29,7 @@ function read(w,X,file){
    for(let j=r+1;j<rows.length;j++){const b=rows[j],id=lots(b[lc])[0];if(!id){if(b.some((x,c)=>c<pc&&text(x)))break;continue;}const qty=Math.max(1,Number(b[qc])||1);for(let q=0;q<qty;q++)record.units.push({id:'source-'+(j+1)+'-'+q,sourceUnit:'UNIT#'+(q+1),lot:id,failPin:text(rows[j+q]?.[pc]).replace(/^\d+\.\s*/,''),results:{}});}
   }
  }
- if(w.Sheets['FA Unit Link']){const link=X.utils.sheet_to_json(w.Sheets['FA Unit Link'],{header:1,defval:''});for(const r of link.slice(1)){const u=record.units.find(u=>norm(u.sourceUnit)===norm(r[0]));if(!u)continue;u.lot=norm(r[1]);if(text(r[2]))u.mapping={historyId:text(r[3]),historyTitle:'저장된 Unit 연결',sourceIndex:Number(r[4])-1,lot:u.lot,unitId:text(r[2]),stripId:text(r[5]),x:r[6],y:r[7],waferId:text(r[8]),waferX:r[9],waferY:r[10]};}}
+ if(w.Sheets['FA Unit Link']){const link=X.utils.sheet_to_json(w.Sheets['FA Unit Link'],{header:1,defval:''});for(const r of link.slice(1)){const u=record.units.find(u=>norm(u.sourceUnit)===norm(r[0]));if(!u)continue;u.lot=norm(r[1]);if(text(r[13])){try{const p=JSON.parse(r[13]);if(p.manual&&p.rule?.x?.includes(p.x)&&p.rule?.y?.includes(p.y))u.manualPosition={...p,unit:u.id};}catch{}}if(text(r[2]))u.mapping={historyId:text(r[3]),historyTitle:'저장된 Unit 연결',sourceIndex:Number(r[4])-1,lot:u.lot,unitId:text(r[2]),stripId:text(r[5]),x:r[6],y:r[7],waferId:text(r[8]),waferX:r[9],waferY:r[10]};}}
  record.embeddedMapping=[];
  for(let r=0;r<rows.length;r++){const k=rows[r].map(key),uc=k.indexOf('UNITID'),lc=k.indexOf('LOTID');if(uc<0||lc<0)continue;
   for(let j=r+1;j<rows.length;j++){const b=rows[j];if(!text(b[uc]))break;const raw={};rows[r].forEach((h,c)=>{if(text(h))raw[text(h)]=b[c]??'';});raw.__idx=record.embeddedMapping.length;record.embeddedMapping.push(raw);

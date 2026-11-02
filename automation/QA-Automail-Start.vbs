@@ -26,5 +26,7 @@ For Each proc In processes
 Next
 WScript.Sleep 1500
 On Error GoTo 0
+result = sh.Run("""C:\Users\seungeon.kim\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe"" ""C:\System project\wafer_strip_mapping_app\automation\QA-Local-Files-Collect.cjs""", 0, True)
+If result <> 0 Then MsgBox "Local file collection needs attention. Check QA System File uploader\collector.log", 48, "QA Local Files"
 sh.Run """C:\Users\seungeon.kim\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe"" ""C:\System project\wafer_strip_mapping_app\automation\auto-mail-server.cjs""", 0, False
 sh.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ""C:\System project\wafer_strip_mapping_app\automation\collect-outlook.ps1""", 0, False

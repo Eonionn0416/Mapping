@@ -44,12 +44,19 @@ function bank(snaps,type,asOf){const ss=snaps.filter(s=>s.type===type&&s.date<=a
  Object.assign(l,r||{wafer:0,die:0},{active:!!r,lastSeen:s.date});lots.set(id,l);}prev=cur;}
  return {lots:[...lots.values()],events,latest:ss.at(-1)?.date||'',snapshots:ss};
 }
-function wip(snaps,type,asOf){const ss=snaps.filter(s=>s.type===type&&s.date<=asOf).sort((a,b)=>a.stamp.localeCompare(b.stamp)),lots=new Map(),events=[];let prev=new Map();
- for(const s of ss){const cur=new Map(s.rows.map(r=>[r.id,r]));for(const r of s.rows){let l=lots.get(r.id),p=prev.get(r.id);if(!l){l={...r,firstSeen:s.date,input:r.input??r.qty,inputEstimated:r.input===null,peaks:{},cumulative:{},history:[],exitDate:'',outQty:0};lots.set(r.id,l);}const before=p?.process||{};for(const [proc,n] of Object.entries(r.process)){l.peaks[proc]=Math.max(l.peaks[proc]||0,n);l.cumulative[proc]=(l.cumulative[proc]||0)+Math.max(0,n-(before[proc]||0));}
- if(p){const rejDelta=r.reject===null||p.reject===null?0:Math.max(0,r.reject-p.reject);const out=Math.max(0,p.qty-r.qty-rejDelta);if(out){l.outQty+=out;events.push({device:r.device,id:r.id,date:s.date,qty:out,kind:'WIP 감소 (출하 미확인)'});}}
- l.input=Math.max(l.input,r.input??r.qty);Object.assign(l,{qty:r.qty,process:r.process,reject:r.reject,inDate:r.inDate||l.inDate,outDate:r.outDate,active:true,lastSeen:s.date,exitDate:''});l.history.push({date:s.date,stamp:s.stamp,qty:r.qty,process:r.process,reject:r.reject,outDate:r.outDate});}
- for(const [id,p] of prev)if(!cur.has(id)){const l=lots.get(id);l.active=false;l.qty=0;l.process={};l.exitDate=s.date;l.outQty+=p.qty;events.push({device:p.device,id,date:s.date,qty:p.qty,kind:'WIP 이탈 (출하 미확인)'});l.history.push({date:s.date,stamp:s.stamp,qty:0,process:{},reject:p.reject,outDate:p.outDate});}prev=cur;}
- return {lots:[...lots.values()],events,latest:ss.at(-1)?.date||'',processes:[...new Set(ss.flatMap(s=>s.processes))]};}
+function wip(snaps,type,asOf){
+ const ss=snaps.filter(s=>s.type===type&&s.date<=asOf).sort((a,b)=>a.stamp.localeCompare(b.stamp)),lots=new Map(),events=[];let prev=new Map();
+ const effective=r=>{const process=Object.fromEntries(Object.entries(r.process||{}).filter(([p])=>!/^FGS(?:\b|_)/i.test(p))),fgs=Object.entries(r.process||{}).filter(([p])=>/^FGS(?:\b|_)/i.test(p)).reduce((n,[,q])=>n+Number(q||0),0),other=Object.values(process).reduce((n,q)=>n+Number(q||0),0);return {...r,process,fgs,qty:fgs>0?Math.min(r.qty,other):r.qty};};
+ for(const s of ss){const cur=new Map(s.rows.map(raw=>{const r=effective(raw);return [r.id,r];}));
+  for(const r of cur.values()){let l=lots.get(r.id),p=prev.get(r.id);if(!l){l={...r,firstSeen:s.date,input:r.input??(r.qty+r.fgs),inputEstimated:r.input==null,peaks:{},cumulative:{},history:[],exitDate:'',outQty:0};lots.set(r.id,l);}
+   for(const [proc,n] of Object.entries(r.process)){l.peaks[proc]=Math.max(l.peaks[proc]||0,n);l.cumulative[proc]=(l.cumulative[proc]||0)+Math.max(0,n-(p?.process?.[proc]||0));}
+   const out=p?Math.min(p.qty,Math.max(0,r.fgs-(p.fgs||0))):0;if(out){l.outQty+=out;events.push({device:r.device,id:r.id,date:s.date,qty:out,kind:'FGS 이동'});}
+   const active=r.qty>0||r.fgs===0;l.input=Math.max(l.input,r.input??(r.qty+r.fgs));Object.assign(l,{qty:r.qty,process:r.process,reject:r.reject,inDate:r.inDate||l.inDate,outDate:r.outDate,active,lastSeen:s.date,exitDate:active?'':l.exitDate||s.date});l.history.push({date:s.date,stamp:s.stamp,qty:r.qty,process:r.process,reject:r.reject,outDate:r.outDate});
+  }
+  for(const [id,p]of prev)if(!cur.has(id)){const l=lots.get(id);l.active=false;l.qty=0;l.process={};l.exitDate=l.exitDate||s.date;l.outQty+=p.qty;if(p.qty)events.push({device:p.device,id,date:s.date,qty:p.qty,kind:'보고서 Lot 없음'});l.history.push({date:s.date,stamp:s.stamp,qty:0,process:{},reject:p.reject,outDate:p.outDate});}prev=cur;
+ }
+ return {lots:[...lots.values()],events,latest:ss.at(-1)?.date||'',processes:[...new Set(ss.flatMap(s=>s.processes))].filter(p=>!/^FGS(?:\b|_)/i.test(p))};
+}
 function yieldRows(snaps,type,asOf){const map=new Map();for(const s of snaps.filter(s=>s.type===type&&s.date<=asOf).sort((a,b)=>a.stamp.localeCompare(b.stamp)))for(const r of s.rows)map.set(r.id,r);return [...map.values()];}
 function aggregate(rows,type,mode){const map=new Map();for(const r of rows){const wi=week(r.date,type!=='ftYield'),k=mode==='daily'?r.date:wi.label;let g=map.get(k)||{label:k,...(mode==='daily'?{}:wi),input:0,output:0,reject:0,weightedYield:0,defects:{},count:0};g.input+=r.input;g.output+=r.output;g.reject+=r.reject;g.weightedYield+=(type==='bumpYield'?r.yieldValue:(r.input?r.output/r.input:0))*r.input;g.count++;for(const [d,n]of Object.entries(r.defects))g.defects[d]=(g.defects[d]||0)+n;map.set(k,g);}return [...map.values()].sort((a,b)=>a.label.localeCompare(b.label)).map(g=>({...g,yield:g.input?g.weightedYield/g.input*100:null,dppm:g.input?g.reject/g.input*1e6:null}));}
 function latest(snaps,type,asOf){return snaps.filter(s=>s.type===type&&s.date<=asOf).sort((a,b)=>a.stamp.localeCompare(b.stamp)).at(-1);}

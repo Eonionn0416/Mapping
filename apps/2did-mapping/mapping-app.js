@@ -128,6 +128,7 @@ function compactRow(row) {
   };
 }
 
+const manualStrip = ManualStrip.mount($('manualStripHost'));
 function readFile(file) {
   const reader = new FileReader();
   reader.onload = (e) => {
@@ -136,7 +137,9 @@ function readFile(file) {
     const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
     const missing = REQUIRED_COLUMNS.filter(col => !Object.keys(rows[0] || {}).some(k => normalizeKey(k) === normalizeKey(col)));
     if (missing.length) {
-      alert(`필수 컬럼 누락: ${missing.join(', ')}`);
+      manualStrip.offer(workbook,file.name);
+      $('mapContainer').textContent='기존 2DID 형식으로 Map을 그릴 수 없습니다. 아래 수동 Strip 규칙에서 행·열 이름을 지정해 주세요.';
+      $('manualStripHost').scrollIntoView({behavior:'smooth'});
       return;
     }
     state.rawRows = normalizeRows(rows);
@@ -400,7 +403,7 @@ function renderOneMap(container, options) {
   const { rows, filteredSet, mapType, titleGroup, isMerge } = options;
   const { groupCol, xCol, yCol, label } = getMapColumns(mapType);
   const bounds = getGlobalBounds(state.rawRows.length ? state.rawRows : rows, xCol, yCol);
-  if (!bounds) return;
+  if (!bounds) {manualStrip.offer();return;}
 
   container.appendChild(createMapTitle({ label, group: titleGroup, rows, isMerge, groupCol }));
 
