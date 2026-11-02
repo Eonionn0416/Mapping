@@ -1,6 +1,6 @@
 const $=id=>document.getElementById(id),C=TrackerCore,esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));let db,versions=[],pending,cloud,busy=true;const params=new URLSearchParams(location.search);
 const displayStamp=s=>new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',dateStyle:'short',timeStyle:'short'}).format(new Date(s));
-async function api(){return cloud||(cloud=await import('../../shared/qa-cloud.js?v=38'));}
+async function api(){return cloud||(cloud=await import('../../shared/qa-cloud.js?v=76'));}
 async function hash(s){return [...new Uint8Array(await crypto.subtle.digest('SHA-256',typeof s==='string'?new TextEncoder().encode(s):s))].map(v=>v.toString(16).padStart(2,'0')).join('');}
 async function openDB(){return new Promise((resolve,reject)=>{const r=indexedDB.open('QADailyTracker',1);r.onupgradeneeded=()=>r.result.createObjectStore('versions',{keyPath:'id'});r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});}
 async function readLocal(){return new Promise((resolve,reject)=>{const r=db.transaction('versions').objectStore('versions').getAll();r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});}
@@ -40,3 +40,14 @@ $('clearLocal').onclick=()=>clearTracker('local');$('clearCloud').onclick=()=>cl
 async function previewTrackerBytes(bytes,name){pending=null;$('save').disabled=true;const w=XLSX.read(bytes,{type:'array'}),payload={...C.parse(w,XLSX),sourceDigest:await hash(bytes)};pending={file:name,payload};$('preview').textContent=payload.records.length+'개 항목 / '+C.groups(payload.records).length+'개 Title';$('save').disabled=false;$('status').textContent='파일 읽기 완료. 새 Revision 저장을 누르세요.';}
 $('pickFile').onclick=async()=>{if(busy)return;try{if(!window.showOpenFilePicker){$('file').click();return;}const [handle]=await window.showOpenFilePicker({multiple:false,types:[{description:'Excel',accept:{'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':['.xlsx','.xlsm']}}]});const file=await handle.getFile();let bytes;try{bytes=await file.arrayBuffer();}catch{bytes=await (await handle.getFile()).arrayBuffer();}await previewTrackerBytes(bytes,file.name);}catch(e){if(e.name!=='AbortError')$('status').textContent='직접 선택 실패: '+e.message+' · 첨부 Daily Tracker 불러오기를 사용할 수 있습니다.';}};
 $('providedFile').onclick=async()=>{if(busy)return;busy=true;try{const response=await fetch('provided-daily-20261023.xlsx');if(!response.ok)throw Error('첨부 파일 불러오기 실패');await previewTrackerBytes(await response.arrayBuffer(),'Daily Tracker.xlsx');}catch(e){$('status').textContent=e.message;}finally{busy=false;}};
+
+async function importDailyFromFolder(file){
+ if(busy||pending)throw Error('현재 첨부 또는 저장을 마친 뒤 다시 확인하세요.');busy=true;
+ try{const bytes=await readSelectedFile(file),payload={...C.parse(XLSX.read(bytes,{type:'array'}),XLSX),sourceDigest:await hash(bytes)},series=$('series').value.trim()||'Daily Tracker',digest=await hash(JSON.stringify(payload)),id=await hash(JSON.stringify([series,digest]));
+  const old=versions.find(v=>v.id===id),version=old?{...old,payload}:{id,series,digest,file:file.name,note:'폴더 자동 가져오기',savedAtText:new Date().toISOString(),payload,cloudSaved:false};
+  $('status').textContent='Daily Firestore 저장 중…';const meta=await (await api()).saveTracker(version);Object.assign(version,meta,{cloudSaved:true});versions=versions.filter(v=>v.id!==id);versions.push(version);
+  let warning='';try{await persist(version);}catch(e){warning=' · Local 캐시 저장 실패: '+e.message;}
+  revisionList(id);render();$('status').textContent='Daily Firestore 저장 완료 · '+file.name+warning;
+ }catch(e){$('status').textContent='Daily 자동 가져오기 / Firestore 저장 실패: '+e.message;throw e;}finally{busy=false;}
+}
+QAAutoMail.start('daily',()=>!!db&&!busy&&!pending,importDailyFromFolder,{label:'Daily 폴더 자동 가져오기 · Firestore',forceOnClick:true});

@@ -14,8 +14,20 @@ $('groups').onclick=e=>{const sheetButton=e.target.closest('[data-sheet]'),b=e.t
 $('backup').onclick=()=>download('NPI-status-backup.json',JSON.stringify({version:1,sheets},null,2),'application/json');$('restore').onchange=async e=>{try{const d=JSON.parse(await e.target.files[0].text());if(d.version!==1||!Array.isArray(d.sheets)||d.sheets.some(g=>typeof g.customer!=='string'||!g.customer.trim()||g.customer.length>60||!g.purpose||!Array.isArray(g.rows)||!Array.isArray(g.records)||!Array.isArray(g.warnings)||g.records.some(r=>!r.lot||!r.fields||!Array.isArray(r.notes))))throw Error('Invalid NPI backup');const map=new Map(sheets.map(g=>[JSON.stringify([g.customer,g.purpose]),g]));for(const g of d.sheets){const k=JSON.stringify([g.customer,g.purpose]);if(!map.has(k))map.set(k,g);}persist([...map.values()]);$('status').textContent='Backup merged; current purposes retained.';}catch(err){$('status').textContent=err.message;}};
 $('export').onclick=()=>{const cell=v=>'"'+String(v??'').replace(/^[=+@-]/,"'$&").replace(/"/g,'""')+'"',rows=[['Customer','Purpose','Lot','Device','Package','Lead','Qty','Source status','Source rows'],...shown.flatMap(g=>g.lots.map(l=>[g.customer,g.purpose,l.lot,l.device,l.package,l.lead,l.qty,l.status,l.sources.map(r=>r.row).join(', ')]))];download('NPI-status.csv','\ufeff'+rows.map(r=>r.map(cell).join(',')).join('\r\n'),'text/csv;charset=utf-8');};render();
 
-async function npiAPI(){return import('../../shared/qa-cloud.js?v=46');}
+async function npiAPI(){return import('../../shared/qa-cloud.js?v=76');}
 async function npiSaveCloud(){if(busy)return;busy=true;try{await (await npiAPI()).saveNPI(sheets);$('status').textContent='NPI Local / Firestore 저장 완료';}catch(e){$('status').textContent='Local 저장 완료. Firestore 저장 실패: '+e.message;}finally{busy=false;}}
 $('npiSync').onclick=()=>{if(!busy)npiSaveCloud();};$('npiLoad').onclick=async()=>{if(busy)return;busy=true;try{persist(await (await npiAPI()).loadNPI());$('status').textContent='Firestore NPI 불러오기 완료';}catch(e){$('status').textContent=e.message;}finally{busy=false;}};
 async function deleteNpi(where){if(busy)return;if(!confirm((where==='all'?'Local + Firestore':where==='local'?'Local':'Firestore')+' NPI 전체 이력을 삭제할까요?'))return;busy=true;try{if(where!=='local')await (await npiAPI()).deleteNPI();if(where!=='cloud'){persist([]);pending=[];$('save').disabled=true;$('preview').innerHTML='';$('file').value='';$('restore').value='';}$('status').textContent='NPI 삭제 완료. 다른 저장소를 남긴 경우 저장/불러오기로 다시 복원될 수 있습니다.';}catch(e){$('status').textContent='삭제 실패: '+e.message+' 일부 삭제되었을 수 있습니다. 재시도하세요.';}finally{busy=false;}}
 $('npiDeleteLocal').onclick=()=>deleteNpi('local');$('npiDeleteCloud').onclick=()=>deleteNpi('cloud');$('npiDeleteAll').onclick=()=>deleteNpi('all');
+
+async function importNpiFromFolder(file){
+ if(busy||pending.length)throw Error('현재 첨부 또는 저장을 마친 뒤 다시 확인하세요.');busy=true;
+ try{const wb=XLSX.read(await file.arrayBuffer(),{type:'array',cellDates:true}),rows=wb.SheetNames.map(name=>XLSX.utils.sheet_to_json(wb.Sheets[name],{header:1,defval:null,blankrows:true})),customer=NpiCore.inferCustomer(rows,file.name).code;
+  if(!customer)throw Error('고객을 판별할 수 없습니다. NPI 페이지에서 파일과 Customer를 확인하세요.');
+  const imported=wb.SheetNames.map((name,i)=>({...NpiCore.parse(rows[i],name,customer),file:file.name,importedAt:new Date().toISOString()}));
+  if(!imported.length)throw Error('NPI 시트가 없습니다.');
+  const service=await npiAPI(),remote=await service.loadNPI(),key=g=>JSON.stringify([g.customer,g.purpose]),map=new Map(sheets.map(g=>[key(g),g]));for(const g of remote)map.set(key(g),g);for(const g of imported)map.set(key(g),g);const next=[...map.values()];
+  $('status').textContent='NPI Firestore 저장 중…';await service.saveNPI(next);sheets=next;let warning='';try{localStorage.setItem(STORE,JSON.stringify(next));}catch(e){warning=' · Local 캐시 저장 실패: '+e.message;}render();$('status').textContent='NPI Firestore 저장 완료 · '+file.name+warning;
+ }catch(e){$('status').textContent='NPI 자동 가져오기 / Firestore 저장 실패: '+e.message;throw e;}finally{busy=false;}
+}
+QAAutoMail.start('npi',()=>!busy&&!pending.length,importNpiFromFolder,{label:'NPI 폴더 자동 가져오기 · Firestore',forceOnClick:true});
