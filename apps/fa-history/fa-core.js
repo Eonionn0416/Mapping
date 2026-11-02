@@ -1,10 +1,11 @@
 (function(root){
 'use strict';
 const text=v=>String(v??'').replace(/\u00a0/g,' ').trim(),norm=v=>text(v).toUpperCase().replace(/\s+/g,''),key=v=>norm(v).replace(/[^A-Z0-9가-힣]/g,''),clone=v=>JSON.parse(JSON.stringify(v));
-const TESTS=['Visual inspection','X-Ray','3D X-Ray','IV Curve Trace','P-Lap(SEM)','Decap(SEM)','X-section(SEM)','EDX','Die level IV'];
+const TESTS=['Visual inspection','X-Ray','3D X-Ray','IV Curve Trace','SAT','P-Lap(SEM)','Decap(SEM)','X-section(SEM)','EDX','Die level Visual','Die level IV'];
 const lots=v=>[...new Set((text(v).match(/\b[A-Z][A-Z0-9_-]*\d[A-Z0-9_-]*\.\d+(?:\s*[A-Z](?![A-Z0-9]))?/gi)||[]).map(norm))];
 const binKey=v=>{const m=norm(v).match(/^(?:HBIN|BIN|B)(\d+)$/);return m?'B'+Number(m[1]):norm(v)==='JAM'?'JAM':'';};
 function excelDate(v,X){if(typeof v==='number'){const d=X.SSF.parse_date_code(v);return d?`${d.y}-${String(d.m).padStart(2,'0')}-${String(d.d).padStart(2,'0')}`:'';}return text(v).slice(0,10);}
+function summaryValues(s){const number=v=>v!==''&&v!=null&&Number.isFinite(Number(v));if(!number(s.input)||!number(s.fail))return s;const good=Number(s.input)-Number(s.fail);return {...s,good,yield:Number(s.input)>0?good/Number(s.input):''};}
 function read(w,X,file){
  const name=w.SheetNames.find(n=>!/예시|example/i.test(n)&&/FA|분석/i.test(n))||w.SheetNames[0],s=w.Sheets[name],rows=X.utils.sheet_to_json(s,{header:1,defval:'',blankrows:true}),v=a=>s[a]?.v??'',warnings=[];
  const fields={department:text(v('I3')),requester:text(v('I4')),sampleDate:excelDate(v('I6'),X),background:text(v('E10')),relCondition:text(v('E11')),failureOrigin:text(v('E14')),failMode:text(v('E15')),pinInformation:text(v('E16')),pcbVendor:text(v('E17')),shipping:text(v('E18')),failRate:text(v('E19')),processIssue:text(v('E26')),remark:text(v('E27'))};
@@ -14,16 +15,16 @@ function read(w,X,file){
   if(lotCol<0||inputCol<0)continue;
   for(let j=r+1;j<rows.length;j++){
    const b=rows[j],id=lots(b[lotCol])[0];if(!id){if(b.some(x=>text(x)))break;continue;}
-   const result={device:'',lot:id,flow:'',retest:'',input:'',good:'',fail:'',yield:'',bins:{},extra:{}};
-   a.forEach((h,c)=>{if(!text(h))return;const z=key(h),value=b[c]??'',bin=binKey(h);if(bin)result.bins[bin]=value;else if(['DEVICE','CUSTDEVICE','DEVICENO'].includes(z))result.device=text(value);else if(['FLOW','PROCESS','공정'].includes(z))result.flow=text(value);else if(z==='RETEST')result.retest=text(value);else if(c===inputCol)result.input=value;else if(z==='GOOD')result.good=value;else if(z==='FAIL')result.fail=value;else if(z==='YIELD')result.yield=value;else if(c!==lotCol)result.extra[text(h)]=value;});
+   const result={device:'',lot:id,flow:'',des:'',retest:'',input:'',good:'',fail:'',yield:'',bins:{},extra:{}};
+   a.forEach((h,c)=>{if(!text(h))return;const z=key(h),value=b[c]??'',bin=binKey(h);if(bin)result.bins[bin]=value;else if(['DEVICE','CUSTDEVICE','DEVICENO'].includes(z))result.device=text(value);else if(['FLOW','PROCESS','공정'].includes(z))result.flow=text(value);else if(['DES','DESCRIPTION'].includes(z))result.des=text(value);else if(z==='RETEST')result.retest=text(value);else if(c===inputCol)result.input=value;else if(z==='GOOD')result.good=value;else if(z==='FAIL')result.fail=value;else if(z==='YIELD')result.yield=value;else if(c!==lotCol)result.extra[text(h)]=value;});
    if(result.good===''&&result.bins.B1!==undefined)result.good=result.bins.B1;
-   record.summaries.push(result);
+   record.summaries.push(summaryValues(result));
   }
  }
  // Historical unit tables: keep pins and all existing analysis columns; never infer FA conclusions.
  for(let r=0;r<rows.length;r++){
-  const a=rows[r],k=a.map(key),uc=k.indexOf('UNIT'),pc=k.indexOf('FAILPIN');if(pc<0)continue;
-  if(uc>=0){for(let j=r+1;j<rows.length;j++){const b=rows[j],label=text(b[uc]);if(!/^UNIT\s*#?\s*\d+$/i.test(label)){if(label)break;continue;}const results={};a.forEach((h,c)=>{if(c!==uc&&c!==pc&&text(h)&&text(b[c]))results[text(h)]=text(b[c]);});record.units.push({id:'source-'+(j+1),sourceUnit:label,lot:record.lots.length===1?record.lots[0]:'',failPin:text(b[pc]),results});}}
+  const a=rows[r],k=a.map(key),uc=k.indexOf('UNIT'),pc=k.indexOf('FAILPIN'),mc=k.indexOf('FAILMODE');if(pc<0)continue;
+  if(uc>=0){for(let j=r+1;j<rows.length;j++){const b=rows[j],label=text(b[uc]);if(!/^UNIT\s*#?\s*\d+$/i.test(label)){if(label)break;continue;}const results={};a.forEach((h,c)=>{if(c!==uc&&c!==pc&&c!==mc&&text(h)&&text(b[c]))results[TESTS.find(t=>key(t)===key(h))||text(h)]=text(b[c]);});record.units.push({id:'source-'+(j+1),sourceUnit:label,lot:record.lots.length===1?record.lots[0]:'',failPin:text(b[pc]),failMode:mc>=0?text(b[mc]):'',results});}}
   else {const lc=k.findIndex(x=>['LOT','LOTID','LOTNO'].includes(x)),qc=k.findIndex(x=>['수량','QTY','QUANTITY'].includes(x));if(lc<0)continue;
    for(let j=r+1;j<rows.length;j++){const b=rows[j],id=lots(b[lc])[0];if(!id){if(b.some((x,c)=>c<pc&&text(x)))break;continue;}const qty=Math.max(1,Number(b[qc])||1);for(let q=0;q<qty;q++)record.units.push({id:'source-'+(j+1)+'-'+q,sourceUnit:'UNIT#'+(q+1),lot:id,failPin:text(rows[j+q]?.[pc]).replace(/^\d+\.\s*/,''),results:{}});}
   }
@@ -51,5 +52,5 @@ function orderedUnits(units){return units.map((u,i)=>({...u,number:Number((Strin
 function mappings(rows,history,requestedLots,query=''){const wanted=requestedLots.map(norm),q=norm(query),seen=new Set();return rows.map((r,i)=>({historyId:history.id,historyTitle:history.title||history.id,sourceIndex:Number.isFinite(Number(r.__idx))?Number(r.__idx):i,lot:norm(r['LOT ID']),unitId:text(r['UNIT ID']),sourceNumber:Number(r['#'])||null,stripId:text(r['STRIP ID']),x:r.X??'',y:r.Y??'',waferId:text(r['WAFER ID']),waferX:r['WAFER COL']??'',waferY:r['WAFER ROW']??'',fail:Number(r.Fail)||0})).filter(r=>{const k=JSON.stringify([r.historyId,r.sourceIndex,r.unitId]);if(!r.unitId||seen.has(k))return false;seen.add(k);return wanted.includes(r.lot)&&(!q||norm(r.unitId).includes(q));}).sort((a,b)=>a.sourceIndex-b.sourceIndex);}
 const bins=record=>[...new Set(record.summaries.flatMap(s=>Object.keys(s.bins||{})))].sort((a,b)=>(Number(a.slice(1))||Infinity)-(Number(b.slice(1))||Infinity));
 const matches=(r,q)=>!q||norm([r.customer,r.devices.join(' '),r.lots.join(' '),r.sourceFile,r.mode,r.status,r.fields?.background].join(' ')).includes(norm(q));
-const api={text,norm,key,lots,binKey,read,orderedUnits,mappings,bins,matches,TESTS,clone};root.FACore=api;if(typeof module!=='undefined')module.exports=api;
+const api={text,norm,key,lots,binKey,read,orderedUnits,mappings,bins,matches,TESTS,summaryValues,clone};root.FACore=api;if(typeof module!=='undefined')module.exports=api;
 })(typeof globalThis!=='undefined'?globalThis:this);
