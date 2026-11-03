@@ -7,7 +7,7 @@ const weekTypes=new Set(['bank','test','assy','bumpBank','bump']);
 const panelQueries={};let flexibleRange=null;
 function panelQuery(){return panelQueries[type]||(panelQueries[type]={device:'',lot:''});}
 function periodDays(){const a=$('from').value,b=$('to').value;if(!a||!b||a>b)return [];return Array.from({length:Math.floor((new Date(b)-new Date(a))/86400000)+1},(_,i)=>C.addDays(a,i));}
-function fixedPeriod(){const fixed=weekTypes.has(type);$('from').readOnly=false;$('periodHint').hidden=!fixed;$('periodHint').textContent='기본 1주 · 시작일/종료일 변경 가능';$('year').textContent=fixed?'최근 1주':'최근 1년';}
+function fixedPeriod(){const fixed=weekTypes.has(type);$('from').readOnly=false;$('periodHint').hidden=true;$('year').textContent=fixed?'최근 1주':'최근 1년';}
 function panelSearch(includeLot=false){const q=panelQuery();return `<div class="panel-search"><label>Device 검색<input id="panelDevice" type="search" placeholder="전체 Device · 일부 검색" value="${esc(q.device)}"></label>${includeLot?`<label>Lot 검색<input id="panelLot" type="search" placeholder="전체 Lot · 일부 검색" value="${esc(q.lot)}"></label>`:''}<button id="panelReset" type="button">검색 초기화</button></div>`;}
 function matchesPanel(r){const q=panelQuery();return matches(r)&&(!q.device||C.norm(r.device).includes(C.norm(q.device)))&&(!q.lot||C.norm(r.lot+' '+(r.mark||'')).includes(C.norm(q.lot)));}
 
@@ -83,6 +83,7 @@ function year(){const to=today(),d=new Date(to+'T00:00:00Z');d.setUTCFullYear(d.
 $('backup').onclick=()=>download('Austin-WIP-FT-history-'+today()+'.json',JSON.stringify({version:1,snapshots},null,2),'application/json');
 $('restore').onchange=async e=>{try{const f=e.target.files[0];if(!f)return;const d=JSON.parse(await f.text());if(d.version!==1||!Array.isArray(d.snapshots)||d.snapshots.some(s=>!s.id||!s.type||!/^\d{4}-\d{2}-\d{2}\d{2}$/.test(s.stamp)||!Array.isArray(s.rows)||s.rows.some(r=>!r.id||!r.device||!r.lot)))throw Error('올바른 Austin 이력 백업이 아닙니다.');const incoming=d.snapshots.filter(s=>!snapshots.some(x=>x.id===s.id));await save(incoming);snapshots=C.merge(snapshots,incoming);render();$('status').textContent=`백업 복원 완료: ${incoming.length}개 추가. 같은 보고 시각의 기존 데이터는 유지했습니다.`;}catch(err){$('status').textContent='복원 실패: '+err.message;}finally{e.target.value='';}};
 $('csv').onclick=()=>{const cell=v=>'"'+String(v??'').replace(/^[=+@-]/,"'$&").replace(/"/g,'""')+'"';download(type+'-'+today()+'.csv','\ufeff'+[columns,...shown].map(r=>r.map(cell).join(',')).join('\r\n'),'text/csv;charset=utf-8');};
+$('to').value=today();$('from').value=C.addDays($('to').value,-6);
 (async()=>{try{db=await openDB();snapshots=await load();if(!snapshots.length&&globalThis.AustinInitialData?.length){await save(globalThis.AustinInitialData);snapshots=C.merge([],globalThis.AustinInitialData);$('status').textContent='제공하신 8개 보고서를 초기 이력으로 저장했습니다. 다음 보고서를 첨부해 업데이트하세요.';}else $('status').textContent='저장 이력을 불러왔습니다. Excel 보고서를 첨부해 업데이트하세요.';year();}catch(e){$('status').textContent='브라우저 저장소를 열 수 없습니다: '+e.message;$('files').disabled=true;}})();
 
 QAAutoMail.start('austin',()=>!!db&&!busy&&!pending.length,async file=>{busy=true;try{const w=XLSX.read(await file.arrayBuffer(),{type:'array'}),items=C.parseWorkbook(w,XLSX,file.name);if(!items.length)throw Error('보고서 데이터 없음: '+file.name);await save(items);snapshots=C.merge(snapshots,items);render();}finally{busy=false;}});
