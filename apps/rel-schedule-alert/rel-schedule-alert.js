@@ -374,7 +374,7 @@ async function parseExcelFile(file) {
       if(!statusMap.has(record.dedupeKey)&&statusMap.has(legacyKey))statusMap.set(record.dedupeKey,statusMap.get(legacyKey));
       const r=source.records.find(r=>r.rowNumber===record.rowNumber);
       if(r)Object.assign(record,{dateIn:r.dateIn,dateOut:r.dateOut,status:r.status,dueRef:r.dueRef,statusRef:r.statusRef,delayRef:r.delayRef,summarySelected:source.summary.includes(r),summaryLabel:r.summaryLabel||r.relItem,delay:r.delay});
-      record.relNo=source.relNo||"";record.schemaVersion=APP_VERSION;records.push(record);
+      record.dhlText=[...source.cells.values()].filter(c=>c.r===record.rowNumber&&c.c>=(source.header.map.shipping||source.header.map.remark||1)).map(c=>c.v??'').join(' | ');record.relNo=source.relNo||"";record.schemaVersion=APP_VERSION;records.push(record);
     }
   }
   return {records,skipped,sheetCount:model.sheets.length,buffer};
@@ -453,7 +453,7 @@ function renderSelectedFileList() {
 }
 
 const COMPARE_FIELDS = [
-  "criteria", "relItem", "condition", "assyLot", "ftLot", "qty",
+  "criteria", "relItem", "condition", "assyLot", "ftLot", "qty", "dhlText",
   "dateIn", "duration", "delay", "dateOut", "result", "status", "remark", "failMode",
   "aiNo", "changeFrom", "changeTo", "reportKind", "planLots", "planDevices",
   "sourceFileName", "rowNumber", "dueRef", "statusRef", "delayRef", "summarySelected", "summaryLabel", "schemaVersion"
@@ -1636,7 +1636,7 @@ async function persistDoneToWorkbook(key,checked){
  const base=workbookModels.get(row.sourceFileName)?.sheets.find(s=>s.name===row.sheetName)?.records.find(r=>r.dueRef===row.dueRef);
  try{await saveChange({fileName:row.sourceFileName,sheetName:row.sheetName,dueRef:row.dueRef,rowKey:key,status:checked?'Done':base?.status||'On going'});}catch(e){setNotice('완료 상태의 Excel 반영 실패: '+e.message,true);}
 }
-function renderReports(){
+function renderReports(){renderDhlSearch();
  const filter=ui.planSelect.value,rows=[];
  for(const [name,model] of workbookModels)for(const s of model.sheets){
   if(isTemplateSheet(s.name)||!s.header||!normalizeText(s.relNo)||(filter&&filter!==s.name))continue;
@@ -1732,3 +1732,6 @@ async function handleFiles(files,strict=false){
  finally{relImportBusy=false;}
 }
 QAAutoMail.start('rel',()=>relAutoReady&&!!db&&!!currentUser&&!relImportBusy&&!relClearing&&!relAutoPaused,async file=>{await handleFiles([file],true);},{forceOnClick:true,onManual:()=>{relAutoPaused=false;localStorage.removeItem('relScheduleAlert.autoPaused');}});
+
+function renderDhlSearch(){const q=document.getElementById('dhlSearch').value;const hits=DHLSearch.find(rawRows,q);const body=document.getElementById('dhlResults');body.replaceChildren();if(!q.trim())return;const table=document.createElement('table');for(const [index,row] of [['Sheet','Criteria','Readout','Rel item','Condition','Status','DHL#'],...hits.map(r=>[r.sheetName,r.criteria,r.readout,r.item,r.condition,r.status,r.tracking])].entries()){const tr=document.createElement('tr');for(const value of row){const td=document.createElement(index?'td':'th');td.textContent=value||'—';tr.append(td);}table.append(tr);}body.append(table);if(!hits.length)body.append('일치하는 DHL 번호가 없습니다. 최신 Excel을 다시 가져와 주세요.');}
+document.getElementById('dhlSearch').addEventListener('input',renderDhlSearch);

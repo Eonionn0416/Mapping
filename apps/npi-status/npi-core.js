@@ -31,6 +31,7 @@
   }
   const fileMnt=/(?:^|[^A-Z0-9])MNT(?:[^A-Z0-9]|$)/i.test(text(fileName));
   if(fileMnt && codes.has('CPI') && [...codes].every(c=>c==='CPI'||c==='MNT')) return {code:'MNT',source:'MNT file name · CPI test vehicle'};
+  if(codes.has('MSL')&&[...codes].every(c=>c==='MSL'||c==='MTK'))return {code:'MTK',source:'MTK / MSL'};
   if(codes.size===1)return {code:[...codes][0],source:'Customer field'};
   if(codes.size>1)throw Error('Multiple customer codes found: '+[...codes].join(', ')+'. Import one customer per workbook.');
   const stem=text(fileName).replace(/\.(xlsx|xlsm|xls)$/i,'');

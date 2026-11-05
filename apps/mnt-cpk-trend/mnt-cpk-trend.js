@@ -1373,7 +1373,7 @@ function renderLowTable() {
     .filter(row => (row.reportType||'BUMP')===activeMntType)
     .filter(row => isMonthInWindow(row.reportMonth,activeMntType==='ASSY'?assyTrendStartMonth:trendStartMonth))
     .filter(row => lowStatus(row))
-    .sort((a, b) => sortByMonth(a, b) || String(a.reportType).localeCompare(String(b.reportType)) || (normalizeNumber(a.cpk) ?? 999) - (normalizeNumber(b.cpk) ?? 999));
+    .sort((a, b) => sortByMonth(b, a) || String(a.reportType).localeCompare(String(b.reportType)) || (normalizeNumber(a.cpk) ?? 999) - (normalizeNumber(b.cpk) ?? 999));
 
   lowRows = lows;
 
