@@ -155,6 +155,10 @@ service cloud.firestore {
         allow create, update: if signedIn() && request.resource.data.index is int && request.resource.data.data is string && request.resource.data.data.size() <= 360000;
       }
     }
+    match /mntPORecords/{id} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && request.resource.data.wo is string && request.resource.data.po is string && request.resource.data.fields is map && request.resource.data.date is string;
+    }
     match /{document=**} {
       allow read, write: if false;
     }

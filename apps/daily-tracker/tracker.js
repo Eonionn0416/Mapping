@@ -1,6 +1,6 @@
 const $=id=>document.getElementById(id),C=TrackerCore,esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));let db,versions=[],pending,cloud,busy=true;const params=new URLSearchParams(location.search);
 const displayStamp=s=>new Intl.DateTimeFormat('ko-KR',{timeZone:'Asia/Seoul',dateStyle:'short',timeStyle:'short'}).format(new Date(s));
-async function api(){return cloud||(cloud=await import('../../shared/qa-cloud.js?v=76'));}
+async function api(){return cloud||(cloud=await import('../../shared/qa-cloud.js?v=85'));}
 async function hash(s){return [...new Uint8Array(await crypto.subtle.digest('SHA-256',typeof s==='string'?new TextEncoder().encode(s):s))].map(v=>v.toString(16).padStart(2,'0')).join('');}
 async function openDB(){return new Promise((resolve,reject)=>{const r=indexedDB.open('QADailyTracker',1);r.onupgradeneeded=()=>r.result.createObjectStore('versions',{keyPath:'id'});r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});}
 async function readLocal(){return new Promise((resolve,reject)=>{const r=db.transaction('versions').objectStore('versions').getAll();r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});}

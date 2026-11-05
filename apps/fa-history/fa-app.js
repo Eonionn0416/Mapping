@@ -1,5 +1,5 @@
 import * as S from '../../shared/fa-service.js?v=43';
-import {exportRequest} from './fa-workbook.js?v=84';
+import {exportRequest} from './fa-workbook.js?v=85';
 const $=id=>document.getElementById(id),C=FACore,esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let current=null,requestId='',dirty=false,busy=false,mapping=[],selectedMaps=new Set(),mapLimit=200;
 const labels={department:'요청 부서',requester:'요청 담당자',sampleDate:'Sample 전달 일자',background:'Failure history / Background',relCondition:'Rel condition',failureOrigin:'Failure origin',failMode:'Fail mode',pinInformation:'Fail pin information',pcbVendor:'PCB Vendor',shipping:'Shipping state',failRate:'Fail rate',processIssue:'Process issue',remark:'Remark / Due'};
