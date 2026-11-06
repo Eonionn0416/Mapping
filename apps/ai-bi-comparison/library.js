@@ -38,9 +38,17 @@ for(const side of ['Before','After']){
  $('clear'+side).onclick=()=>{for(const field of ['customer','device','nickname','document'])$(field+side).value='';searched[side]=false;activeGroup[side]='';$('db'+side).value='';renderSide(side);};
 }
 let singleBook=null;
-function renderSingle(){const sheet=$('singleSheet').value,rows=singleBook?.[sheet]||[];$('singleBody').innerHTML=rows.length?window.blockTable({sheet,before:{rows},beforeLayout:rows.layout,changes:[]},'before'):'표시할 내용이 없습니다.';}
-$('singleSheet').onchange=renderSingle;$('closeSingle').onclick=()=>{$('singleDocument').hidden=true;};
-$('viewBefore').onclick=async()=>{const r=records.find(r=>r.id===$('dbBefore').value);if(!r){status('비교 원본의 문서와 Revision을 선택하세요.');return;}const btn=$('viewBefore');btn.disabled=true;try{status('원본 문서를 불러오는 중입니다.');singleBook=await(await api()).loadDocument(r);$('singleTitle').textContent=label(r);$('singleSheet').innerHTML=Object.keys(singleBook).map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join('');renderSingle();$('singleDocument').hidden=false;$('singleDocument').scrollIntoView({behavior:'smooth',block:'start'});status('선택한 원본 문서를 조회했습니다.');}catch(e){status('문서 조회 실패: '+e.message);}finally{btn.disabled=false;}};
+function renderSingle(reset=false){
+ const sheet=$('singleSheet').value,rows=singleBook?.[sheet]||[];
+ const sections=window.AIBIComparison.sections(rows,{processTemplate:$('processTemplate')?.value.trim()||''}).filter(s=>s.header||s.rows.length);
+ const select=$('singleProcess'),old=reset?'':select.value;
+ select.innerHTML='<option value="">전체 공정</option>'+sections.map((s,i)=>`<option value="${i}">${esc(s.title)}</option>`).join('');select.value=old;
+ if(select.selectedIndex<0)select.value='';
+ $('singleBody').innerHTML=sections.filter((s,i)=>!select.value||String(i)===select.value).map(section=>`<article class="single-process-card"><h3>${esc(section.title)}</h3>${window.blockTable({sheet,before:section,beforeLayout:rows.layout,changes:[]},'before')}</article>`).join('')||'<p>표시할 내용이 없습니다.</p>';
+}
+$('singleProcess').onchange=()=>renderSingle();
+$('singleSheet').onchange=()=>renderSingle(true);$('closeSingle').onclick=()=>{$('singleDocument').hidden=true;};
+$('viewBefore').onclick=async()=>{const r=records.find(r=>r.id===$('dbBefore').value);if(!r){status('비교 원본의 문서와 Revision을 선택하세요.');return;}const btn=$('viewBefore');btn.disabled=true;try{status('원본 문서를 불러오는 중입니다.');singleBook=await(await api()).loadDocument(r);$('singleTitle').textContent=label(r);$('singleSheet').innerHTML=Object.keys(singleBook).map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join('');renderSingle(true);$('singleDocument').hidden=false;$('singleDocument').scrollIntoView({behavior:'smooth',block:'start'});status('선택한 원본 문서를 조회했습니다.');}catch(e){status('문서 조회 실패: '+e.message);}finally{btn.disabled=false;}};
 $('compareDB').onclick=()=>compare(records.find(r=>r.id===$('dbBefore').value),records.find(r=>r.id===$('dbAfter').value)).catch(e=>status(e.message));$('previousDB').onclick=async()=>{try{const r=selected();if(!r)throw Error('문서를 선택하세요.');const p=C.previous(records,r);if(!p){status('이 문서보다 이전 Revision이 DB에 없습니다.');return;}await compare(p,r);}catch(e){status(e.message);}};
 (async()=>{if(!await refresh())return;const ai=new URLSearchParams(location.search).get('ai');if(!ai)return;$('documentAfter').value=C.revisionInfo(ai).number;searched.After=true;submitted.After=filters('After');renderList();const info=C.revisionInfo(ai),found=records.filter(r=>C.norm(r.number)===C.norm(info.number)&&(!info.revision||C.norm(r.revision)===C.norm(info.revision)));if(!found.length){status('REL에 지정된 AI/BI가 DB에 없습니다: '+ai);return;}found.sort((a,b)=>C.compareRev(b.revision,a.revision)||String(b.updatedAtText).localeCompare(String(a.updatedAtText)));const r=found[0];selectRecord('After',r);const p=C.previous(records,r);if(p){selectRecord('Before',p);await compare(p,r);}else status('연결된 문서를 선택했습니다. 이전 Revision은 아직 DB에 없습니다.');})().catch(e=>status(e.message));
 
