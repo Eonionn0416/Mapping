@@ -369,6 +369,7 @@ async function parseExcelFile(file) {
     for(const r of source.records){if(source.header.map.status)rows[r.rowNumber-1][source.header.map.status-1]=r.status;statusBlocks.set(r.rowNumber-1,r.statusRef||r.rowNumber);}
     const parsed=parseSheetMatrix(source.name,rows,file.name,{rowOffset:0,statusBlocks,date1904:model.date1904});
     for(const record of parsed.records){
+      record.planReports=(source.reports||[]).map(({label,approval})=>({label,approval:String(approval??'')}));
       const legacyKey=record.dedupeKey,customer=(file.name.match(/\b(MNT|MTK|BDR|AST)\d*/i)||[])[1]?.toUpperCase()||file.name;
       record.dedupeKey=makeDocId(customer+'::'+legacyKey);
       if(!statusMap.has(record.dedupeKey)&&statusMap.has(legacyKey))statusMap.set(record.dedupeKey,statusMap.get(legacyKey));
@@ -455,7 +456,7 @@ function renderSelectedFileList() {
 const COMPARE_FIELDS = [
   "criteria", "relItem", "condition", "assyLot", "ftLot", "qty", "dhlText",
   "dateIn", "duration", "delay", "dateOut", "result", "status", "remark", "failMode",
-  "aiNo", "changeFrom", "changeTo", "reportKind", "planLots", "planDevices",
+  "aiNo", "changeFrom", "changeTo", "reportKind", "planLots", "planDevices", "planReports",
   "sourceFileName", "rowNumber", "dueRef", "statusRef", "delayRef", "summarySelected", "summaryLabel", "schemaVersion"
 ];
 
@@ -471,7 +472,7 @@ function diffRecords(incoming) {
   incoming.forEach(row => {
     const previous = existing.get(row.dedupeKey);
     if (!previous) { created.push(row); return; }
-    const changes = COMPARE_FIELDS.filter(field => String(previous[field] ?? "") !== String(row[field] ?? ""));
+    const changes = COMPARE_FIELDS.filter(field => JSON.stringify(previous[field] ?? "") !== JSON.stringify(row[field] ?? ""));
     if (changes.length) {
       row.__changes = changes.map(field => `${field}: ${previous[field] ?? "-"} → ${row[field] ?? "-"}`);
       updated.push(row);

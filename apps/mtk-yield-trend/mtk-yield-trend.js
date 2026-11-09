@@ -1,3 +1,5 @@
+import {mountLotOverview} from './lot-overview.js?v=93';
+let refreshLotOverview=()=>{};
 let qaAutoBusy=true;
 import { mtkYieldFirebaseConfig } from "../../shared/firebase-config.js";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
@@ -1620,6 +1622,7 @@ function renderSelectedFiles() {
 }
 
 function renderFirestoreViews() {
+  refreshLotOverview();
   renderMetrics();
   renderUploadedFileTable();
   renderYieldTrendChart();
@@ -2365,3 +2368,5 @@ document.getElementById('exportOsRawBtn').addEventListener('click',()=>{if(!osRo
 QAAutoMail.start('mtk',()=>!!db&&!!currentUser&&!qaAutoBusy&&selectedFiles.length===0,async file=>{const r=await readReportFile(file);if(!r.assyRows.length&&!r.osRows.length&&!r.binRows.length){if(r.sourceRowCount===0){log(file.name+': 정상 양식 · 데이터 0행');return {empty:true};}throw Error('유효한 데이터 없음: '+file.name);}selectedFiles=[file];selectedAssyRows=r.assyRows;selectedOsRows=r.osRows;selectedBinRows=r.binRows;renderSelectedFiles();try{await uploadSelectedToFirebase(true);}finally{selectedFiles=[];selectedAssyRows=[];selectedOsRows=[];selectedBinRows=[];}});
 
 window.addEventListener('mtk-trend-tab',event=>{const lists={assy:yieldTrendCharts,defect:defectTrendCharts,os:osTrendCharts,bin:binTrendCharts};requestAnimationFrame(()=>{for(const chart of lists[event.detail]||[]){chart.resize();chart.update('none');}});});
+
+refreshLotOverview=mountLotOverview({getData:()=>({assy:assyRows,os:osRows,bin:binRows}),defectRows:buildDefectTrendRows,defectConfig:makeDefectChartConfig,styleChart:styleQaTrend,escapeHtml});

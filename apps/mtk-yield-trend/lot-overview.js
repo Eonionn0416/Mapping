@@ -1,0 +1,31 @@
+const norm=v=>String(v??'').trim().toUpperCase().replace(/\s+/g,'');
+const valid=v=>v&&!['-','NA','N/A','NONE'].includes(v);
+const aliases=r=>['sckInputLotNo','mtkMoLot','ftLotNo','batchNo1','batchNo2','batchNo3','lotId','custRunId'].map(k=>norm(r[k])).filter(valid);
+const number=v=>v===null||v===undefined||v===''?null:Number.isFinite(Number(v))?Number(v):null;
+const pct=(a,b)=>a!==null&&b>0?a/b*100:null;
+export function selectLot(data,query){
+ const q=norm(query),names=new Set(valid(q)?[q]:[]),all=[...data.assy,...data.os,...data.bin];
+ let changed=true;while(changed&&names.size){changed=false;for(const r of all)if(aliases(r).some(v=>names.has(v)))for(const v of aliases(r))if(!names.has(v)){names.add(v);changed=true;}}
+ const match=r=>aliases(r).some(v=>names.has(v));return {assy:data.assy.filter(match),os:data.os.filter(match),bin:data.bin.filter(match)};
+}
+export function lotMetrics(data){
+ const assy=data.assy.map(r=>({date:r.sod,lot:r.sckInputLotNo,input:number(r.inQty),output:number(r.outQty)??(number(r.shipQtyK)===null?null:Number(r.shipQtyK)*1000),yield:number(r.assyYield)}));
+ const os=data.os.map(r=>({date:r.inputDate||r.inputTime,lot:r.lotId,yield:pct(number(r.testQty)!==null&&number(r.totalOsRej)!==null?r.testQty-r.totalOsRej:null,number(r.testQty)),open:pct(number(r.openQty),number(r.testQty)),short:pct(number(r.shortQty),number(r.testQty))}));
+ const bin=data.bin.map(r=>{const fail=['bin2','bin3','bin4','bin5','bin6','bin36'].map(k=>number(r[k]));return {date:r.ftInDate||r.reportDate||r.reportMonth,lot:r.lotId,input:number(r.inQty),yield:pct(number(r.outQty),number(r.inQty)),ft:pct(fail.every(v=>v!==null)?fail.reduce((a,b)=>a+b,0):null,number(r.inQty)),bin4:pct(number(r.bin4),number(r.inQty))};});
+ return {assy,os,bin};
+}
+export function mountLotOverview({getData,defectRows,defectConfig,styleChart,escapeHtml}){
+ const input=document.getElementById('mtkLotQuery'),host=document.getElementById('mtkLotCards'),message=document.getElementById('mtkLotMessage');let query='',charts=[];
+ const fmt=v=>v===null||v===undefined||v===''?'—':typeof v==='number'?v.toLocaleString(undefined,{maximumFractionDigits:4}):String(v);
+ function card(title,rows,cols,series){const section=document.createElement('article');section.className='chart-card';host.append(section);const sorted=[...rows].sort((a,b)=>String(a.date||'').localeCompare(String(b.date||'')));
+ section.innerHTML='<h3>'+escapeHtml(title)+'</h3>'+(rows.length?'<div style="height:280px;position:relative"><canvas></canvas></div><div style="overflow:auto;max-height:280px;margin-top:16px"><table><thead><tr>'+cols.map(c=>'<th>'+escapeHtml(c[1])+'</th>').join('')+'</tr></thead><tbody>'+[...sorted].reverse().map(r=>'<tr>'+cols.map(c=>'<td>'+escapeHtml(fmt(r[c[0]]))+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>':'<p>일치하는 Lot 기록이 없습니다.</p>');
+ if(!rows.length)return;const config={data:{labels:sorted.map(r=>String(r.date||'')+' · '+(r.lot||'')),datasets:series.map(([key,label,qty],i)=>({type:qty?'bar':'line',label,data:sorted.map(r=>r[key]),yAxisID:qty?'qtyAxis':'rateAxis',borderColor:['#1397e5','#13b8ca','#8a18c5','#d72baf'][i],backgroundColor:['#1397e5','#13b8ca','#8a18c5','#d72baf'][i],spanGaps:false,tension:0}))},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom'}},scales:{qtyAxis:{display:series.some(s=>s[2]),position:'left',beginAtZero:true,title:{display:true,text:'Qty'}},rateAxis:{position:'right',beginAtZero:true,title:{display:true,text:'%'},grid:{drawOnChartArea:false}}}}};charts.push(new Chart(section.querySelector('canvas'),styleChart(config)));}
+ function render(){charts.forEach(c=>c.destroy());charts=[];host.innerHTML='';if(!query){message.textContent='Lot No를 입력하고 조회하세요.';return;}const selected=selectLot(getData(),query),m=lotMetrics(selected);message.textContent=query+' · 전체 저장 이력 · Assy '+m.assy.length+' / OS '+m.os.length+' / FT '+m.bin.length;
+ card('Assy Yield · Out Qty = Ship Qty(K) × 1,000',m.assy,[['date','SOD'],['lot','Lot'],['input','In Qty'],['output','Out Qty'],['yield','Yield %']],[['input','In Qty',true],['output','Out Qty',true],['yield','Yield %',false]]);
+ const d=defectRows(selected.assy),box=document.createElement('article');box.className='chart-card';box.innerHTML='<h3>Defect Trend · PPM</h3>'+(d.length?'<div style="height:280px;position:relative"><canvas></canvas></div>':'<p>일치하는 Defect 기록이 없습니다.</p>');host.append(box);if(d.length)charts.push(new Chart(box.querySelector('canvas'),styleChart(defectConfig(d))));
+ card('Assy OS Trend',m.os,[['date','Date'],['lot','Lot'],['yield','Yield %'],['open','Open %'],['short','Short %']],[['yield','Yield %',false],['open','Open %',false],['short','Short %',false]]);
+ card('FT BIN · FT rate / BIN4 rate',m.bin,[['date','Date'],['lot','Lot'],['input','In Qty'],['yield','Yield %'],['ft','FT rate %'],['bin4','BIN4 rate %']],[['input','In Qty',true],['yield','Yield %',false],['ft','FT rate %',false],['bin4','BIN4 rate %',false]]);
+ }
+ window.addEventListener('mtk-trend-tab',e=>{if(e.detail==='lot')requestAnimationFrame(()=>charts.forEach(c=>{c.resize();c.update('none');}));});
+ document.getElementById('mtkLotSearch').onclick=()=>{query=input.value.trim();render();};input.addEventListener('keydown',e=>{if(e.key==='Enter'){query=input.value.trim();render();}});render();return render;
+}
