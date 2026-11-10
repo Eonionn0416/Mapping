@@ -61,7 +61,7 @@ let defectTrendRows = [];
 let binTrendRows = [];
 let weeklyDeviceVendorData = { devices: [], wwColumns: [], osMap: new Map(), binMap: new Map() };
 let trendStartMonth = "";
-let trendDurationMonths = 1;
+let trendDurationMonths = 2;
 
 let yieldTrendCharts = [];
 let osTrendCharts = [];

@@ -1,11 +1,13 @@
-﻿param([switch]$Once)
+param([switch]$Once)
 $ErrorActionPreference='Stop'
 $base='C:\System project\QA System File uploader'
 New-Item -ItemType Directory -Force -Path (Join-Path $base 'MNT PO') | Out-Null
 foreach($part in @('Bump','Assy')){New-Item -ItemType Directory -Force -Path (Join-Path $base ('MNT\'+$part)) | Out-Null}
 $mutex=[Threading.Mutex]::new($false,'Local\QAOutlookCollector49');if(!$mutex.WaitOne(0)){exit}
+New-Item -ItemType Directory -Force -Path (Join-Path $base 'MNT Yield') | Out-Null
 function Classify($subject){
  switch -Regex ($subject.Trim()) {
+ '^Montage\s*:?\s*Weekly Yield Report for\s+\d{1,2}/\d{1,2}/\d{4}$' {return @('MNT Yield','Weekly Yield')}
  '^MNT\s+Report[_ ](?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)[\x27\u2019]\d{2,4}$' {return @('MNT','CPK Report')}
  '^AUSTIN WIP REPORT\s*[–-]\s*\d{4}-\d{2}-\d{2}\s+\d{2}:?\s*\d{2}$' {return @('Austin WIP & Yield','WIP')}
  '^AUSTIN FT YIELD REPORT\s*[–-]\s*\d{4}-\d{2}-\d{2}\s+\d{2}:?\s*\d{2}$' {return @('Austin WIP & Yield','FT Yield')}
@@ -20,11 +22,11 @@ function SenderSmtp($mail){
  try {if($mail.SenderEmailType -eq 'EX'){return $mail.Sender.GetExchangeUser().PrimarySmtpAddress.ToLower()};return $mail.SenderEmailAddress.ToLower()}catch{return ''}
 }
 function SaveMail($mail){
- if($mail.Class -ne 43){return};$route=Classify $mail.Subject;if((SenderSmtp $mail) -eq 'anne.li@montage-tech.com'){$route=@('MNT PO','Orders')};if(!$route){return}
- if($route[0] -notin @('MNT','MNT PO') -and $mail.ReceivedTime -lt (Get-Date).AddDays(-30)){return}
+ if($mail.Class -ne 43){return};$route=Classify $mail.Subject;if(!$route -and (SenderSmtp $mail) -eq 'anne.li@montage-tech.com'){$route=@('MNT PO','Orders')};if(!$route){return}
+ if($route[0] -notin @('MNT','MNT PO','MNT Yield') -and $mail.ReceivedTime -lt (Get-Date).AddDays(-30)){return}
  $received=$mail.ReceivedTime.ToString('yyyyMMdd_HHmmss');$dest=Join-Path $base ($route[0]+'\'+$route[1]+'\'+$received)
  for($i=1;$i -le $mail.Attachments.Count;$i++){
-  $a=$mail.Attachments.Item($i);$name=[IO.Path]::GetFileName($a.FileName);if($name -notmatch '\.xlsx?$'){continue}
+  $a=$mail.Attachments.Item($i);$name=[IO.Path]::GetFileName($a.FileName);if($route[0] -eq 'MNT Yield'){if($name -notmatch '\.(csv|xlsx|xls)$'){continue};$dest=Join-Path $base 'MNT Yield'}elseif($name -notmatch '\.xlsx?$'){continue}
   if($route[0] -eq 'MNT PO' -and $name -notmatch '^[ME]PRO[-_ ]?\d.*\.xlsx?$'){continue}
   if($route[0] -eq 'MNT'){$part=MntPart $name;if(!$part){Add-Content (Join-Path $base 'collector.log') ((Get-Date -Format o)+' SKIP MNT attachment type unknown: '+$name);continue};$dest=Join-Path $base ('MNT\'+$part)}
   New-Item -ItemType Directory -Force $dest | Out-Null
@@ -36,7 +38,7 @@ function SaveMail($mail){
  }
 }
 function AllFolders($folder){$folder;foreach($child in $folder.Folders){AllFolders $child}}
-function FindAuto($folder){if($folder.Name.Trim() -in @('AUTO MAIL / PERSONAL','Automail','SCK - QSE / PQA / IT','CUS - MNT(Montage)','PO')){$folder};foreach($child in $folder.Folders){FindAuto $child}}
+function FindAuto($folder){if(($folder.Name -replace '\s','') -in @('AUTOMAIL/PERSONAL','Automail','SCK-QSE/PQA/IT','CUS-MNT(Montage)','PO')){$folder};foreach($child in $folder.Folders){FindAuto $child}}
 Add-Content -LiteralPath (Join-Path $base 'collector.log') -Value ((Get-Date -Format o)+' START v59 MNT Bump/Assy; Inbox + SCK - QSE / PQA / IT')
 try{do{try{
  $app=[Runtime.InteropServices.Marshal]::GetActiveObject('Outlook.Application');$ns=$app.GetNamespace('MAPI');$folders=@();foreach($store in $ns.Stores){try{$inbox=$store.GetDefaultFolder(6);$folders+=,$inbox;$folders+=@(FindAuto ($store.GetRootFolder()))}catch{}}
