@@ -86,7 +86,8 @@ $('csv').onclick=()=>{const cell=v=>'"'+String(v??'').replace(/^[=+@-]/,"'$&").r
 $('to').value=today();$('from').value=C.addDays($('to').value,-6);
 (async()=>{try{db=await openDB();snapshots=await load();if(!snapshots.length&&globalThis.AustinInitialData?.length){await save(globalThis.AustinInitialData);snapshots=C.merge([],globalThis.AustinInitialData);$('status').textContent='제공하신 8개 보고서를 초기 이력으로 저장했습니다. 다음 보고서를 첨부해 업데이트하세요.';}else $('status').textContent='저장 이력을 불러왔습니다. Excel 보고서를 첨부해 업데이트하세요.';year();}catch(e){$('status').textContent='브라우저 저장소를 열 수 없습니다: '+e.message;$('files').disabled=true;}})();
 
-QAAutoMail.start('austin',()=>!!db&&!busy&&!pending.length,async file=>{busy=true;try{const w=XLSX.read(await file.arrayBuffer(),{type:'array'}),items=C.parseWorkbook(w,XLSX,file.name);if(!items.length)throw Error('보고서 데이터 없음: '+file.name);await save(items);snapshots=C.merge(snapshots,items);render();}finally{busy=false;}});
+const importAustinAuto=async file=>{busy=true;try{const w=XLSX.read(await file.arrayBuffer(),{type:'array'}),items=C.parseWorkbook(w,XLSX,file.name);if(!items.length)throw Error('보고서 데이터 없음: '+file.name);await save(items);snapshots=C.merge(snapshots,items);render();}finally{busy=false;}};
+QAAutoMail.startMany([{group:'austin',label:'WIP / Yield',ready:()=>!!db&&!busy&&!pending.length,importer:importAustinAuto},{group:'austintop7',label:'Top 7',ready:()=>!!db&&!busy&&!pending.length,importer:importAustinAuto}],{label:'Austin 자동 가져오기'});
 
 
 $('excel').onclick=()=>{const w=XLSX.utils.book_new(),add=(n,h,r)=>{const s=XLSX.utils.aoa_to_sheet([h,...r]);XLSX.utils.book_append_sheet(w,s,n);};add('Summary',columns,shown);if(exportYield){add('Lot Detail',exportYield.lotHeaders,exportYield.lots);add('Defect Detail',exportYield.defectHeaders,exportYield.detail);}XLSX.writeFile(w,type+'-'+today()+'.xlsx');};
@@ -94,4 +95,4 @@ $('excel').onclick=()=>{const w=XLSX.utils.book_new(),add=(n,h,r)=>{const s=XLSX
 $('lookupLot').onclick=()=>{lotOverviewQuery=$('search').value.trim();overviewDeviceQuery=$('overviewDevice').value.trim();render();};$('search').addEventListener('keydown',e=>{if(type==='lotOverview'&&e.key==='Enter'){e.preventDefault();$('lookupLot').click();}});
 
 $('overviewDevice').addEventListener('keydown',e=>{if(e.key==='Enter')$('lookupLot').click();});
-QAAutoMail.start('austintop7',()=>!!db&&!busy&&!pending.length,async file=>{busy=true;try{const w=XLSX.read(await file.arrayBuffer(),{type:'array'}),items=C.parseWorkbook(w,XLSX,file.name);if(!items.length)throw Error('Top 7 데이터 없음');await save(items);snapshots=C.merge(snapshots,items);render();}finally{busy=false;}},{label:'Austin Top 7 자동 가져오기'});
+
