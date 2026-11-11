@@ -1,14 +1,15 @@
 const AustinLotOverview=(()=>{
  const norm=x=>String(x??'').trim().toUpperCase().replace(/\s+/g,''),ids=r=>[r.lot,r.mark,r.assyLot].map(norm).filter(x=>x&&!['-','N/A','NA','NONE'].includes(x));
+ function deviceMatch(value,query){const v=norm(value),q=norm(query).split('-')[0];return !!q&&(v===q||v.startsWith(q+'-'));}
  function link(snaps,query,to,device=''){const aliases=new Set([norm(query)]),rows=snaps.filter(s=>s.date<=to).flatMap(s=>s.rows).filter(r=>!device||r.device===device);let changed=true;while(changed){changed=false;for(const r of rows)if(ids(r).some(id=>aliases.has(id)))for(const id of ids(r))if(!aliases.has(id)){aliases.add(id);changed=true;}}return {aliases,match:r=>(!device||r.device===device)&&ids(r).some(id=>aliases.has(id))};}
- return {link};
+ return {link,deviceMatch};
 })();
-let lotOverviewQuery='';
+let lotOverviewQuery='',overviewDeviceQuery='';
 function renderLotOverview(){
  columns=['공정','Device','Lot','구분','일자','Qty','단위'];shown=[];const to=$('to').value,from=$('from').value;
  $('note').textContent='Lot · Marking/Run · Assy Lot 전체 번호로 연결합니다. 입고/불출은 보고서 관측 기준이며 Plan Out date는 실제 이탈일이 아닙니다.';
- if(!lotOverviewQuery){metric([]);$('content').innerHTML='<section class="panel empty">Lot Number를 입력하고 Lot 통합 조회를 누르세요.</section>';return;}
- const linked=AustinLotOverview.link(snapshots,lotOverviewQuery,to,$('device').value),match=linked.match,within=d=>d&&d>=from&&d<=to,parts=[];let found=0;
+ if(!lotOverviewQuery&&!overviewDeviceQuery){metric([]);$('content').innerHTML='<section class="panel empty">Lot 또는 Device를 입력하고 조회하세요.</section>';return;}
+ const linked=AustinLotOverview.link(snapshots,lotOverviewQuery,to,overviewDeviceQuery?'':$('device').value),match=overviewDeviceQuery?r=>AustinLotOverview.deviceMatch(r.device,overviewDeviceQuery)&&(!lotOverviewQuery||linked.match(r)):linked.match,within=d=>d&&d>=from&&d<=to,parts=[];let found=0;
  function panel(name,body){parts.push(`<section class="panel lot-overview-card"><h2>${esc(name)}</h2>${body||'<p class="empty">연결된 기록이 없습니다.</p>'}</section>`);}
  const chip=C.latest(snapshots,'chip',to),chipRows=(chip?.rows||[]).filter(match);found+=chipRows.length;
  const bins=new Map();for(const r of chipRows)bins.set('Bin '+r.bin,(bins.get('Bin '+r.bin)||0)+r.qty);const pareto=[...bins].sort((a,b)=>b[1]-a[1]),total=pareto.reduce((n,x)=>n+x[1],0);let sum=0;
@@ -33,5 +34,6 @@ function renderLotOverview(){
  }
  panel(title,body);
  }
- metric([['검색 Lot',lotOverviewQuery],['연결 식별자',linked.aliases.size],['연결 기록',found]]);$('content').innerHTML='<div class="lot-overview-grid">'+parts.join('')+'</div>';
+ panel('Top 7 Defect','<p>Top 7 원본은 BDR 전체 Device 주간 합계입니다. Lot / Device별 구분이 없어 개별 조회 결과로 표시하지 않습니다.</p>');
+ metric([['검색 Lot',lotOverviewQuery||'—'],['검색 Device',overviewDeviceQuery||'—'],['연결 식별자',linked.aliases.size],['연결 기록',found]]);$('content').innerHTML='<div class="lot-overview-grid">'+parts.join('')+'</div>';
 }

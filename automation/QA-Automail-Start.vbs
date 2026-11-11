@@ -1,4 +1,17 @@
 Option Explicit
+Dim qaFS, qaSource, qaText
+Set qaFS=CreateObject("Scripting.FileSystemObject")
+qaSource="C:\System project\wafer_strip_mapping_app\automation\auto-mail-server.cjs"
+If Not qaFS.FileExists(qaSource) Then
+ MsgBox "Install v99 automation files first.",48,"QA Auto Import"
+ WScript.Quit
+End If
+qaText=qaFS.OpenTextFile(qaSource,1).ReadAll
+If InStr(qaText,"mntvm")=0 Or InStr(qaText,"austintop7")=0 Then
+ MsgBox "Copy all v99 automation files into C:\System project\wafer_strip_mapping_app\automation, then run this launcher again.",48,"QA Auto Import"
+ WScript.Quit
+End If
+
 Dim sh, svc, processes, proc, command, result, startPath
 Set sh = CreateObject("WScript.Shell")
 On Error Resume Next
