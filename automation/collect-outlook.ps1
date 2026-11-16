@@ -50,7 +50,20 @@ function SaveYieldMail($mail,$kind){
  }
 }
 
+
+function SaveCSRMail($mail){
+ if($mail.Class -ne 43 -or (SenderSmtp $mail) -ne 'mol_dcc_noreply@mediatek.com' -or $mail.Subject -notmatch '^\[MediaTek Online\]\s*\[DCC\]\s*Notification of Document Release'){return}
+ $folder=Join-Path $base 'CSR\DCC';[IO.Directory]::CreateDirectory($folder)|Out-Null
+ $body=[string]$mail.Body;$sha=[Security.Cryptography.SHA256]::Create()
+ try{$digest=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($body)))).Replace('-','').ToLower()}finally{$sha.Dispose()}
+ $file=Join-Path $folder ('dcc-'+$digest+'.json');if(Test-Path -LiteralPath $file){return}
+ $data=@{sender='mol_dcc_noreply@mediatek.com';subject=[string]$mail.Subject;body=$body;receivedAt=$mail.ReceivedTime.ToUniversalTime().ToString('o')}
+ $temp=$file+'.partial';try{$data|ConvertTo-Json -Depth 4|Set-Content -LiteralPath $temp -Encoding UTF8;[IO.File]::Move($temp,$file)}finally{if(Test-Path -LiteralPath $temp){Remove-Item -LiteralPath $temp}}
+ Add-Content -LiteralPath (Join-Path $base 'collector.log') -Value ((Get-Date -Format o)+' SAVED CSR DCC / '+[IO.Path]::GetFileName($file))
+}
+
 function SaveMail($mail){
+ SaveCSRMail $mail
  if($mail.Class -ne 43){return};$route=Classify $mail.Subject;if(!$route -and (SenderSmtp $mail) -eq 'anne.li@montage-tech.com'){$route=@('MNT PO','Orders')};if(!$route){return}
  if($route[0] -notin @('MNT','MNT PO','MNT Yield','MNT VM','Austin Top7') -and $mail.ReceivedTime -lt (Get-Date).AddDays(-30)){return}
  if($route[0] -in @('MNT Yield','MNT VM','Austin Top7')){SaveYieldMail $mail $route[0];return}
@@ -68,8 +81,8 @@ function SaveMail($mail){
  }
 }
 function AllFolders($folder){$folder;foreach($child in $folder.Folders){AllFolders $child}}
-function FindAuto($folder){if(($folder.Name -replace '\s','') -match '^AUTOMAIL/PERSONAL\d*$' -or ($folder.Name -replace '\s','') -in @('AUTOMAIL/PERSONAL','Automail','SCK-QSE/PQA/IT','CUS-MNT(Montage)','PO')){$folder};foreach($child in $folder.Folders){FindAuto $child}}
-Add-Content -LiteralPath (Join-Path $base 'collector.log') -Value ((Get-Date -Format o)+' START v99 Weekly Yield + VM + Austin Top7; AUTO MAIL numeric suffix supported')
+function FindAuto($folder){if(($folder.Name -replace '\s','') -match '^AUTOMAIL/PERSONAL\d*$' -or ($folder.Name -replace '\s','') -in @('AUTOMAIL/PERSONAL','Automail','SCK-QSE/PQA/IT','CUS-MNT(Montage)','CUS-MTK/MSL(MediaTek)','PO')){$folder};foreach($child in $folder.Folders){FindAuto $child}}
+Add-Content -LiteralPath (Join-Path $base 'collector.log') -Value ((Get-Date -Format o)+' START v101 CSR + Weekly Yield + VM + Austin Top7; AUTO MAIL numeric suffix supported')
 try{do{try{
  $app=[Runtime.InteropServices.Marshal]::GetActiveObject('Outlook.Application');$ns=$app.GetNamespace('MAPI');$folders=@();foreach($store in $ns.Stores){try{$inbox=$store.GetDefaultFolder(6);$folders+=,$inbox;$folders+=@(FindAuto ($store.GetRootFolder()))}catch{}}
  foreach($store in $ns.Stores){foreach($folder in @(AllFolders ($store.GetRootFolder()))){try{$poItems=$folder.Items.Restrict("[SenderEmailAddress] = 'anne.li@montage-tech.com' AND [ReceivedTime] >= '"+(Get-Date).AddDays(-90).ToString('MM/dd/yyyy hh:mm tt',[Globalization.CultureInfo]::InvariantCulture)+"'");for($j=$poItems.Count;$j -ge 1;$j--){SaveMail $poItems.Item($j)}}catch{Add-Content (Join-Path $base 'collector.log') ((Get-Date -Format o)+' PO scan: '+$folder.Name+' '+$_.Exception.Message)}}}

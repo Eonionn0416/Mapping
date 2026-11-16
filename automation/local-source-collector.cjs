@@ -18,7 +18,8 @@ function collect(options={}){const base=options.base||DEFAULT_BASE,rel=options.r
   for(const name of names)copy(path.join(folder,name),'NPI status','npi:'+name);
  }catch(e){errors.push('npi: '+e.message);}
 
- for(const folder of ['MTK Rel','MNT Hold','Daily','NPI status'])fs.mkdirSync(path.join(base,folder),{recursive:true});
+ try{const folder=options.csr||'C:/Users/seungeon.kim/OneDrive - 江苏长电科技股份有限公司/문서/SCK/SPEC/[Customer] MTK',candidates=fs.readdirSync(folder).map(name=>({name,m:/^MTK CSR Gap analysis report (\d{4})_WW(\d{1,2})\.xlsx$/i.exec(name)})).filter(x=>x.m&&+x.m[2]>=1&&+x.m[2]<=53).sort((a,b)=>(+b.m[1]*100+ +b.m[2])-(+a.m[1]*100+ +a.m[2]));if(!candidates.length)throw Error('CSR 원본 Excel이 없습니다.');copy(path.join(folder,candidates[0].name),'CSR','csr');}catch(e){errors.push('csr: '+e.message);}
+ for(const folder of ['CSR','MTK Rel' ,'MNT Hold','Daily','NPI status'])fs.mkdirSync(path.join(base,folder),{recursive:true});
  if(JSON.stringify(next)!==JSON.stringify(previous))writeAtomic(manifestFile,JSON.stringify(next,null,2),path.join(base,'MTK Rel'));
  return {entries:next,errors};
 }
