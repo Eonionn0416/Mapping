@@ -7,3 +7,5 @@ nav button{white-space:nowrap;min-height:48px;border:0;border-bottom:3px solid t
 nav button:hover{background:#edf5fe}
 nav button.active{background:transparent;color:#1268ba;border-bottom-color:#1268ba;font-weight:700}
 nav button:focus-visible{outline:2px solid #1268ba;outline-offset:-3px}
+
+.filters select{box-sizing:border-box;min-height:42px;padding:9px 14px;border:1px solid #c9daec;border-radius:7px;background:#fff;color:inherit;font:inherit}.percent-input{display:flex;align-items:center;border:1px solid #c9daec;border-radius:7px;background:white;overflow:hidden}.percent-input input{width:135px;border:0;border-radius:0;min-width:0}.percent-input>span{padding:0 12px 0 0;color:#617b94}.percent-input:focus-within{outline:2px solid #1268ba;outline-offset:2px}

@@ -10,8 +10,9 @@ export function stageFlows(r){
  const thirdIn=present(r.qty.second)&&present(r.cvQty)?r.qty.second+r.cvQty:null;
  return {second:[r.invQty,r.qty.second],third:[thirdIn,r.qty.third],evi:[r.qty.third,r.qty.evi],assy:[r.actQty,r.qty.evi],cumm:[r.invQty,r.qty.evi]};
 }
-export function weekly(rows){
+export const leadLabel=v=>/^\d{1,4}$/.test(String(v??'').trim())?String(v).trim().padStart(4,'0'):String(v??'').trim()||'미기재';
+export function weekly(rows,mode='device'){
  const groups=new Map();
- for(const r of rows){const w=week(r.date),key=JSON.stringify([r.device,r.pk,r.lead,w.start]);if(!groups.has(key))groups.set(key,{device:r.device,pk:r.pk,lead:r.lead,...w,rows:[]});groups.get(key).rows.push(r);}
+ for(const r of rows){const w=week(r.date),groupKey=mode==='ld'?JSON.stringify([leadLabel(r.lead)]):JSON.stringify([r.device,r.pk,leadLabel(r.lead)]),key=JSON.stringify([groupKey,w.start]);if(!groups.has(key))groups.set(key,{groupKey,device:r.device,pk:r.pk,lead:leadLabel(r.lead),...w,rows:[]});groups.get(key).rows.push(r);}
  return [...groups.values()].map(g=>{const rates={},flows={};for(const [k] of stages){let input=0,output=0,count=0;for(const r of g.rows){const [i,o]=stageFlows(r)[k];if(Number.isFinite(i)&&i>0&&Number.isFinite(o)&&o>=0){input+=i;output+=o;count++;}}flows[k]={input:count?input:null,output:count?output:null,count,missing:g.rows.length-count};rates[k]=count?output/input*100:null;}return {...g,rates,flows};}).sort((a,b)=>a.start.localeCompare(b.start)||a.device.localeCompare(b.device));
 }
