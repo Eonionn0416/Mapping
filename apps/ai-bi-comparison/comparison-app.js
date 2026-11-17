@@ -96,7 +96,7 @@ async function read(file){
    book[name].layout={merges:sheet['!merges']||[]};
  }return book;
 }
-$('compare').addEventListener('click',async()=>{
+async function runComparison(){
  if(!selectionReady()){$('status').textContent='실패한 파일을 다시 선택하거나 진행 중인 읽기가 끝날 때까지 기다려 주세요.';return;}
  if(!base||!revisions.length){$('status').textContent='원본 하나와 개정 파일을 선택해 주세요.';return;}
  if(typeof XLSX==='undefined'){$('status').textContent='Excel 읽기 파일을 불러오지 못했습니다. shared/vendor 폴더가 함께 설치되었는지 확인해 주세요.';return;}
@@ -116,9 +116,10 @@ $('compare').addEventListener('click',async()=>{
   $('warnings').innerHTML=notices.map(w=>`<p class="warning ${w.missingCp?'missing-cp':w.error?'error':''}" role="${w.error||w.missingCp?'alert':'status'}">${escapeHTML(w.message)}</p>`).join('');
   $('metrics').innerHTML=['전체','추가','변경','삭제','순서 변경'].map(t=>`<div class="metric">${t}<strong>${t==='전체'?all.length:all.filter(c=>c.type===t).length}</strong></div>`).join('');
   $('export').disabled=!compared;$('reportExport').disabled=!compared;
-  $('results').hidden=false;$('status').textContent=`비교 완료 ${compared}개 / 실패 ${blocked}개 · 차이가 있는 공정/표 ${groups.length}개 · 셀 및 공정 차이 ${all.length}건`;render();
+  $('results').hidden=false;$('status').textContent=`비교 완료 ${compared}개 / 실패 ${blocked}개 · 차이가 있는 공정/표 ${groups.length}개 · 셀 및 공정 차이 ${all.length}건`;render();return {compared,blocked};
  }catch(e){if(token===generation){all=[];groups=[];$('status').textContent=`비교 실패: ${e.message}`;}}finally{$('compare').disabled=false;}
-});
+}
+$('compare').addEventListener('click',runComparison);
 function badge(type){return `<span class="badge ${type==='추가'?'add':type==='삭제'?'delete':''}">${escapeHTML(type)}</span>`;}
 function blockTable(group,side){
  const section=group[side];if(!section)return `<div class="absent">${side==='after'?'삭제됨':'원본에 없음 · 추가된 공정/표'}</div>`;
@@ -181,7 +182,7 @@ function download(name,content,type){const url=URL.createObjectURL(new Blob([con
 $('reportExport').addEventListener('click',()=>{if(reportMeta)download('AI_BI_Comparison_Report.html',AIBIReport.create(reportMeta,all,groups,blockTable),'text/html;charset=utf-8');});
 $('diagnosticExport').addEventListener('click',()=>download('AI_BI_Diagnostics.txt',JSON.stringify({version:APP_VERSION,time:new Date().toISOString(),browser:navigator.userAgent,page:location.origin+location.pathname,libraryLoaded:typeof XLSX!=='undefined',failedFiles:Object.fromEntries(Object.entries(failedSelection).map(([side,files])=>[side,(files||[]).map(f=>({name:f.name,size:f.size,read:readInfo.get(f)}))])),files:[base,...revisions].filter(Boolean).map(f=>({name:f.name,size:f.size,lastModified:f.lastModified,read:readInfo.get(f)})),status:$('status').textContent,errors:diagnostics},null,2),'text/plain;charset=utf-8'));
 
-window.AIBIWorkspace={selected:async()=>Promise.all([base,...revisions].filter(Boolean).map(async f=>({file:f.name,book:await read(f),savedMeta:f.savedRecord}))),use:async(side,record,book)=>setFiles(side,[{name:record.number+' ('+record.revision+').xlsx',savedBook:book,savedRecord:record}])};
+window.AIBIWorkspace={compare:runComparison,selected:async()=>Promise.all([base,...revisions].filter(Boolean).map(async f=>({file:f.name,book:await read(f),savedMeta:f.savedRecord}))),use:async(side,record,book)=>setFiles(side,[{name:record.number+' ('+record.revision+').xlsx',savedBook:book,savedRecord:record}])};
 
 
 document.body.classList.toggle('text-only',$('textOnly').checked);

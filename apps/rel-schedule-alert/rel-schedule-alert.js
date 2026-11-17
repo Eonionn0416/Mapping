@@ -50,7 +50,7 @@ import {
   normalizeNumber,
   formatDelayValue,
   makeDocId
-} from "./rel-parser.js?v=63";
+} from "./rel-parser.js?v=109";
 
 /* ============================================================
    상수
@@ -456,7 +456,7 @@ function renderSelectedFileList() {
 const COMPARE_FIELDS = [
   "criteria", "relItem", "condition", "assyLot", "ftLot", "qty", "dhlText",
   "dateIn", "duration", "delay", "dateOut", "result", "status", "remark", "failMode",
-  "aiNo", "changeFrom", "changeTo", "reportKind", "planLots", "planDevices", "planReports",
+  "aiNo", "changeFrom", "changeTo", "reportKind", "planLots", "planDevices", "planReports", "planT0Results",
   "sourceFileName", "rowNumber", "dueRef", "statusRef", "delayRef", "summarySelected", "summaryLabel", "schemaVersion"
 ];
 

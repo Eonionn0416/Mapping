@@ -28,7 +28,7 @@ async function refresh(){try{
  renderList();status(`Firestore DB ${records.length}개 문서를 불러왔습니다.`+(failed?` ${failed}개 문서의 Nickname / Device 갱신 실패 · 새로고침으로 재시도하세요.`:''));return true;
  }catch(e){status('Firestore DB 연결 실패: '+e.message);return false;}}
 const selected=()=>records.find(r=>r.id===($('dbAfter').value||$('dbBefore').value));
-async function compare(a,b){if(!a||!b)throw Error('비교할 두 문서를 선택하세요.');if(a.id===b.id)throw Error('서로 다른 문서를 선택하세요.');status('DB 문서를 불러와 비교합니다.');const [left,right]=await Promise.all([(await api()).loadDocument(a),(await api()).loadDocument(b)]);await window.AIBIWorkspace.use('base',a,left);await window.AIBIWorkspace.use('rev',b,right);$('compare').click();status(`${label(a)} → ${label(b)} · 아래 비교 결과를 확인하세요.`);}
+async function compare(a,b){if(!a||!b)throw Error('비교할 두 문서를 선택하세요.');if(a.id===b.id)throw Error('서로 다른 문서를 선택하세요.');status('DB 문서를 불러와 비교합니다.');const [left,right]=await Promise.all([(await api()).loadDocument(a),(await api()).loadDocument(b)]);await window.AIBIWorkspace.use('base',a,left);await window.AIBIWorkspace.use('rev',b,right);const result=await window.AIBIWorkspace.compare();if(!result?.compared)throw Error($('status').textContent||'비교를 완료하지 못했습니다.');status(`${label(a)} → ${label(b)} · 비교 완료${result.blocked?' · 실패 '+result.blocked+'개':''}`);$('results').scrollIntoView({behavior:'smooth',block:'start'});}
 function initCustomerPicker(side){
  const input=$('customer'+side),box=$('customerOptions'+side);let options=[],active=-1;
  function close(){box.hidden=true;input.setAttribute('aria-expanded','false');input.removeAttribute('aria-activedescendant');}
@@ -62,16 +62,24 @@ function openDocument(r){const url='document-view.html?'+new URLSearchParams({id
 $('recentDocuments').onclick=e=>{const b=e.target.closest('[data-recent]');if(b){const r=recentViews[Number(b.dataset.recent)];if(r)openDocument(r);}};
 $('viewBefore').onclick=()=>{const chosen=[...new Map(['Before','After'].map(side=>records.find(r=>r.id===$('db'+side).value)).filter(Boolean).map(r=>[r.id,r])).values()];if(!chosen.length){status('조회할 문서와 Revision을 선택하세요.');return;}const blocked=chosen.filter(r=>!openDocument(r));if(!blocked.length){status(chosen.length+'개 문서 조회 페이지를 열었습니다.');return;}status('브라우저에서 일부 문서 창을 차단했습니다. 아래 문서 이름을 누르면 열립니다.');for(const r of blocked){const b=document.createElement('button');b.type='button';b.className='secondary';b.textContent=label(r);b.onclick=()=>openDocument(r);$('dbStatus').appendChild(b);}};renderRecent();
 $('compareDB').onclick=()=>compare(records.find(r=>r.id===$('dbBefore').value),records.find(r=>r.id===$('dbAfter').value)).catch(e=>status(e.message));$('previousDB').onclick=async()=>{try{const r=selected();if(!r)throw Error('문서를 선택하세요.');const p=C.previous(records,r);if(!p){status('이 문서보다 이전 Revision이 DB에 없습니다.');return;}await compare(p,r);}catch(e){status(e.message);}};
-(async()=>{if(!await refresh())return;const ai=new URLSearchParams(location.search).get('ai');if(!ai)return;$('documentAfter').value=C.revisionInfo(ai).number;searched.After=true;submitted.After=filters('After');renderList();const info=C.revisionInfo(ai),found=records.filter(r=>C.norm(r.number)===C.norm(info.number)&&(!info.revision||C.norm(r.revision)===C.norm(info.revision)));if(!found.length){status('REL에 지정된 AI/BI가 DB에 없습니다: '+ai);return;}found.sort((a,b)=>C.compareRev(b.revision,a.revision)||String(b.updatedAtText).localeCompare(String(a.updatedAtText)));const r=found[0];selectRecord('After',r);const p=C.previous(records,r);if(p){selectRecord('Before',p);await compare(p,r);}else status('연결된 문서를 선택했습니다. 이전 Revision은 아직 DB에 없습니다.');})().catch(e=>status(e.message));
-
-let autoSaveChain=Promise.resolve();
-async function saveDocuments(docs){
- const uploaded=docs.filter(d=>!d.savedMeta);if(!uploaded.length)return;
- const prepared=uploaded.map(d=>({...d,meta:{...C.identify(d.book),file:d.file}}));
- for(const d of prepared)if(!d.meta.number||!d.meta.revision||d.meta.ambiguous||!d.meta.devices.length)throw Error(d.file+': 문서 내부 AI/BI No, 괄호 안 영문 Revision, Device를 확인할 수 없습니다.');
- $('savePreview').innerHTML='<div class="source-table-wrap"><table><thead><tr><th>첨부 파일</th><th>문서 내부 AI/BI No</th><th>Revision</th><th>Customer</th><th>Nickname</th><th>Device</th></tr></thead><tbody>'+prepared.map(d=>`<tr><td>${esc(d.file)}</td><td>${esc(d.meta.number)}</td><td>${esc(d.meta.revision)}</td><td>${esc(d.meta.customer)}</td><td>${esc(d.meta.nickname)}</td><td>${esc(d.meta.devices.join(', '))}</td></tr>`).join('')+'</tbody></table></div>';
- for(const d of prepared){status('자동 저장 중: '+d.meta.number+' ('+d.meta.revision+')');await (await api()).saveDocument(d.meta,d.book);}
- await refresh();status(prepared.length+'개 문서를 내부 AI/BI No · Revision · Customer · Device 기준으로 자동 저장했습니다.');
+function linkNumber(v){return C.norm(String(v||'').replace(/^(AI|BI)\s+/i,'').replace(/\s+/g,''));}
+function linkedDocuments(value){return String(value).replace(/©/g,'(C)').replace(/®/g,'(R)').replace(/（/g,'(').replace(/）/g,')').split(/[,;\r\n]+/).map(v=>v.trim()).filter(Boolean);}
+async function openRelDocument(ai){
+ const info=C.revisionInfo(ai),kind=ai.match(/^(AI|BI)\s+/i)?.[1]?.toUpperCase();
+ const found=records.filter(r=>linkNumber(r.number)===linkNumber(info.number)&&(!kind||r.kind===kind)&&(!info.revision||C.norm(r.revision)===C.norm(info.revision)));
+ if(!found.length){status('REL에 지정된 AI/BI가 DB에 없습니다: '+ai);return;}
+ found.sort((a,b)=>C.compareRev(b.revision,a.revision)||String(b.updatedAtText).localeCompare(String(a.updatedAtText)));
+ const r=found[0],p=C.previous(records,r);
+ for(const [side,record] of [['Before',p],['After',r]]){
+  for(const field of ['customer','device','nickname','document'])$(field+side).value='';
+  $('document'+side).value=r.number;submitted[side]=filters(side);searched[side]=true;activeGroup[side]='';$('db'+side).value='';renderSide(side);if(record)selectRecord(side,record);
+ }
+ initialSearchAligned=true;
+ if(p)await compare(p,r);else status('연결 문서 Rev '+r.revision+' 선택 완료. 이전 Revision이 DB에 없어 자동 비교할 수 없습니다. 원본 문서 조회로 확인하세요.');
 }
-function scheduleAutoSave(){const selected=window.AIBIWorkspace.selected();autoSaveChain=autoSaveChain.catch(()=>{}).then(async()=>saveDocuments(await selected)).catch(e=>status('자동 저장 실패: '+e.message+' · 다시 저장 버튼으로 재시도할 수 있습니다.'));return autoSaveChain;}
-window.addEventListener('aibi-files-ready',scheduleAutoSave);$('prepareSave').onclick=scheduleAutoSave;$('compare').addEventListener('click',scheduleAutoSave);
+(async()=>{
+ if(!await refresh())return;const ai=new URLSearchParams(location.search).get('ai');if(!ai)return;
+ const choices=[...new Set(linkedDocuments(ai))];
+ if(choices.length>1){const label=document.createElement('label');label.textContent='REL 연결 AI/BI ';const select=document.createElement('select');for(const value of choices){const option=document.createElement('option');option.value=value;option.textContent=value;select.append(option);}label.append(select);$('dbStatus').before(label);select.onchange=async()=>{select.disabled=true;try{await openRelDocument(select.value);}catch(e){status(e.message);}finally{select.disabled=false;}};}
+ await openRelDocument(choices[0]);
+})().catch(e=>status(e.message));

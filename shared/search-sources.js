@@ -1,3 +1,4 @@
+import {extractMeta,findHeader} from '../apps/rel-schedule-alert/rel-parser.js?v=109';
 import "../apps/daily-tracker/tracker-core.js?v=74";
 import * as PCNCore from "../apps/rel-schedule-alert/pcn-core.js?v=35";
 const C=QACatalog;
@@ -27,7 +28,7 @@ if(cloud){
  await run('AI/BI DB',async()=>(await cloud.rows('aibiDocuments')).map(r=>row('AI/BI DB',r.id,{customer:r.customer,devices:r.devices||r.device,lots:r.lots||[],ai:r.number+' ('+r.revision+')',date:r.updatedAtText?.slice(0,10),status:r.kind+' Rev '+r.revision,summary:r.file,raw:r})));
  await run('2DID Mapping',async()=>{const histories=await cloud.rows('mappingHistories',true),out=[];for(const h of histories){const chunks=await cloud.chunks('mappingHistories',h.id,'rowChunks',true),rr=chunks.flatMap(c=>c.rows||[]),groups=new Map();for(const r of rr){const customer=C.field(r,['customer','cust']),lot=C.field(r,['lot','lotno','lotid','waferlot','scklot','scklotno','customerlot']),device=C.field(r,['device','deviceno','product','partnumber']);const k=JSON.stringify([customer,device,lot]);if(!groups.has(k))groups.set(k,{customer,device,lot,count:0,sample:r});groups.get(k).count++;}for(const [k,g]of groups)out.push(row('2DID Mapping',h.id+'|'+k,{customer:g.customer,devices:g.device,lots:g.lot,date:h.createdAtText,summary:`${h.title||h.snapshot?.sourceFileName||''} · ${g.count} die · Soft Bin: ${h.softBin||'미기재'} · Fail mode: ${h.failMode||'미기재'} · Limit: ${h.limit||'미기재'} · Comment: ${h.comment||'—'}`,status:h.ft,raw:{historyId:h.id,history:h,sample:g.sample,count:g.count}}));}return out;});
 }else states.push({source:'Firestore',count:null,status:'연결 모듈 로드 실패 · 로컬 데이터만 조회됨'});
-const map=new Map();for(const r of all){const source=r.source.replace(/ \((local|Firestore)\)/,'');map.set(source+'|'+r.id,{...r,source});}return {rows:groupRelRows([...map.values()]),states};
+const map=new Map();for(const r of all){const source=r.source.replace(/ \((local|Firestore)\)/,'');map.set(source+'|'+r.id,{...r,source});}await enrichRelSearch([...map.values()],states);return {rows:groupRelRows([...map.values()]),states};
 }
 function relRow(r){return row('REL',r.dedupeKey||r.id,{customer:sourceCustomer(r.sourceFileName),devices:[r.device,...(r.planDevices||[])],lots:r.planLots||[],ai:r.aiNo,date:r.dateOut,status:r.status,summary:`${r.changeFrom||r.changeTo?'PCN':'Reliability'} · ${r.sheetName} · ${r.relItem}`,raw:r});}
 export function groupRelRows(rows){
@@ -46,3 +47,16 @@ function trackerRows(versions){const latest=new Map(),records=new Map();for(cons
 function pcnRow(p){return row('PCN',p.historyKey||p.id,{customer:p.customer,devices:p.devices,lots:p.lots,ai:p.aiNo,date:p.date,status:p.status,summary:p.title+' · From: '+p.changeFrom+' → To: '+p.changeTo,raw:p});}
 
 function faRow(v){const r=v.record;return row('FA History',v.id,{customer:r.customer,devices:r.devices,lots:r.lots,date:r.date,status:r.status,summary:r.mode+' · '+r.sampleQtyText+' · '+r.fields.background+' · '+r.units.map(u=>u.failPin+' '+Object.values(u.results||{}).join(' ')).join(' / '),raw:{...r,versionId:v.id,requestId:v.requestId,revision:v.revision}});}
+
+async function enrichRelSearch(rows,states){
+ const rel=rows.filter(r=>r.source==='REL'&&!r.raw?.planT0Results?.length);
+ if(!rel.length||!globalThis.XLSX)return;
+ const files=new Set(rel.map(r=>r.raw.sourceFileName).filter(Boolean));
+ const {fileCache}=await import('../apps/rel-schedule-alert/rel-file-cache.js');
+ for(const file of files){try{
+  const cached=await fileCache(file);if(!cached?.buffer)continue;
+  const wb=XLSX.read(cached.buffer,{type:'array'}),meta=new Map();
+  for(const name of wb.SheetNames){const matrix=XLSX.utils.sheet_to_json(wb.Sheets[name],{header:1,defval:''}),header=findHeader(matrix);if(header)meta.set(name,extractMeta(matrix,header.rowIndex));}
+  for(const record of rel.filter(r=>r.raw.sourceFileName===file)){const m=meta.get(record.raw.sheetName);if(m)record.raw={...record.raw,planT0Results:m.t0Results,changeFrom:record.raw.changeFrom||m.changeFrom||'',changeTo:record.raw.changeTo||m.changeTo||''};}
+ }catch(e){states.push({source:'REL 검색 보완 · '+file,count:null,status:'최신 REL 파일을 다시 가져오세요: '+e.message});}}
+}
