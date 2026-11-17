@@ -13,3 +13,5 @@ section.upload{display:grid;grid-template-columns:1.2fr 1fr;gap:30px;padding:23p
 .lot-overview-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.lot-overview-card{min-width:0;margin:0}.lot-overview-card .table-wrap{max-height:300px}.lot-overview-card table{min-width:560px}.lot-overview-card h3{margin-top:16px}.lot-overview-card details{margin-top:14px}@media(max-width:1000px){.lot-overview-grid{grid-template-columns:1fr}}
 
 .chip-chart-pair{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px}.chip-chart-pair>div{min-width:0}.chip-chart-pair h3{margin:8px 0 16px}.chip-chart-pair .chart svg{min-width:0}@media(max-width:900px){.chip-chart-pair{grid-template-columns:1fr}}
+
+.wip-unified-panel{display:flex;flex-direction:column;min-width:0}.wip-unified-table{min-height:0;flex:1}.wip-unified-table .table-wrap{max-height:540px}.wip-unified-table table{white-space:normal}.wip-unified-table th,.wip-unified-table td{padding:10px 8px;overflow-wrap:anywhere}.wip-unified-table td:nth-child(2),.wip-unified-table td:nth-child(5),.wip-unified-table td:last-child{white-space:nowrap}
