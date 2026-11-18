@@ -15,17 +15,41 @@ let snapshots=[],pending=[],type='bumpYield',db,shown=[],columns=[],detailLots=[
 const colors=['#1397e5','#03c7df','#8a18c5','#d72baf','#f33dbd','#e49528','#4aaf79','#647bd1','#ae6762','#7c9b51'];
 function table(cols,rows){return '<div class="table-wrap"><table><thead><tr>'+cols.map(c=>'<th>'+esc(c)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+r.map(v=>'<td class="'+(typeof v==='number'?'num':'')+'">'+esc(fmt(v))+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>';}
 function metric(data){$('metrics').innerHTML=data.map(([label,v])=>`<div class="metric">${esc(label)}<strong>${esc(fmt(v))}</strong></div>`).join('');}
-function chart(labels,series,{stack=false,line=null,lineLabel='',percent=false,fit=false,unit='',fitWidth=1200,height=290,interactive=false,fan=false}={}){
+function chart(labels,series,{stack=false,line=null,lineLabel='',percent=false,fit=false,unit='',fitWidth=1200,height=290,interactive=false,fan=false,barNotes=null}={}){
  if(!labels.length)return '<div class="empty">이 기간의 데이터가 없습니다.</div>';
- const W=fit?fitWidth:Math.max(700,labels.length*64),H=height,L=68,R=line?65:20,T=25,B=62,pw=W-L-R,ph=H-T-B,slot=pw/labels.length;
- const max=Math.max(1,...labels.map((_,i)=>stack?series.reduce((s,x)=>s+(x.values[i]||0),0):Math.max(0,...series.map(s=>s.values[i]||0))))*1.17;
- const lmax=percent?100:Math.max(1,...(line||[]).filter(v=>v!=null))*1.1;
+ const W=fit?fitWidth:Math.max(700,labels.length*64),H=height,L=76,R=line?72:24,T=38,B=62,pw=W-L-R,ph=H-T-B,slot=pw/labels.length;
+ const max=Math.max(1,...labels.map((_,i)=>stack?series.reduce((n,s)=>n+(s.values[i]||0),0):Math.max(0,...series.map(s=>s.values[i]||0))))*1.2,lmax=percent?100:Math.max(1,...(line||[]).filter(v=>v!=null))*1.15;
+ const occupied=[],textWidth=t=>[...String(t)].reduce((n,c)=>n+(c.charCodeAt(0)>255?11:6.5),0);
+ function caption(text,x,y,fill,{inside=null,rotate=false,candidates=[0,-18,-36,-54,18,36]}={}){
+  const w=rotate?13:textWidth(text)+4,h=rotate?textWidth(text)+4:13;if(!inside)x=Math.max(L+2+w/2,Math.min(W-R-2-w/2,x));
+  for(const dy of candidates){const cy=y+dy,box={x:x-w/2,y:cy-h/2,w,h};
+   if(box.x<L+2||box.x+w>W-R-2||box.y<5||box.y+h>H-B-2)continue;
+   if(inside&&(box.x<inside.x+1||box.x+w>inside.x+inside.w-1||box.y<inside.y+2||box.y+h>inside.y+inside.h-2))continue;
+   if(occupied.some(q=>box.x<q.x+q.w+3&&box.x+w+3>q.x&&box.y<q.y+q.h+3&&box.y+h+3>q.y))continue;
+   occupied.push(box);return `<text class="chart-value" style="paint-order:stroke;stroke:${inside?'none':'white'};stroke-width:3px;stroke-linejoin:round" data-box="${box.x},${box.y},${w},${h}" x="${x}" y="${cy}" dominant-baseline="central" text-anchor="middle" fill="${fill}" font-size="11"${rotate?` transform="rotate(-90 ${x} ${cy})"`:''}>${esc(text)}</text>`;
+  }return '';
+ }
  let svg=`<svg role="img" aria-label="${esc(series.map(s=>s.name).join(', '))}" style="${fit?'width:100%;height:auto;max-height:none;min-width:0':'min-width:'+W+'px'}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg"><rect width="${W}" height="${H}" fill="white"/>`;
- for(let i=0;i<=4;i++){let y=T+ph-i*ph/4;svg+=`<path d="M${L} ${y}H${W-R}" stroke="#e1e9f0"/><text x="${L-8}" y="${y+4}" text-anchor="end" fill="#74869a" font-size="11">${esc(fmt(Math.round(max*i/4)))}</text>`;if(line)svg+=`<text x="${W-R+8}" y="${y+4}" fill="#64798e" font-size="11">${fmt(lmax*i/4)}${percent?'%':''}</text>`;}
- labels.forEach((label,i)=>{let base=0;series.forEach((s,j)=>{const val=s.values[i]||0,bw=slot*.65/(stack?1:Math.max(1,series.length)),x=L+i*slot+slot*.17+(stack?0:j*bw),h=val/max*ph,y=T+ph-h-base;if(fan)svg+=`<g class="fan-mark" role="button" tabindex="0" data-fan-index="${i}" data-fan-series="${j}">`;if(interactive)svg+=`<g class="wip-bar" role="button" tabindex="0" data-wip-date="${esc(label)}" data-wip-kind="${['input','out','current'][j]}" aria-label="${esc(label+' '+s.name+' '+fmt(val))}" aria-pressed="false">`;svg+=`<rect x="${x}" y="${y}" width="${Math.max(1,bw-1)}" height="${h}" fill="${colors[j%colors.length]}"><title>${esc(label+' · '+s.name+': '+fmt(val)+(unit?' '+unit:''))}</title></rect>`;if(val&&labels.length<=15&&(!stack||h>18))svg+=`<text x="${x+bw/2}" y="${stack?y+h/2+4:y-5}" text-anchor="middle" fill="${stack?'white':'#46637a'}" font-size="11">${esc(fmt(val))}</text>`;if(interactive||fan)svg+='</g>';if(stack)base+=h;});svg+=`<text x="${L+i*slot+slot/2}" y="${H-B+19}" text-anchor="middle" fill="#64798e" font-size="11">${esc(fit?String(label).replace(/^20\d{2}-/,''):label)}</text>`;});
- if(line){let path='',gap=true;line.forEach((v,i)=>{if(v==null){gap=true;return;}let x=L+i*slot+slot/2,y=T+ph-v/lmax*ph;path+=(gap?'M':'L')+x+' '+y+' ';gap=false;if(fan)svg+=`<g class="fan-mark" role="button" tabindex="0" data-fan-index="${i}" data-fan-series="-1">`;svg+=`<circle cx="${x}" cy="${y}" r="3.5" fill="#13b8ca"><title>${esc(lineLabel+': '+fmt(v)+(percent?'%':''))}</title></circle>`;if(labels.length<=15)svg+=`<text x="${x}" y="${y-10}" text-anchor="middle" fill="#176d7e" font-size="11">${fmt(v)}${percent?'%':''}</text>`;if(fan)svg+='</g>';});svg+=`<path d="${path}" stroke="#13b8ca" stroke-width="2" fill="none"/>`;}
- if(unit)svg+=`<text x="${L}" y="13" fill="#64798e" font-size="11">${esc(unit)}</text>`;svg+='</svg>';return '<div class="chart">'+svg+'</div><div class="legend">'+series.map((s,i)=>`<span><i class="swatch" style="background:${colors[i%colors.length]}"></i>${esc(s.name)}</span>`).join('')+(line?`<span><i class="swatch" style="background:#13b8ca"></i>${esc(lineLabel)} (우측)</span>`:'')+'</div>';
+ for(let i=0;i<=4;i++){const y=T+ph-i*ph/4;svg+=`<path d="M${L} ${y}H${W-R}" stroke="#e1e9f0"/><text x="${L-8}" y="${y+4}" text-anchor="end" fill="#74869a" font-size="11">${esc(fmt(Math.round(max*i/4)))}</text>`;if(line)svg+=`<text x="${W-R+8}" y="${y+4}" fill="#64798e" font-size="11">${esc(fmt(lmax*i/4))}${percent?'%':''}</text>`;}
+ const bars=[];
+ labels.forEach((label,i)=>{let base=0;series.forEach((s,j)=>{const val=s.values[i]||0,bw=slot*.72/(stack?1:Math.max(1,series.length)),x=L+i*slot+slot*.14+(stack?0:j*bw),h=val/max*ph,y=T+ph-h-base;bars.push({label,i,j,val,x,y,w:Math.max(1,bw-2),h,s});if(stack)base+=h;});});
+ // Reserve in-bar wafer captions before placing quantity labels.
+ const notes=new Map();if(barNotes)for(const b of bars){const note=barNotes[b.i];if(!note||!b.val)continue;const rotate=textWidth(note)+6>b.w;notes.set(b,caption(note,b.x+b.w/2,b.y+b.h*.58,'#fff',{inside:b,rotate,candidates:[0]}));}
+ const lineCaptions=new Map();if(line){line.forEach((v,i)=>{if(v==null)return;const x=L+i*slot+slot/2,y=T+ph-v/lmax*ph;occupied.push({x:x-5,y:y-5,w:10,h:10});});if(labels.length<=20)line.forEach((v,i)=>{if(v==null)return;const x=L+i*slot+slot/2,y=T+ph-v/lmax*ph;lineCaptions.set(i,caption(fmt(v)+(percent?'%':''),x,y-15,'#176d7e',{candidates:[0,-15,32,47]}));});}
+ for(const b of bars){const {i,j,label,val,x,y,w,h,s}=b,kind=interactive?'wip-bar':fan?'fan-mark':'';
+  if(kind)svg+=`<g class="${kind}" role="button" tabindex="0" ${interactive?`data-wip-date="${esc(label)}" data-wip-kind="${['input','out','current'][j]}" aria-pressed="false"`:`data-fan-index="${i}" data-fan-series="${j}"`} aria-label="${esc(label+' '+s.name+' '+fmt(val)+(barNotes?.[i]?' · '+barNotes[i]:''))}">`;
+  svg+=`<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${colors[j%colors.length]}"><title>${esc(label+' · '+s.name+': '+fmt(val)+(unit?' '+unit:'')+(barNotes?.[i]?' · Wafer '+barNotes[i]:''))}</title></rect>`+(notes.get(b)||'');
+  if(val&&labels.length<=20)svg+=stack?caption(fmt(val),x+w/2,y+h/2,'white',{inside:b,candidates:[0]}):caption(fmt(val),x+w/2,y-9,'#46637a');
+  if(kind)svg+='</g>';
+ }
+ const tickStep=Math.max(1,Math.ceil(68/slot));labels.forEach((label,i)=>{if(i%tickStep&&i!==labels.length-1)return;if(i===labels.length-1&&i%tickStep&&(i%tickStep)<tickStep/2)return;svg+=`<text x="${L+i*slot+slot/2}" y="${H-B+19}" text-anchor="middle" fill="#64798e" font-size="11">${esc(fit?String(label).replace(/^20\d{2}-/,''):label)}</text>`;});
+ if(line){let path='',gap=true;line.forEach((v,i)=>{if(v==null){gap=true;return;}const x=L+i*slot+slot/2,y=T+ph-v/lmax*ph;path+=(gap?'M':'L')+x+' '+y+' ';gap=false;});svg+=`<path d="${path}" stroke="#13b8ca" stroke-width="2" fill="none" pointer-events="none"/>`;
+  line.forEach((v,i)=>{if(v==null)return;const x=L+i*slot+slot/2,y=T+ph-v/lmax*ph;if(fan)svg+=`<g class="fan-mark" role="button" tabindex="0" data-fan-index="${i}" data-fan-series="-1">`;svg+=`<circle cx="${x}" cy="${y}" r="3.5" fill="#13b8ca"><title>${esc(labels[i]+' · '+lineLabel+': '+fmt(v)+(percent?'%':''))}</title></circle>`;svg+=lineCaptions.get(i)||'';if(fan)svg+='</g>';});
+ }
+ if(unit)svg+=`<text x="${L}" y="14" fill="#64798e" font-size="11">${esc(unit)}</text>`;
+ return '<div class="chart">'+svg+'</svg></div><div class="legend">'+series.map((s,i)=>`<span><i class="swatch" style="background:${colors[i%colors.length]}"></i>${esc(s.name)}</span>`).join('')+(line?`<span><i class="swatch" style="background:#13b8ca"></i>${esc(lineLabel)} (우측)</span>`:'')+'</div>';
 }
+
 function inRange(d){return d&&d>=$('from').value&&d<=$('to').value;}
 function matches(r){const q=C.norm($('search').value);return (!$('device').value||r.device===$('device').value)&&(!q||C.norm(r.lot+' '+(r.mark||'')).includes(q));}
 function byDay(events,fields){const m=new Map();for(const e of events){if(!inRange(e.date))continue;const g=m.get(e.date)||{date:e.date};for(const f of fields)g[f]=(g[f]||0)+(e[f]||0);m.set(e.date,g);}return [...m.values()].sort((a,b)=>a.date.localeCompare(b.date));}
@@ -81,12 +105,9 @@ function renderYield(){const cutoff=$('mode').value==='weekly'?C.addDays(C.week(
  for(const dev of [...new Set(rows.map(r=>r.device))].sort()){let groups=C.aggregate(rows.filter(r=>r.device===dev),type,mode);if(mode==='weekly'){const last=C.week($('to').value,!isFT);const slots=[];const count=8;for(let i=count-1;i>=0;i--){const wi=C.week(C.addDays(last.end,-i*7),!isFT);const found=groups.find(g=>g.label===wi.label);slots.push(found||{...wi,input:0,output:0,reject:0,yield:null,dppm:null,defects:{},count:0});}groups=slots;}
  const names=new Map();for(const g of groups)for(const [n,q]of Object.entries(g.defects))names.set(n,(names.get(n)||0)+q);const limit=mode==='weekly'?5:Number($('top').value),def=[...names].filter(([,q])=>q>0).sort((a,b)=>b[1]-a[1]).slice(0,limit||undefined);
  const deviceRows=rows.filter(r=>r.device===dev),fanId=fanJobs.length;fanJobs.push({dev,groups,def,rows:deviceRows});
+ const wafer=type==='bumpYield'?groups.map(g=>{const rr=deviceRows.filter(r=>(mode==='weekly'?C.week(r.date,true).label:r.date)===g.label);if(!rr.length)return null;const counts=AustinFanout.yieldLots(rr,type).map(l=>l.waferCount);return counts.some(n=>n==null)?null:counts.reduce((n,v)=>n+v,0);}):null;
  const labels=groups.map(g=>g.label);
- html+=`<section class="device-panel yield-dashboard" data-yield-fan="${fanId}"><h2>${esc(dev)}</h2><div class="yield-chart-row"><div class="yield-chart-main" data-chart-kind="yield"><h3>${isFT?'FT Test In / Out & Yield':type==='assyYield'?'Assembly In / Out & Yield':'Bump Die In / Out & Yield'}</h3>${chart(labels,[{name:'In Qty',values:groups.map(g=>g.input)},{name:'Out Qty',values:groups.map(g=>g.output)}],{line:groups.map(g=>g.yield),lineLabel:'Yield',percent:true,fit:true,fitWidth:700,height:330,fan:true})}`;
- if(type==='bumpYield'){
-  const wafer=groups.map(g=>{const rr=deviceRows.filter(r=>(mode==='weekly'?C.week(r.date,true).label:r.date)===g.label);if(!rr.length)return null;const counts=AustinFanout.yieldLots(rr,type).map(l=>l.waferCount);return counts.some(n=>n==null)?null:counts.reduce((n,v)=>n+v,0);});
-  html+=`<h3>Wafer 장수</h3>${chart(labels,[{name:'Wafer (장)',values:wafer}],{fit:true,fitWidth:700,height:210,unit:'Wafer (장)',fan:true})}<p class="wafer-note">${groups.map((g,i)=>esc(g.label)+': '+(wafer[i]==null?'—':fmt(wafer[i])+'장')).join(' · ')}</p>`;
- }
+ html+=`<section class="device-panel yield-dashboard" data-yield-fan="${fanId}"><h2>${esc(dev)}</h2><div class="yield-chart-row"><div class="yield-chart-main" data-chart-kind="yield"><h3>${isFT?'FT Test In / Out & Yield':type==='assyYield'?'Assembly In / Out & Yield':'Bump Die In / Out & Yield'}</h3>${chart(labels,[{name:'In Qty',values:groups.map(g=>g.input)},{name:'Out Qty',values:groups.map(g=>g.output)}],{line:groups.map(g=>g.yield),lineLabel:'Yield',percent:true,fit:true,fitWidth:700,height:330,fan:true,barNotes:wafer?.map(n=>n==null?'':fmt(n)+'장')})}`;
  html+='</div><div class="yield-chart-defects" data-chart-kind="defect"><h3>Defect PPM'+(def.length?' · Top '+def.length:'')+'</h3>';
  html+=chart(labels,def.length?def.map(([n])=>({name:n,values:groups.map(g=>g.input>0?(g.defects[n]||0)/g.input*1e6:null)})):[{name:'전체 Defect PPM',values:groups.map(g=>g.dppm)}],{stack:true,line:groups.map(g=>g.dppm),lineLabel:'전체 PPM',fit:true,fitWidth:700,height:330,unit:'PPM',fan:true});
  html+='</div></div><div class="yield-lot-section"><div class="yield-lot-toolbar"><h2>Lot 상세</h2><button class="yield-all">전체 보기</button></div><div class="yield-lots"></div></div></section>';
@@ -122,4 +143,6 @@ $('excel').onclick=()=>{const w=XLSX.utils.book_new(),add=(n,h,r)=>{const s=XLSX
 $('lookupLot').onclick=()=>{lotOverviewQuery=$('search').value.trim();overviewDeviceQuery=$('overviewDevice').value.trim();render();};$('search').addEventListener('keydown',e=>{if(type==='lotOverview'&&e.key==='Enter'){e.preventDefault();$('lookupLot').click();}});
 
 $('overviewDevice').addEventListener('keydown',e=>{if(e.key==='Enter')$('lookupLot').click();});
+
+
 
