@@ -1,1 +1,18 @@
-.fanout-collection{display:grid!important;grid-template-columns:minmax(0,1fr)!important;gap:20px}.mtk-fan-pair{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);gap:20px;background:white;border:1px solid #d5e1ef;border-radius:10px;padding:18px}.mtk-fan-left,.mtk-fan-right{min-width:0}.mtk-fan-table{overflow:auto;max-height:620px}.mtk-fan-table table{width:100%;border-collapse:collapse}.mtk-fan-table td,.mtk-fan-table th{padding:9px;border-bottom:1px solid #e2eaf3;font-size:12px;overflow-wrap:anywhere}.mtk-fan-table th{background:#eef4fa;position:sticky;top:0}.mtk-fan-left .chart-card{margin:0;padding:0;border:0}.mtk-fan-right{position:static}@media(max-width:1000px){.mtk-fan-pair{grid-template-columns:1fr}}
+.fanout-collection{display:grid!important;grid-template-columns:minmax(0,1fr)!important;gap:20px}
+.mtk-fan-pair{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);align-items:stretch;gap:24px;background:white;border:1px solid #d5e1ef;border-radius:10px;padding:18px}
+.mtk-fan-left,.mtk-fan-right{min-width:0;min-height:0}
+.mtk-fan-left .chart-card{margin:0;padding:0;border:0}
+.mtk-fan-left h3,.mtk-fan-right h3{margin:0 0 14px;line-height:1.4}
+.mtk-fan-left canvas{display:block;width:100%!important;height:320px!important}
+/* The left chart determines the grid row height. Right-side rows cannot stretch it. */
+.mtk-fan-right{position:static;contain:size;display:flex;flex-direction:column;overflow:hidden}
+.mtk-fan-right>h3{flex-shrink:0}
+.mtk-fan-right>button{align-self:flex-start;flex-shrink:0;margin:0 0 18px;padding:9px 16px;min-height:38px}
+.mtk-fan-table{flex:1 1 0;min-height:0;max-height:none;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
+.mtk-fan-table table{width:100%;border-collapse:separate;border-spacing:0}
+.mtk-fan-table td,.mtk-fan-table th{padding:9px 10px;border-bottom:1px solid #e2eaf3;font-size:12px;overflow-wrap:anywhere}
+.mtk-fan-table th{background:#eef4fa;position:sticky;top:0;z-index:1}
+@media(max-width:1000px){
+ .mtk-fan-pair{grid-template-columns:1fr}
+ .mtk-fan-right{contain:none;height:360px;max-height:60vh}
+}

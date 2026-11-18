@@ -13,3 +13,17 @@ nav button:focus-visible{outline:2px solid #1268ba;outline-offset:-3px}
 .weekly-split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);gap:20px;align-items:start}.weekly-charts{display:grid;gap:20px;min-width:0}.weekly-lots{position:sticky;top:16px;min-width:0}.weekly-lots .wrap{max-height:70vh;overflow:auto}.weekly-lots td{white-space:normal;overflow-wrap:anywhere}.report-download{margin:18px 0;padding:16px;background:white;border:1px solid #d5e1ef;border-radius:10px}.report-download summary{cursor:pointer;margin-bottom:12px}.report-download select{max-width:min(600px,80vw)}@media(max-width:1000px){.weekly-split{grid-template-columns:1fr}.weekly-lots{position:static}}
 
 .per-trend-pair{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);gap:22px}.trend-left,.trend-detail{min-width:0}.trend-detail{position:static}.trend-detail .wrap{max-height:650px;overflow:auto}.trend-detail td{white-space:normal;overflow-wrap:anywhere}#vmCharts{display:grid;grid-template-columns:1fr}@media(max-width:1000px){.per-trend-pair{grid-template-columns:1fr}}
+
+/* One aligned chart/summary and Lot detail pair for every LD, Device or VM group. */
+.per-trend-pair{align-items:stretch}
+.per-trend-pair .trend-left{min-height:0}
+.per-trend-pair .trend-detail{contain:size;display:flex;flex-direction:column;min-height:0;overflow:hidden;position:static}
+.per-trend-pair .trend-detail>h2{flex-shrink:0;margin:0 0 14px;line-height:1.4}
+.per-trend-pair .trend-left>h2{margin:0 0 14px;line-height:1.4}
+.per-trend-pair .trend-detail>p{flex-shrink:0;margin:0 0 14px;line-height:1.5}
+.per-trend-pair .trend-detail>.lot-reset{align-self:flex-start;flex-shrink:0;margin:0 0 18px;min-height:38px;padding:9px 16px}
+.per-trend-pair .trend-detail>.wrap{flex:1 1 0;min-height:0;max-height:none;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
+.per-trend-pair .trend-detail table{border-collapse:separate;border-spacing:0}
+.per-trend-pair .trend-detail th{position:sticky;top:0;z-index:1}
+.per-trend-pair .trend-detail td{white-space:nowrap;overflow-wrap:normal;word-break:normal}
+@media(max-width:1000px){.per-trend-pair .trend-detail{contain:none;height:420px;max-height:65vh}}
