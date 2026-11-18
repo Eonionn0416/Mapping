@@ -84,11 +84,16 @@ function styleQaTrend(config){
  config.options.layout={padding:{top:24,right:16}};
  config.options.plugins||={};config.options.plugins.legend={position:'bottom',labels:{boxWidth:12,boxHeight:10,padding:14,color:'#60758b',font:{family:'Malgun Gothic',size:11}}};
  config.plugins=[...(config.plugins||[]),{id:'qaTrendLabels',afterDatasetsDraw(chart){
-  if(chart.data.labels.length>16)return;const ctx=chart.ctx,used=[];ctx.save();ctx.font='11px Malgun Gothic';ctx.textAlign='center';ctx.textBaseline='middle';
+  if(chart.data.labels.length>16)return;const ctx=chart.ctx,used=[];ctx.save();ctx.font='bold 12px Malgun Gothic';ctx.textAlign='center';ctx.textBaseline='middle';
   const metas=chart.getSortedVisibleDatasetMetas().slice().sort((a,b)=>(a.type==='bar')-(b.type==='bar'));
-  for(const meta of metas){const ds=chart.data.datasets[meta.index];if(ds.borderDash)continue;for(let j=0;j<meta.data.length;j++){const point=meta.data[j],value=ds.data[j];if(value==null||value===0)continue;const bar=meta.type==='bar',text=Number(value).toLocaleString('en-US',{maximumFractionDigits:2}),w=ctx.measureText(text).width+6,h=14,x=point.x;
+  for(const meta of metas){const ds=chart.data.datasets[meta.index];if(ds.borderDash)continue;for(let j=0;j<meta.data.length;j++){const point=meta.data[j],value=ds.data[j];if(value==null||value===0)continue;const bar=meta.type==='bar',text=Number(value).toLocaleString('en-US',{maximumFractionDigits:2}),w=ctx.measureText(text).width+12,h=22,x=point.x;
    if(bar&&(point.width<w+4||Math.abs(point.base-point.y)<h+6))continue;
-   for(const dy of bar?[0]:[-14,-31,18]){const y=bar?(point.y+point.base)/2:point.y+dy,box={x:x-w/2,y:y-h/2,w,h};if(box.x<chart.chartArea.left||box.x+w>chart.chartArea.right||box.y<2||box.y+h>chart.chartArea.bottom)continue;if(used.some(b=>box.x<b.x+b.w+3&&box.x+w+3>b.x&&box.y<b.y+b.h+3&&box.y+h+3>b.y))continue;used.push(box);ctx.fillStyle=bar?'#ffffff':ds.borderColor;ctx.fillText(text,x,y);break;}
+   for(const dy of bar?[0]:[-21,-48,24,51]){const y=bar?(point.y+point.base)/2:point.y+dy,box={x:x-w/2,y:y-h/2,w,h};if(box.x<chart.chartArea.left||box.x+w>chart.chartArea.right||box.y<2||box.y+h>chart.chartArea.bottom)continue;if(used.some(b=>box.x<b.x+b.w+3&&box.x+w+3>b.x&&box.y<b.y+b.h+3&&box.y+h+3>b.y))continue;used.push(box);
+    ctx.save();ctx.shadowColor='rgba(20,45,65,0.16)';ctx.shadowBlur=3;ctx.shadowOffsetY=1;
+    ctx.fillStyle=bar?'rgba(22,52,75,0.88)':'rgba(255,255,255,0.96)';
+    ctx.beginPath();if(ctx.roundRect)ctx.roundRect(box.x,box.y,w,h,4);else ctx.rect(box.x,box.y,w,h);ctx.fill();
+    ctx.shadowBlur=0;ctx.shadowOffsetY=0;ctx.strokeStyle=bar?'rgba(255,255,255,0.3)':'rgba(141,163,182,0.55)';ctx.lineWidth=0.75;ctx.stroke();
+    ctx.fillStyle=bar?'#ffffff':'#16384f';ctx.fillText(text,x,y);ctx.restore();break;}
   }}ctx.restore();
  }}];return config;
 }
