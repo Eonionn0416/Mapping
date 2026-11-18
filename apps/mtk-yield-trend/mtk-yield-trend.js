@@ -66,13 +66,33 @@ let trendDurationMonths = 2;
 let yieldTrendCharts = [];
 let osTrendCharts = [];
 const qaTrendColors=['#1397e5','#03c7df','#8a18c5','#d72baf','#f33dbd','#e49528','#4aaf79'];
-function styleQaTrend(config){
- config.data.datasets.forEach((d,i)=>{d.borderColor=d.borderColor||(d.borderDash?'#8a98aa':d.type==='line'&&config.data.datasets.some(x=>x.type==='bar')?'#13b8ca':qaTrendColors[i%qaTrendColors.length]);d.backgroundColor=d.backgroundColor||d.borderColor;if(d.type==='line'){d.tension=0;d.spanGaps=false;d.pointRadius=d.borderDash?0:3;d.borderWidth=d.borderWidth||2;}});
- for(const axis of Object.values(config.options.scales||{})){axis.ticks={...axis.ticks,color:'#74869a',font:{family:'Malgun Gothic',size:11}};axis.grid={color:'#e1e9f0',...axis.grid};}
- config.options.layout={padding:{top:22,right:12}};
- config.options.plugins.legend={position:'bottom',labels:{usePointStyle:true,font:{family:'Malgun Gothic',size:11}}};
- config.plugins=[...(config.plugins||[]),{id:'qaTrendLabels',afterDatasetsDraw(chart){if(chart.data.labels.length>15)return;const ctx=chart.ctx;ctx.save();ctx.font='11px Malgun Gothic';ctx.textAlign='center';chart.data.datasets.forEach((ds,i)=>{if(ds.borderDash||!chart.isDatasetVisible(i))return;chart.getDatasetMeta(i).data.forEach((point,j)=>{const value=ds.data[j];if(value==null||value===0)return;const bar=ds.type==='bar';if(bar&&Math.abs(point.base-point.y)<18)return;ctx.fillStyle=bar?'#ffffff':ds.borderColor;ctx.fillText(Number(value).toLocaleString('en-US',{maximumFractionDigits:2}),point.x,bar?(point.y+point.base)/2+4:point.y-10);});});ctx.restore();}}];return config;
+function qaChartHit(chart,event){
+ const native=event.native||event,rect=chart.canvas.getBoundingClientRect();
+ const x=Number.isFinite(native.clientX)?(native.clientX-rect.left)*chart.width/rect.width:event.x;
+ const y=Number.isFinite(native.clientY)?(native.clientY-rect.top)*chart.height/rect.height:event.y;
+ if(!Number.isFinite(x)||!Number.isFinite(y))return null;
+ for(const meta of chart.getSortedVisibleDatasetMetas()){
+  if(chart.data.datasets[meta.index].borderDash)continue;
+  for(let index=0;index<meta.data.length;index++)if(meta.data[index].inRange(x,y,false))return {datasetIndex:meta.index,index};
+ }return null;
 }
+function styleQaTrend(config){
+ const palette=['#159ee3','#16bfd0','#79b4e1','#73c9bc','#91a7cf','#c7acd5','#e3b875'];let barIndex=0,lineIndex=0;
+ config.data.datasets.forEach(d=>{const bar=(d.type||config.type)==='bar';const color=d.borderDash?'#91a1b5':bar?palette[barIndex++%palette.length]:['#16b6c7','#4697d0','#68b6a0','#a38bbf'][lineIndex++%4];d.borderColor=color;d.backgroundColor=color;if(!bar){d.tension=0;d.spanGaps=false;d.pointRadius=d.borderDash?0:3;d.pointHoverRadius=5;d.borderWidth=2;}else{d.borderWidth=0;d.maxBarThickness=36;}});
+ config.options.animation=false;
+ for(const [key,axis] of Object.entries(config.options.scales||{})){axis.ticks={...axis.ticks,color:'#74869a',font:{family:'Malgun Gothic',size:11},...(key==='x'?{autoSkip:true,maxRotation:30}: {})};axis.grid={...axis.grid,color:'#e1e9f0'};}
+ config.options.layout={padding:{top:24,right:16}};
+ config.options.plugins||={};config.options.plugins.legend={position:'bottom',labels:{boxWidth:12,boxHeight:10,padding:14,color:'#60758b',font:{family:'Malgun Gothic',size:11}}};
+ config.plugins=[...(config.plugins||[]),{id:'qaTrendLabels',afterDatasetsDraw(chart){
+  if(chart.data.labels.length>16)return;const ctx=chart.ctx,used=[];ctx.save();ctx.font='11px Malgun Gothic';ctx.textAlign='center';ctx.textBaseline='middle';
+  const metas=chart.getSortedVisibleDatasetMetas().slice().sort((a,b)=>(a.type==='bar')-(b.type==='bar'));
+  for(const meta of metas){const ds=chart.data.datasets[meta.index];if(ds.borderDash)continue;for(let j=0;j<meta.data.length;j++){const point=meta.data[j],value=ds.data[j];if(value==null||value===0)continue;const bar=meta.type==='bar',text=Number(value).toLocaleString('en-US',{maximumFractionDigits:2}),w=ctx.measureText(text).width+6,h=14,x=point.x;
+   if(bar&&(point.width<w+4||Math.abs(point.base-point.y)<h+6))continue;
+   for(const dy of bar?[0]:[-14,-31,18]){const y=bar?(point.y+point.base)/2:point.y+dy,box={x:x-w/2,y:y-h/2,w,h};if(box.x<chart.chartArea.left||box.x+w>chart.chartArea.right||box.y<2||box.y+h>chart.chartArea.bottom)continue;if(used.some(b=>box.x<b.x+b.w+3&&box.x+w+3>b.x&&box.y<b.y+b.h+3&&box.y+h+3>b.y))continue;used.push(box);ctx.fillStyle=bar?'#ffffff':ds.borderColor;ctx.fillText(text,x,y);break;}
+  }}ctx.restore();
+ }}];return config;
+}
+
 let defectTrendCharts = [];
 let binTrendCharts = [];
 
@@ -1374,7 +1394,7 @@ function makeChartCard(container, title, height = 320) {
   canvas.height = height;
   canvas.style.height = `${height}px`;
   card.appendChild(heading);
-  card.appendChild(canvas);
+  const frame=document.createElement("div");frame.className="mtk-chart-frame";frame.style.height=height+"px";frame.appendChild(canvas);card.appendChild(frame);
   container.appendChild(card);
   return canvas;
 }
@@ -1398,6 +1418,7 @@ function renderChartCollection(container, chartList, groups, chartFactory, empty
     renderEmptyChartContainer(container, emptyMessage);
     return;
   }
+  const resets=[],reset=document.createElement('button');reset.className='sheet-reset';reset.textContent='전체 보기';reset.onclick=()=>resets.forEach(f=>f());container.append(reset);
   visibleGroups.forEach(group => {
     container.classList.add('fanout-collection');
     const pair=document.createElement('section');pair.className='mtk-fan-pair';container.append(pair);
@@ -1405,9 +1426,9 @@ function renderChartCollection(container, chartList, groups, chartFactory, empty
     const canvas = makeChartCard(left, group.title),config=styleQaTrend(chartFactory(group.rows, group.title));
     const unique=rr=>[...new Map(rr.map(r=>[r.dedupeKey||JSON.stringify(r),r])).values()];
     const all=unique(group.rows.flatMap(r=>r._records||[]));
-    const draw=(rr,label='전체 기간')=>{right.innerHTML='<h3>'+escapeHtml(group.title+' · '+label)+'</h3><button type="button">전체 보기</button>'+fanLotTable(unique(rr));right.querySelector('button').onclick=()=>draw(all);};
-    draw(all);
-    config.options.onClick=(event,elements,chart)=>{const hits=chart.getElementsAtEventForMode(event,'nearest',{intersect:true},true);const hit=hits[0]||elements[0];if(!hit)return;const ds=config.data.datasets[hit.datasetIndex];if(ds.borderDash)return;const label=config.data.labels[hit.index],aggregate=group.rows.filter(r=>(r.label||compactDateToLabel(r.sod))===label);let rr=unique(aggregate.flatMap(r=>r._records||[]));const vendor=ds.label.match(/\((LGIT|LIST)\)/)?.[1];if(vendor)rr=rr.filter(r=>r._vendor===vendor);if(aggregate.some(r=>r.defect===ds.label))rr=rr.filter(r=>[...getDefectsFromRow(r)].some(([d,q])=>d===ds.label&&q>0));draw(rr,label+' · '+ds.label);};
+    const draw=(rr,label='전체 기간')=>{right.innerHTML='<h3>'+escapeHtml(group.title+' · '+label)+'</h3>'+fanLotTable(unique(rr));};
+    resets.push(()=>draw(all));draw(all);
+    config.options.onClick=(event,elements,chart)=>{const hit=qaChartHit(chart,event);if(!hit)return;const ds=config.data.datasets[hit.datasetIndex];if(ds.borderDash)return;const label=config.data.labels[hit.index],aggregate=group.rows.filter(r=>(r.label||compactDateToLabel(r.sod))===label);let rr=unique(aggregate.flatMap(r=>r._records||[]));const vendor=ds.label.match(/\((LGIT|LIST)\)/)?.[1];if(vendor)rr=rr.filter(r=>r._vendor===vendor);if(aggregate.some(r=>r.defect===ds.label))rr=rr.filter(r=>[...getDefectsFromRow(r)].some(([d,q])=>d===ds.label&&q>0));draw(rr,label+' · '+ds.label);};
     chartList.push(new Chart(canvas,config));
   });
 }
