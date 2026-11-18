@@ -755,6 +755,7 @@ function buildDeviceVendorWeekly(osRowsInput, binRowsInput) {
     const wwMap = osMap.get(device);
     if (!wwMap.has(wwInfo.sortKey)) wwMap.set(wwInfo.sortKey, { LGIT: emptyOsBucket(), LIST: emptyOsBucket() });
     const bucket = wwMap.get(wwInfo.sortKey)[vendorGroup(row.pcbVendor)];
+    (bucket.records ||= []).push({...row,_vendor:vendorGroup(row.pcbVendor)});
     bucket.testQty += normalizeNumber(row.testQty) || 0;
     bucket.openQty += normalizeNumber(row.openQty) || 0;
     bucket.shortQty += normalizeNumber(row.shortQty) || 0;
@@ -774,6 +775,7 @@ function buildDeviceVendorWeekly(osRowsInput, binRowsInput) {
     if (!wwMap.has(wwInfo.sortKey)) wwMap.set(wwInfo.sortKey, { LGIT: emptyBinBucket(), LIST: emptyBinBucket() });
     const resolvedVendorRaw = resolveBinVendorRaw(row, osLotVendorMap);
     const bucket = wwMap.get(wwInfo.sortKey)[vendorGroup(resolvedVendorRaw)];
+    (bucket.records ||= []).push({...row,_vendor:vendorGroup(resolvedVendorRaw)});
     bucket.inQty += normalizeNumber(row.inQty) || 0;
     // FT Fail Qty = BIN2~BIN6 + BIN36 (BIN36도 실패 Bin으로 포함해야 답지 수치와 정확히 일치합니다)
     bucket.ftFailQty += (normalizeNumber(row.bin2) || 0) + (normalizeNumber(row.bin3) || 0)
@@ -1276,7 +1278,7 @@ function buildSodSummary(rows) {
 
     return {
       sod,
-      rows: items.length,
+      rows: items.length, _records:items,
       inQty: sum("inQty"),
       dbQty: sum("dbQty"),
       shipQtyK: sum("shipQtyK"),
@@ -1299,7 +1301,7 @@ function buildOsTrendRows(rows) {
     return {
       inputDate,
       inputDateLabel: compactDateToLabel(inputDate),
-      rows: items.length,
+      rows: items.length, _records:items,
       totalQty: agg.totalQty,
       testQty: agg.testQty,
       osSs: agg.osSs,
@@ -1397,8 +1399,16 @@ function renderChartCollection(container, chartList, groups, chartFactory, empty
     return;
   }
   visibleGroups.forEach(group => {
-    const canvas = makeChartCard(container, group.title);
-    chartList.push(new Chart(canvas, styleQaTrend(chartFactory(group.rows, group.title))));
+    container.classList.add('fanout-collection');
+    const pair=document.createElement('section');pair.className='mtk-fan-pair';container.append(pair);
+    const left=document.createElement('div'),right=document.createElement('div');left.className='mtk-fan-left';right.className='mtk-fan-right';pair.append(left,right);
+    const canvas = makeChartCard(left, group.title),config=styleQaTrend(chartFactory(group.rows, group.title));
+    const unique=rr=>[...new Map(rr.map(r=>[r.dedupeKey||JSON.stringify(r),r])).values()];
+    const all=unique(group.rows.flatMap(r=>r._records||[]));
+    const draw=(rr,label='전체 기간')=>{right.innerHTML='<h3>'+escapeHtml(group.title+' · '+label)+'</h3><button type="button">전체 보기</button>'+fanLotTable(unique(rr));right.querySelector('button').onclick=()=>draw(all);};
+    draw(all);
+    config.options.onClick=(event,elements,chart)=>{const hits=chart.getElementsAtEventForMode(event,'nearest',{intersect:true},true);const hit=hits[0]||elements[0];if(!hit)return;const ds=config.data.datasets[hit.datasetIndex];if(ds.borderDash)return;const label=config.data.labels[hit.index],aggregate=group.rows.filter(r=>(r.label||compactDateToLabel(r.sod))===label);let rr=unique(aggregate.flatMap(r=>r._records||[]));const vendor=ds.label.match(/\((LGIT|LIST)\)/)?.[1];if(vendor)rr=rr.filter(r=>r._vendor===vendor);if(aggregate.some(r=>r.defect===ds.label))rr=rr.filter(r=>[...getDefectsFromRow(r)].some(([d,q])=>d===ds.label&&q>0));draw(rr,label+' · '+ds.label);};
+    chartList.push(new Chart(canvas,config));
   });
 }
 
@@ -1423,7 +1433,7 @@ function buildAssyOsWeeklyChartGroups() {
       const rows = weekly.wwColumns.map(w => {
         const cell = wwMap.get(w.sortKey) || {};
         return {
-          label: w.columnLabel,
+          label: w.columnLabel, _records:[...(cell.LGIT?.records||[]),...(cell.LIST?.records||[])],
           openLgit: osCellRate(cell.LGIT, "open"),
           openList: osCellRate(cell.LIST, "open"),
           shortLgit: osCellRate(cell.LGIT, "short"),
@@ -1443,7 +1453,7 @@ function buildFtWeeklyChartGroups() {
       const rows = weekly.wwColumns.map(w => {
         const cell = wwMap.get(w.sortKey) || {};
         return {
-          label: w.columnLabel,
+          label: w.columnLabel, _records:[...(cell.LGIT?.records||[]),...(cell.LIST?.records||[])],
           ftLgit: binCellRate(cell.LGIT, "ft"),
           ftList: binCellRate(cell.LIST, "ft"),
           bin4Lgit: binCellRate(cell.LGIT, "bin4"),
@@ -1485,7 +1495,7 @@ function buildBinTrendRows(rows) {
       reportWeekLabel: reportWeekLabel(reportWeek),
       reportMonth: normalizeReportMonth(reportWeek) || normalizeReportMonth(first.reportMonth),
       reportMonthLabel: monthLabel(normalizeReportMonth(reportWeek) || normalizeReportMonth(first.reportMonth)),
-      rows: items.length,
+      rows: items.length, _records:items,
       inQty: 0,
       outQty: 0,
       finalYield: null
@@ -1582,8 +1592,8 @@ function getDefectsFromRow(row) {
 
 function buildDefectTrendRows(rows) {
   const dates=new Map();
-  for(const row of rows){const sod=normalizeText(row.sod)||'NO_SOD',input=normalizeNumber(row.inQty)||0;if(input<=0)continue;const g=dates.get(sod)||{input:0,defects:new Map()};g.input+=input;for(const [name,qty] of getDefectsFromRow(row))g.defects.set(name,(g.defects.get(name)||0)+qty);dates.set(sod,g);}
-  return [...dates].flatMap(([sod,g])=>[...g.defects].map(([defect,defectQty])=>({sod,defect,defectQty,inQty:g.input,ppm:defectQty/g.input*1e6}))).sort((a,b)=>a.sod.localeCompare(b.sod)||(b.ppm||0)-(a.ppm||0));
+  for(const row of rows){const sod=normalizeText(row.sod)||'NO_SOD',input=normalizeNumber(row.inQty)||0;if(input<=0)continue;const g=dates.get(sod)||{input:0,defects:new Map(),records:[]};g.records.push(row);g.input+=input;for(const [name,qty] of getDefectsFromRow(row))g.defects.set(name,(g.defects.get(name)||0)+qty);dates.set(sod,g);}
+  return [...dates].flatMap(([sod,g])=>[...g.defects].map(([defect,defectQty])=>({sod,defect,defectQty,_records:g.records,inQty:g.input,ppm:defectQty/g.input*1e6}))).sort((a,b)=>a.sod.localeCompare(b.sod)||(b.ppm||0)-(a.ppm||0));
 }
 
 function getTopDefects(limitValue, rows = defectTrendRows) {
@@ -2370,3 +2380,13 @@ QAAutoMail.start('mtk',()=>!!db&&!!currentUser&&!qaAutoBusy&&selectedFiles.lengt
 window.addEventListener('mtk-trend-tab',event=>{const lists={assy:yieldTrendCharts,defect:defectTrendCharts,os:osTrendCharts,bin:binTrendCharts};requestAnimationFrame(()=>{for(const chart of lists[event.detail]||[]){chart.resize();chart.update('none');}});});
 
 refreshLotOverview=mountLotOverview({getData:()=>({assy:assyRows,os:osRows,bin:binRows}),defectRows:buildDefectTrendRows,defectConfig:makeDefectChartConfig,styleChart:styleQaTrend,escapeHtml});
+
+function fanLotTable(records){
+ const headers=['Device','Lot','Date / WW','Vendor','In Qty','Out Qty','Out 단위','Yield %','Defect mode / Qty','PPM'];
+ const values=records.map(r=>{const os=r.sourceType==='OS',bin=r.bin1!==undefined;
+ const input=os?r.testQty:r.inQty,output=os?(r.testQty!=null&&r.totalOsRej!=null?r.testQty-r.totalOsRej:null):bin?r.outQty:r.shipQtyK;
+ const defects=os?[['Open',r.openQty],['Short',r.shortQty]]:bin?[2,3,4,5,6,36].map(n=>['Bin'+n,r['bin'+n]]):[...getDefectsFromRow(r)];
+ const defectQty=defects.reduce((n,[,q])=>n+(Number(q)||0),0),yieldValue=os?(input&&output!=null?output/input*100:null):bin?(input&&output!=null?output/input*100:null):r.assyYield;
+ return [r.device||r.custDevice,r.sckInputLotNo||r.lotId,r.sod||r.inputDate||r.ftInDate||r.reportWeekLabel,r._vendor||r.pcbVendor||r.substrateVendor,input,output,os||bin?'ea':'K (원본)',yieldValue,defects.filter(([,q])=>q>0).map(([d,q])=>d+': '+q).join(' / ')||'—',input?defectQty/input*1e6:null];});
+ return '<div class="mtk-fan-table"><table><thead><tr>'+headers.map(h=>'<th>'+escapeHtml(h)+'</th>').join('')+'</tr></thead><tbody>'+values.map(rr=>'<tr>'+rr.map(v=>'<td>'+escapeHtml(v==null?'—':typeof v==='number'?v.toLocaleString(undefined,{maximumFractionDigits:4}):v)+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>';
+}
