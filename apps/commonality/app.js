@@ -16,9 +16,9 @@ const timed=joined.flatMap(y=>{
  if(!matched.length)return [y];
  return matched.map(w=>({...y,lot:w.lot,time:w.start.replaceAll('/','-'),date:w.start.slice(0,10).replaceAll('/','-'),dateBasis:'공정 In',machines:equipmentIndex.get(w.id)?.machines||y.machines}));
 });
-const pool=timed.filter(r=>(!c||r.customer===c)&&(!p||r.process===p)&&r.metric===$('metric').value&&r.date>=$('from').value&&r.date<=$('to').value&&(!q||C.norm(r.device+' '+r.lot).includes(q))&&($('shared').checked||!r.shared));const panels=new Map();for(const r of pool){if(m&&!r.machines.includes(m))continue;const k=JSON.stringify([r.customer,r.device,r.process,r.metric]);if(!panels.has(k))panels.set(k,[]);panels.get(k).push(r);}for(const rs of panels.values()){const first=rs[0],panel=document.createElement('article');panel.className='pair';panel.innerHTML='<div><h2>'+esc([first.customer,first.device,'공정 '+first.process,first.metric].join(' · '))+'</h2><div class="chart"><canvas></canvas></div><div class="stats"></div></div><div class="details"><h2>Lot 상세</h2><div class="actions"><button>전체 보기</button><span class="muted"></span></div><div class="lots"></div></div>';host.append(panel);const draw=list=>{panel.querySelector('.details span').textContent=list.length+' Lot';panel.querySelector('.lots').innerHTML=table(['일시 / 기준','Lot','사용 장비','Yield %','In Qty','Out Qty','장비 보고일','연결'],[...list].sort((a,b)=>b.date.localeCompare(a.date)).map(r=>[(r.time||r.date)+' · '+(r.dateBasis||'보고일'),r.lot,r.machines.join(' · '),r.yield,r.input,r.output,r.equipmentDate,r.shared?'복수 장비':'단일 장비']));};draw(rs);panel.querySelector('button').onclick=()=>draw(rs);
-const machines=[...new Set(rs.flatMap(r=>r.machines))].filter(x=>!m||m===x).sort(),dates=[...new Set(rs.map(r=>r.time||r.date))].sort(),palette=['#159ee3','#16b6c7','#79b4e1','#73c9bc','#91a7cf','#d1a3b4'];const datasets=machines.map((machine,i)=>({label:machine,data:rs.filter(r=>r.machines.includes(machine)).sort((a,b)=>a.date.localeCompare(b.date)).map(r=>({x:timestamp(r),y:r.yield,record:r})),showLine:true,spanGaps:false,tension:0,borderWidth:1.5,pointRadius:4,backgroundColor:palette[i%palette.length],borderColor:palette[i%palette.length]}));charts.push(new Chart(panel.querySelector('canvas'),{type:'scatter',data:{datasets},options:{responsive:true,maintainAspectRatio:false,animation:false,onClick:(event,hits)=>{if(hits.length){const hit=hits[0],point=datasets[hit.datasetIndex].data[hit.index];draw(rs.filter(r=>(r.time||r.date)===(point.record.time||point.record.date)&&r.machines.includes(datasets[hit.datasetIndex].label)));}},plugins:{legend:{position:'bottom'},tooltip:{callbacks:{title:items=>items.map(i=>i.raw.record.time||i.raw.record.date).join(''),label:ctx=>ctx.dataset.label+' · '+ctx.raw.record.lot+' · '+fmt(ctx.raw.y)+'%'}}},scales:{x:{min:Math.min(...rs.map(timestamp))-3600000,max:Math.max(...rs.map(timestamp))+3600000,title:{display:true,text:first.dateBasis||'수율 보고일'},ticks:{maxTicksLimit:6,callback:v=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(v)),maxRotation:30}},y:{min:Math.max(0,Math.min(99.7,...rs.map(r=>r.yield))-.1),max:100,title:{display:true,text:'Yield %'}}}}}));
-const stats=machines.map(machine=>{const group=rs.filter(r=>r.machines.includes(machine)),target=$('target').value===''?null:Number($('target').value),t=C.ttest([...new Map(group.map(r=>[r.id,r.yield])).values()],target);return [machine,t.n,t.mean,t.sd,t.t,t.p,t.reason||(t.p<.05?'목표와 차이 감지':'차이 근거 부족')];});panel.querySelector('.stats').innerHTML=table(['Machine','n Lot','평균 %','1σ Deviation','t','Prob t (양측)','결과'],stats);}
+const pool=timed.filter(r=>(!c||r.customer===c)&&(!p||r.process===p)&&r.metric===$('metric').value&&r.date>=$('from').value&&r.date<=$('to').value&&(!q||C.norm(r.device+' '+r.lot).includes(q))&&($('shared').checked||!r.shared));const panels=new Map();for(const r of pool){if(m&&!r.machines.includes(m))continue;const k=JSON.stringify([r.customer,r.device,r.process,r.metric]);if(!panels.has(k))panels.set(k,[]);panels.get(k).push(r);}for(const rs of panels.values()){const first=rs[0],panel=document.createElement('article');panel.className='pair';panel.innerHTML='<div><h2>'+esc([first.customer,first.device,'공정 '+first.process,first.metric].join(' · '))+'</h2><div class="chart"><canvas></canvas></div><div class="stats"></div></div><div class="details"><h2>Lot 상세</h2><div class="actions"><button>전체 보기</button><span class="muted"></span></div><div class="lots"></div></div>';host.append(panel);const draw=list=>{panel.querySelector('.details span').textContent=list.length+' Lot';panel.querySelector('.lots').innerHTML=table(['일시 / 기준','Lot','사용 장비','Yield %','In Qty','Out Qty','장비 보고일','연결'],[...list].sort((a,b)=>b.date.localeCompare(a.date)).map(r=>[(r.time||r.date)+' · '+(r.dateBasis||'보고일'),r.lot,r.machines.join(' · '),r.yield,r.input,r.output,r.equipmentDate,r.shared?'복수 장비':'단일 장비']));};draw(rs);const points=new Set();panel.querySelector('button').onclick=()=>{points.clear();draw(rs);};
+const machines=[...new Set(rs.flatMap(r=>r.machines))].filter(x=>!m||m===x).sort(),dates=[...new Set(rs.map(r=>r.time||r.date))].sort(),palette=['#159ee3','#16b6c7','#79b4e1','#73c9bc','#91a7cf','#d1a3b4'];const datasets=machines.map((machine,i)=>({label:machine,data:rs.filter(r=>r.machines.includes(machine)).sort((a,b)=>a.date.localeCompare(b.date)).map(r=>({x:timestamp(r),y:r.yield,record:r})),showLine:true,spanGaps:false,tension:0,borderWidth:1.5,pointRadius:4,backgroundColor:palette[i%palette.length],borderColor:palette[i%palette.length]}));charts.push(new Chart(panel.querySelector('canvas'),{type:'scatter',data:{datasets},options:{responsive:true,maintainAspectRatio:false,animation:false,onClick:(event,hits)=>{if(hits.length){const hit=hits[0],point=datasets[hit.datasetIndex].data[hit.index];const pointKey=(d,m)=>JSON.stringify([d,m]),order=dates.flatMap(d=>machines.filter(machine=>rs.some(r=>(r.time||r.date)===d&&r.machines.includes(machine))).map(machine=>pointKey(d,machine)));togglePick(points,pointKey(point.record.time||point.record.date,datasets[hit.datasetIndex].label),order,event.native||event);draw(points.size?rs.filter(r=>r.machines.some(machine=>points.has(pointKey(r.time||r.date,machine)))):rs);}},plugins:{legend:{position:'bottom'},tooltip:{callbacks:{title:items=>items.map(i=>i.raw.record.time||i.raw.record.date).join(''),label:ctx=>ctx.dataset.label+' · '+ctx.raw.record.lot+' · '+fmt(ctx.raw.y)+'%'}}},scales:{x:{min:Math.min(...rs.map(timestamp))-3600000,max:Math.max(...rs.map(timestamp))+3600000,title:{display:true,text:first.dateBasis||'수율 보고일'},ticks:{maxTicksLimit:6,callback:v=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(v)),maxRotation:30}},y:{min:Math.max(0,Math.min(99.7,...rs.map(r=>r.yield))-.1),max:100,title:{display:true,text:'Yield %'}}}}}));
+const stats=machines.map(machine=>{const group=rs.filter(r=>r.machines.includes(machine)),target=$('target').value===''?null:Number($('target').value),t=C.ttest([...new Map(group.map(r=>[r.id,r.yield])).values()],target);return [machine,t.n,t.mean,t.sd,t.t,printP(t.p),t.reason||pVerdict(t.p)];});panel.querySelector('.stats').innerHTML=table(['Machine','n Lot','평균 %','1σ Deviation','t','Prob t (양측)','판정 (p < 0.05)'],stats);}
 if(!panels.size)host.innerHTML='<p class="empty">조건에 맞는 수율 연결이 없습니다. 고객별 Yield 보고서를 먼저 가져오거나 조회 기간 / 복수 장비 포함 조건을 확인하세요.</p>';}
 async function reload(){if(busy)return;busy=true;$('status').textContent='장비 및 수율 이력 조회 중…';try{const [e,y]=await Promise.all([Store.load(true),loadYields()]);equipment=e.records;joined=C.join(equipment,y.records);chooseFilters();render();$('status').textContent=C.latest(equipment).length+'개 Lot·공정 / '+joined.length+'개 수율 연결'+([e.error,...y.errors].filter(Boolean).length?' · '+[e.error,...y.errors].filter(Boolean).join(' / '):'');}catch(e){$('status').textContent='조회 실패: '+e.message;}finally{busy=false;}}
 async function ingest(file){if(/^ASSY_CT_START_/i.test(file.name)){await importCycle(file);render();return;}if(busy)throw Error('조회 중입니다. 잠시 후 다시 시도하세요.');busy=true;try{await Store.ingest(file);}finally{busy=false;}await reload();}
@@ -80,7 +80,7 @@ function renderLots(c,p,m,q){
  const shown=new Set(visible.map(r=>r.id));selection=new Set([...selection].filter(id=>shown.has(id)));
  $('equipment').innerHTML=table(headers,visible.map(values));
  const trs=$('equipment').querySelectorAll('tbody tr');
- trs.forEach((tr,i)=>{const id=visible[i].id;const paint=()=>{tr.style.background=selection.has(id)?'#d8ebff':'';tr.setAttribute('aria-selected',String(selection.has(id)));};paint();tr.onclick=e=>{if(!e.ctrlKey){selection.clear();trs.forEach(t=>{t.style.background='';t.setAttribute('aria-selected','false');});}if(selection.has(id))selection.delete(id);else selection.add(id);paint();compare();};});
+ trs.forEach((tr,i)=>{const id=visible[i].id;const paint=()=>{tr.style.background=selection.has(id)?'#d8ebff':'';tr.setAttribute('aria-selected',String(selection.has(id)));};paint();tr.onclick=e=>{togglePick(selection,id,visible.map(r=>r.id),e);trs.forEach((t,j)=>{const active=selection.has(visible[j].id);t.style.background=active?'#d8ebff':'';t.setAttribute('aria-selected',String(active));});compare();};});
  compare();windowSource=all;renderWindow();
 }
 function compare(){
@@ -90,16 +90,35 @@ function compare(){
   const groups=[...sets];for(let i=0;i<groups.length;i++)for(let j=i+1;j<groups.length;j++){
    const [ma,a]=groups[i],[mb,b]=groups[j],aa=C.describe([...a].filter(([k])=>!b.has(k)).map(v=>v[1])),bb=C.describe([...b].filter(([k])=>!a.has(k)).map(v=>v[1]));
    const x=aa.sd**2/aa.n,y=bb.sd**2/bb.n,df=(x+y)**2/(x*x/(aa.n-1)+y*y/(bb.n-1)),t=(aa.mean-bb.mean)/Math.sqrt(x+y);
-   result.push([stage,ma,mb,aa.n,bb.n,aa.sd,bb.sd,aa.n>1&&bb.n>1&&Number.isFinite(df)?C.beta(df/(df+t*t),df/2,.5):null]);
+   const p=aa.n>1&&bb.n>1&&Number.isFinite(df)?C.beta(df/(df+t*t),df/2,.5):null;
+   result.push([stage,ma,mb,aa.n,bb.n,aa.sd,bb.sd,printP(p),pVerdict(p)]);
   }
  }
- $('comparison').innerHTML='<h3>선택 '+selected.length+'행 · 장비 간 비교</h3>'+(result.length?table(['Yield','장비 A','장비 B','Lot A','Lot B','σ A (%p)','σ B (%p)','Welch p (양측)'],result):'<p>수율이 있는 서로 다른 장비의 Lot을 Ctrl로 선택하세요.</p>')+'<small>두 장비가 함께 사용된 Lot은 해당 쌍의 독립 표본에서 제외합니다.</small>';
+ $('comparison').innerHTML='<h3>선택 '+selected.length+'행 · 장비 간 비교</h3>'+(result.length?table(['Yield','장비 A','장비 B','Lot A','Lot B','σ A (%p)','σ B (%p)','Welch p (양측)','판정 (p < 0.05)'],result):'<p>수율이 있는 서로 다른 장비의 Lot을 Ctrl로 선택하세요.</p>')+'<small>두 장비가 함께 사용된 Lot은 해당 쌍의 독립 표본에서 제외합니다.</small>';
 }
 let windowSource=[], windowCharts=[], pageIndex=0;
 const pickedLots=new Set(), pickedWeeks=new Set();
-function togglePick(set,key,multiple){
- if(!multiple)set.clear();
- if(multiple && set.has(key))set.delete(key);else set.add(key);
+function pVerdict(p){
+ if(!Number.isFinite(p))return '계산 불가';
+ return p<0.05?'유의차 있음':'유의차 미검출';
+}
+function printP(p){return Number.isFinite(p)?(p<0.0001?'<0.0001':p.toFixed(4)):'—';}
+const anchors=new WeakMap();
+function togglePick(set,key,order,event){
+ const anchor=anchors.get(set);
+ const start=set.has(anchor)?order.indexOf(anchor):-1,end=order.indexOf(key);
+ if(event.shiftKey && start>=0 && end>=0){
+  if(!event.ctrlKey && !event.metaKey)for(const item of order)set.delete(item);
+  for(const item of order.slice(Math.min(start,end),Math.max(start,end)+1))set.add(item);
+  return;
+ }
+ if(set.has(key)){set.delete(key);anchors.delete(set);return;}
+ if(!event.ctrlKey && !event.metaKey)set.clear();
+ set.add(key);anchors.set(set,key);
+}
+function weekLabel(start){
+ const end=new Date(start+'T00:00:00Z');end.setUTCDate(end.getUTCDate()+6);
+ return start.slice(5).replace('-','/')+'–'+end.toISOString().slice(5,10).replace('-','/');
 }
 function median(numbers){
  const sorted=[...numbers].sort((a,b)=>a-b),mid=Math.floor(sorted.length/2);
@@ -128,7 +147,7 @@ function renderWindow(){
  host.innerHTML='<div class="actions"><button data-prev>이전</button><span>'+ (pageIndex+1)+' / '+Math.max(1,Math.ceil(rows.length/size))+' · '+rows.length+'행</span><button data-next>다음</button><button data-clear>선택 해제</button></div>'+table(['고객','공정','장비','Lot','In','Out','Window (h)'],part.map(r=>[r.customer,processLabel(r.process),r.machines.join(', '),r.lot,r.start,r.end,r.hours]));
  const prev=host.querySelector('[data-prev]'),next=host.querySelector('[data-next]');prev.disabled=!pageIndex;next.disabled=(pageIndex+1)*size>=rows.length;
  prev.onclick=()=>{pageIndex--;renderWindow();};next.onclick=()=>{pageIndex++;renderWindow();};host.querySelector('[data-clear]').onclick=()=>{pickedLots.clear();pickedWeeks.clear();renderWindow();};
- host.querySelectorAll('tbody tr').forEach((tr,i)=>{const key=part[i].id;tr.classList.toggle('picked',pickedLots.has(key));tr.onclick=e=>{togglePick(pickedLots,key,e.ctrlKey);renderWindow();};});
+ host.querySelectorAll('tbody tr').forEach((tr,i)=>{const key=part[i].id;tr.classList.toggle('picked',pickedLots.has(key));tr.onclick=e=>{togglePick(pickedLots,key,rows.map(r=>r.id),e);renderWindow();};});
  drawWindowStats(pickedLots.size?rows.filter(r=>pickedLots.has(r.id)):rows);
 }
 function drawWindowStats(rows){
@@ -147,16 +166,16 @@ function drawWindowStats(rows){
   const dates=[...weeks.keys()].sort(),key=w=>JSON.stringify([name,w]),usl=Number($('usl').value),target=$('hoursTarget').value;
   const stats=dates.map(w=>{const a=weeks.get(w),s=C.ttest(a,target===''?null:Number(target));return {w,...s,min:Math.min(...a),max:Math.max(...a),ppu:usl>0&&s.sd?(usl-s.mean)/(3*s.sd):null};});
   const panel=document.createElement('article');panel.className='window-panel';
-  panel.innerHTML='<h3>'+esc(name)+'</h3><div class="window-pair"><div class="chart"><canvas></canvas></div><div><h4>주간 편차 비교 · Brown–Forsythe</h4><div class="wp"></div></div></div><div class="weekly"></div>';
+  panel.innerHTML='<h3>'+esc(name)+'</h3><div class="window-pair"><div class="chart"><canvas></canvas></div><div><h4>두 주의 편차 비교 · p &lt; 0.05</h4><div class="wp"></div></div></div><div class="weekly"></div>';
   host.append(panel);
   const selected=dates.filter(w=>pickedWeeks.has(key(w)));
   const pairs=[];if(selected.length>=2){for(let i=0;i<selected.length;i++)for(let j=i+1;j<selected.length;j++)pairs.push([selected[i],selected[j]]);}else{for(let i=1;i<dates.length;i++)if(!selected.length||dates[i]===selected[0])pairs.push([dates[i-1],dates[i]]);}
-  panel.querySelector('.wp').innerHTML=table(['비교 주','대상 주','편차 p','판정'],pairs.map(([a,b])=>{const p=deviationP(weeks.get(a),weeks.get(b));return [a,b,p==null?'—':p<0.0001?'<0.0001':p.toFixed(4),p==null?'계산 불가':p<.05?'편차 차이 있음':'차이 근거 부족'];}));
+  panel.querySelector('.wp').innerHTML=table(['비교 주 (월–일)','대상 주 (월–일)','편차 p','판정'],pairs.map(([a,b])=>{const p=deviationP(weeks.get(a),weeks.get(b));return [weekLabel(a),weekLabel(b),printP(p),pVerdict(p)];}));
   const datasets=['min','max','mean','sd'].map((k,i)=>({label:['Min','Max','Avg','Dev'][i],data:stats.map(s=>s[k]),borderColor:['#6588ab','#db9666','#1479bf','#25a699'][i],pointRadius:3,borderWidth:2}));
-  if(usl>0)datasets.push({label:'Ppu',yAxisID:'ppu',data:stats.map(s=>s.ppu),borderColor:'#9467bd'},{label:'1.33',yAxisID:'ppu',data:stats.map(()=>1.33),borderDash:[4,4],pointRadius:0});
-  const pick=(i,e)=>{togglePick(pickedWeeks,key(dates[i]),e.ctrlKey);drawWindowStats(rows);};
+  if(usl>0)datasets.push({label:'Ppu',yAxisID:'ppu',data:stats.map(s=>s.ppu),borderColor:'#9467bd'});
+  const pick=(i,e)=>{togglePick(pickedWeeks,key(dates[i]),dates.map(key),e);drawWindowStats(rows);};
   windowCharts.push(new Chart(panel.querySelector('canvas'),{type:'line',data:{labels:dates,datasets},options:{animation:false,maintainAspectRatio:false,onClick:(e,hits)=>{if(hits.length)pick(hits[0].index,e.native||e);},scales:{y:{title:{display:true,text:'시간 (h)'}},...(usl>0?{ppu:{position:'right',grid:{drawOnChartArea:false}}}:{})}}}));
-  panel.querySelector('.weekly').innerHTML=table(['주 시작','Lot 수','Min h','Max h','Avg h','Dev h','목표 평균 대비 p','Ppu'],stats.map(s=>[s.w,s.n,s.min,s.max,s.mean,s.sd,s.p,s.ppu]));
+  panel.querySelector('.weekly').innerHTML=table(['주 시작','Lot 수','Min h','Max h','Avg h','Dev h','목표 평균 대비 p','판정 (p < 0.05)','Ppu'],stats.map(s=>[s.w,s.n,s.min,s.max,s.mean,s.sd,printP(s.p),pVerdict(s.p),s.ppu]));
   panel.querySelectorAll('.weekly tbody tr').forEach((tr,i)=>{tr.classList.toggle('picked',pickedWeeks.has(key(dates[i])));tr.onclick=e=>pick(i,e);});
  }
 }
