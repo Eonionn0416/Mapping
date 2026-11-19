@@ -54,7 +54,21 @@ async function importCycle(file){
  }
  await writeRecords('windows',incoming.values());for(const [id,r] of incoming)windows.set(id,r);
 }
-function listSaved(){const select=$('saved');select.replaceChildren(new Option('저장한 조회 결과',''));for(const s of [...savedRows].reverse())select.add(new Option(s.name,s.id));}
+function listSaved(){
+ const items=[...savedRows].reverse(),host=$('savedList');
+ host.innerHTML=table(['조회 이름','저장 시각','Lot 행','작업'],items.map(s=>[s.name,new Date(s.id).toLocaleString(),s.rows.length,'']));
+ host.querySelectorAll('tbody tr').forEach((row,i)=>{
+  const item=items[i],cell=row.lastElementChild;
+  for(const label of ['조회','삭제']){
+   const button=document.createElement('button');button.textContent=label;cell.append(button);
+   button.onclick=async()=>{if(label==='조회'){$('snapshot').innerHTML='<h3>'+esc(item.name)+'</h3>'+table(headers,item.rows);return;}
+    if(!confirm(item.name+' 조회 결과를 삭제할까요?'))return;
+    const tx=db.transaction('searches','readwrite');tx.objectStore('searches').delete(item.id);
+    tx.oncomplete=()=>{savedRows=savedRows.filter(s=>s.id!==item.id);$('snapshot').replaceChildren();listSaved();};
+   };
+  }
+ });
+}
 function presentList(id,items){const list=$(id+'List');list.replaceChildren(...[...new Set(items)].sort().map(v=>new Option(v,v)));}
 function renderLots(c,p,m,q){
  const rows=new Map([...windows].map(([key,v])=>[key,{...v,machines:[],yields:{}}]));
@@ -66,8 +80,8 @@ function renderLots(c,p,m,q){
  const shown=new Set(visible.map(r=>r.id));selection=new Set([...selection].filter(id=>shown.has(id)));
  $('equipment').innerHTML=table(headers,visible.map(values));
  const trs=$('equipment').querySelectorAll('tbody tr');
- trs.forEach((tr,i)=>{const id=visible[i].id;const paint=()=>{tr.style.background=selection.has(id)?'#d8ebff':'';tr.setAttribute('aria-selected',String(selection.has(id)));};paint();tr.onclick=e=>{if(!e.shiftKey){selection.clear();trs.forEach(t=>{t.style.background='';t.setAttribute('aria-selected','false');});}if(selection.has(id))selection.delete(id);else selection.add(id);paint();compare();};});
- compare();windowReport(visible);
+ trs.forEach((tr,i)=>{const id=visible[i].id;const paint=()=>{tr.style.background=selection.has(id)?'#d8ebff':'';tr.setAttribute('aria-selected',String(selection.has(id)));};paint();tr.onclick=e=>{if(!e.ctrlKey){selection.clear();trs.forEach(t=>{t.style.background='';t.setAttribute('aria-selected','false');});}if(selection.has(id))selection.delete(id);else selection.add(id);paint();compare();};});
+ compare();windowSource=all;renderWindow();
 }
 function compare(){
  const selected=visible.filter(r=>selection.has(r.id));if(!selected.length){$('comparison').replaceChildren();return;}
@@ -79,20 +93,83 @@ function compare(){
    result.push([stage,ma,mb,aa.n,bb.n,aa.sd,bb.sd,aa.n>1&&bb.n>1&&Number.isFinite(df)?C.beta(df/(df+t*t),df/2,.5):null]);
   }
  }
- $('comparison').innerHTML='<h3>선택 '+selected.length+'행 · 장비 간 비교</h3>'+(result.length?table(['Yield','장비 A','장비 B','Lot A','Lot B','σ A (%p)','σ B (%p)','Welch p (양측)'],result):'<p>수율이 있는 서로 다른 장비의 Lot을 Shift로 선택하세요.</p>')+'<small>두 장비가 함께 사용된 Lot은 해당 쌍의 독립 표본에서 제외합니다.</small>';
+ $('comparison').innerHTML='<h3>선택 '+selected.length+'행 · 장비 간 비교</h3>'+(result.length?table(['Yield','장비 A','장비 B','Lot A','Lot B','σ A (%p)','σ B (%p)','Welch p (양측)'],result):'<p>수율이 있는 서로 다른 장비의 Lot을 Ctrl로 선택하세요.</p>')+'<small>두 장비가 함께 사용된 Lot은 해당 쌍의 독립 표본에서 제외합니다.</small>';
 }
-function windowReport(rows){
- const bins=new Map(),usl=Number($('usl').value),target=$('hoursTarget').value;
- for(const r of rows){if(!Number.isFinite(r.hours))continue;const date=r.end.slice(0,10).replaceAll('/','-');if(date<$('from').value||date>$('to').value)continue;
- const d=new Date(date+'T00:00:00Z');d.setUTCDate(d.getUTCDate()-(d.getUTCDay()+6)%7);const week=d.toISOString().slice(0,10);
- for(const customer of ['All',r.customer]){const k=JSON.stringify([customer,code(r.process),week]);if(!bins.has(k))bins.set(k,[]);bins.get(k).push(r.hours);}}
- const points=[];for(const [key,a] of [...bins].sort()){const [cust,op,week]=JSON.parse(key),s=C.ttest(a,target===''?null:Number(target));points.push([cust,processLabel(op),week,s.n,Math.min(...a),Math.max(...a),s.mean,s.sd,s.p,usl>0&&s.sd?(usl-s.mean)/(3*s.sd):null]);}
- const host=$('windowStats');host.innerHTML=table(['고객','공정','주 시작','n','Min h','Max h','Avg h','σ h','목표 대비 p','Ppu'],points);
- if(usl>0&&points.some(r=>r[9]!=null)){const box=document.createElement('div');box.className='chart';box.innerHTML='<canvas></canvas>';host.prepend(box);const weeks=[...new Set(points.map(r=>r[2]))].sort(),series=new Map();for(const r of points){const k=r[0]+' · '+r[1];if(!series.has(k))series.set(k,new Map());series.get(k).set(r[2],r[9]);}charts.push(new Chart(box.firstChild,{type:'line',data:{labels:weeks,datasets:[...series].map(([label,map])=>({label,data:weeks.map(w=>map.get(w)??null)})).concat([{label:'1.33',data:weeks.map(()=>1.33),borderDash:[5,4],pointRadius:0}])},options:{maintainAspectRatio:false,animation:false}}));}
+let windowSource=[], windowCharts=[], pageIndex=0;
+const pickedLots=new Set(), pickedWeeks=new Set();
+function togglePick(set,key,multiple){
+ if(!multiple)set.clear();
+ if(multiple && set.has(key))set.delete(key);else set.add(key);
 }
-for(const id of ['customer','process','machine','query','usl','hoursTarget'])$(id).oninput=()=>{ $('snapshot').replaceChildren();render();};
-$('resetSearch').onclick=()=>{for(const id of ['customer','process','machine','query','saved'])$(id).value='';selection.clear();$('snapshot').replaceChildren();render();};
-$('saveSearch').onclick=async()=>{const name=prompt('조회 결과 이름');if(!name?.trim())return;const item={id:new Date().toISOString(),name,rows:visible.map(values)};await writeRecords('searches',[item]);savedRows.push(item);listSaved();};
-$('saved').onchange=()=>{const s=savedRows.find(r=>r.id===$('saved').value);$('snapshot').innerHTML=s?'<h3>'+esc(s.name)+' · 저장 당시 결과</h3>'+table(headers,s.rows):'';};
+function median(numbers){
+ const sorted=[...numbers].sort((a,b)=>a-b),mid=Math.floor(sorted.length/2);
+ return sorted.length%2?sorted[mid]:(sorted[mid-1]+sorted[mid])/2;
+}
+// Two-group Brown–Forsythe: ANOVA on absolute deviations from each group's median.
+function deviationP(a,b){
+ if(Math.min(a.length,b.length)<2)return null;
+ const deviations=xs=>{const center=median(xs);return C.describe(xs.map(v=>Math.abs(v-center)));};
+ const x=deviations(a),y=deviations(b),df=x.n+y.n-2;
+ const within=(x.n-1)*x.sd**2+(y.n-1)*y.sd**2;
+ if(!within)return null;
+ const f=(x.mean-y.mean)**2/((within/df)*(1/x.n+1/y.n));
+ return C.beta(df/(df+f),df/2,.5);
+}
+function renderWindow(){
+ const term=id=>$('w'+id).value.trim().toUpperCase();
+ const customer=term('customer'),process=term('process'),machine=term('machine'),lot=term('query');
+ const first=windowSource.filter(r=>Number.isFinite(r.hours)&&r.customer.includes(customer)),second=first.filter(r=>processLabel(r.process).toUpperCase().includes(process));
+ presentList('wcustomer',first.map(r=>r.customer));presentList('wprocess',second.map(r=>String(r.process)));presentList('wmachine',second.flatMap(r=>r.machines).filter(m=>m.includes(machine)));
+ const rows=second.filter(r=>(!machine||r.machines.some(m=>m.includes(machine)))&&C.norm(r.lot).includes(C.norm(lot))&&r.end.slice(0,10).replaceAll('/','-')>=$('wfrom').value&&r.end.slice(0,10).replaceAll('/','-')<=$('wto').value);
+ const keys=new Set(rows.map(r=>r.id));for(const id of pickedLots)if(!keys.has(id))pickedLots.delete(id);
+ const host=$('wrows'),size=80;
+ pageIndex=Math.min(pageIndex,Math.max(0,Math.ceil(rows.length/size)-1));
+ const part=rows.slice(pageIndex*size,(pageIndex+1)*size);
+ host.innerHTML='<div class="actions"><button data-prev>이전</button><span>'+ (pageIndex+1)+' / '+Math.max(1,Math.ceil(rows.length/size))+' · '+rows.length+'행</span><button data-next>다음</button><button data-clear>선택 해제</button></div>'+table(['고객','공정','장비','Lot','In','Out','Window (h)'],part.map(r=>[r.customer,processLabel(r.process),r.machines.join(', '),r.lot,r.start,r.end,r.hours]));
+ const prev=host.querySelector('[data-prev]'),next=host.querySelector('[data-next]');prev.disabled=!pageIndex;next.disabled=(pageIndex+1)*size>=rows.length;
+ prev.onclick=()=>{pageIndex--;renderWindow();};next.onclick=()=>{pageIndex++;renderWindow();};host.querySelector('[data-clear]').onclick=()=>{pickedLots.clear();pickedWeeks.clear();renderWindow();};
+ host.querySelectorAll('tbody tr').forEach((tr,i)=>{const key=part[i].id;tr.classList.toggle('picked',pickedLots.has(key));tr.onclick=e=>{togglePick(pickedLots,key,e.ctrlKey);renderWindow();};});
+ drawWindowStats(pickedLots.size?rows.filter(r=>pickedLots.has(r.id)):rows);
+}
+function drawWindowStats(rows){
+ windowCharts.forEach(c=>c.destroy());windowCharts=[];
+ const panels=new Map(),host=$('windowStats');host.replaceChildren();
+ for(const row of rows){
+  const d=new Date(row.end.slice(0,10).replaceAll('/','-')+'T00:00:00Z');d.setUTCDate(d.getUTCDate()-(d.getUTCDay()+6)%7);const week=d.toISOString().slice(0,10);
+  for(const cust of ['All',row.customer]){
+   const name=processLabel(code(row.process))+' · '+cust;
+   if(!panels.has(name))panels.set(name,new Map());
+   const weeks=panels.get(name);if(!weeks.has(week))weeks.set(week,[]);weeks.get(week).push(row.hours);
+  }
+ }
+ if(!panels.size){host.textContent='조건에 맞는 완료 공정이 없습니다.';return;}
+ for(const [name,weeks] of [...panels].sort(([a],[b])=>a.localeCompare(b,undefined,{numeric:true}))){
+  const dates=[...weeks.keys()].sort(),key=w=>JSON.stringify([name,w]),usl=Number($('usl').value),target=$('hoursTarget').value;
+  const stats=dates.map(w=>{const a=weeks.get(w),s=C.ttest(a,target===''?null:Number(target));return {w,...s,min:Math.min(...a),max:Math.max(...a),ppu:usl>0&&s.sd?(usl-s.mean)/(3*s.sd):null};});
+  const panel=document.createElement('article');panel.className='window-panel';
+  panel.innerHTML='<h3>'+esc(name)+'</h3><div class="window-pair"><div class="chart"><canvas></canvas></div><div><h4>주간 편차 비교 · Brown–Forsythe</h4><div class="wp"></div></div></div><div class="weekly"></div>';
+  host.append(panel);
+  const selected=dates.filter(w=>pickedWeeks.has(key(w)));
+  const pairs=[];if(selected.length>=2){for(let i=0;i<selected.length;i++)for(let j=i+1;j<selected.length;j++)pairs.push([selected[i],selected[j]]);}else{for(let i=1;i<dates.length;i++)if(!selected.length||dates[i]===selected[0])pairs.push([dates[i-1],dates[i]]);}
+  panel.querySelector('.wp').innerHTML=table(['비교 주','대상 주','편차 p','판정'],pairs.map(([a,b])=>{const p=deviationP(weeks.get(a),weeks.get(b));return [a,b,p==null?'—':p<0.0001?'<0.0001':p.toFixed(4),p==null?'계산 불가':p<.05?'편차 차이 있음':'차이 근거 부족'];}));
+  const datasets=['min','max','mean','sd'].map((k,i)=>({label:['Min','Max','Avg','Dev'][i],data:stats.map(s=>s[k]),borderColor:['#6588ab','#db9666','#1479bf','#25a699'][i],pointRadius:3,borderWidth:2}));
+  if(usl>0)datasets.push({label:'Ppu',yAxisID:'ppu',data:stats.map(s=>s.ppu),borderColor:'#9467bd'},{label:'1.33',yAxisID:'ppu',data:stats.map(()=>1.33),borderDash:[4,4],pointRadius:0});
+  const pick=(i,e)=>{togglePick(pickedWeeks,key(dates[i]),e.ctrlKey);drawWindowStats(rows);};
+  windowCharts.push(new Chart(panel.querySelector('canvas'),{type:'line',data:{labels:dates,datasets},options:{animation:false,maintainAspectRatio:false,onClick:(e,hits)=>{if(hits.length)pick(hits[0].index,e.native||e);},scales:{y:{title:{display:true,text:'시간 (h)'}},...(usl>0?{ppu:{position:'right',grid:{drawOnChartArea:false}}}:{})}}}));
+  panel.querySelector('.weekly').innerHTML=table(['주 시작','Lot 수','Min h','Max h','Avg h','Dev h','목표 평균 대비 p','Ppu'],stats.map(s=>[s.w,s.n,s.min,s.max,s.mean,s.sd,s.p,s.ppu]));
+  panel.querySelectorAll('.weekly tbody tr').forEach((tr,i)=>{tr.classList.toggle('picked',pickedWeeks.has(key(dates[i])));tr.onclick=e=>pick(i,e);});
+ }
+}
+for(const id of ['wcustomer','wprocess','wmachine','wquery','wfrom','wto','usl','hoursTarget'])$(id).oninput=()=>{pageIndex=0;renderWindow();};
+$('wreset').onclick=()=>{for(const id of ['wcustomer','wprocess','wmachine','wquery','usl','hoursTarget'])$(id).value='';$('wfrom').value=C.day(start.toISOString());$('wto').value=today;pickedLots.clear();pickedWeeks.clear();pageIndex=0;renderWindow();};
+$('wfrom').value=$('from').value;$('wto').value=$('to').value;
 
+for(const id of ['customer','process','machine','query'])$(id).oninput=()=>{ $('snapshot').replaceChildren();render();};
+$('resetSearch').onclick=()=>{for(const id of ['customer','process','machine','query'])$(id).value='';selection.clear();$('snapshot').replaceChildren();render();};
+$('saveSearch').onclick=async()=>{
+ const rows=selection.size?visible.filter(r=>selection.has(r.id)):visible;if(!rows.length)return;
+ const unique=xs=>[...new Set(xs)].sort().join(' ');
+ const name=[unique(rows.map(r=>r.customer)),unique(rows.map(r=>processLabel(r.process))),unique(rows.flatMap(r=>r.machines))].filter(Boolean).join(' / ');
+ const item={id:new Date().toISOString(),name,rows:rows.map(values)};await writeRecords('searches',[item]);savedRows.push(item);listSaved();
+};
 await initCycle();await reload();QAAutoMail.startMany(['mclist','cycle'].map(group=>({group,label:group==='cycle'?'Cycle time':'MC List',ready:()=>!busy,importer:ingest})),{label:'Commonality 자동 가져오기'});
