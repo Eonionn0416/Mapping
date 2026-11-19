@@ -7,6 +7,7 @@ $mutex=[Threading.Mutex]::new($false,'Local\QAOutlookCollector49');if(!$mutex.Wa
 New-Item -ItemType Directory -Force -Path (Join-Path $base 'MNT Yield') | Out-Null
 function Classify($subject){
  switch -Regex ($subject.Trim()) {
+ '^ASSEMBLY CYCLE TIME START REPORT\s+\d{8,10}$' {return @('Cycle time','Cycle')}
  '^SCK EQUIP LIST BY LOT\s+\d{8}$' {return @('MC List','Equipment')}
  '^\[\d{4}-\d{2}-\d{2}\]\s*Montage VM Yield Report$' {return @('MNT VM','VM Yield')}
  '^BDR_SCK_FC_ASSY_YIELD_\d{4}$' {return @('Austin Top7','Top 7')}
@@ -31,6 +32,7 @@ function SaveYieldMail($mail,$kind){
  $archive=Join-Path $root '[Customer] MNT\[1] Weekly\Yield report'
  $target=Join-Path $base 'Austin WIP & Yield\Top 7 defect'
  $pattern='^MNT_YLD_RPT_\d+\.CSV$'
+ if($kind -eq 'Cycle time'){$target=Join-Path $base 'Cycle time';$archive=$target;$pattern='^ASSY_CT_START_\d+\.csv$'}
  if($kind -eq 'MC List'){$target=Join-Path $base 'MC List';$archive=$target;$pattern='^SCK_EQUIP_LIST_BY_LOT\d+\.csv$'}
  if($kind -eq 'MNT Yield'){$target=Join-Path $base 'MNT Yield';$pattern='^YIELD_SCMO31W_\d+\.(csv|xlsx|xls)$'}
  if($kind -eq 'Austin Top7'){$archive=Join-Path $root '[Customer] Austin\[0] Weekly\Auto mail Top7 defect';$pattern='^BDR_SCK_FC_ASSY_YIELD_\d{4}\.xlsx?$'}
@@ -67,8 +69,8 @@ function SaveCSRMail($mail){
 function SaveMail($mail){
  SaveCSRMail $mail
  if($mail.Class -ne 43){return};$route=Classify $mail.Subject;if(!$route -and (SenderSmtp $mail) -eq 'anne.li@montage-tech.com'){$route=@('MNT PO','Orders')};if(!$route){return}
- if($route[0] -notin @('MNT','MNT PO','MNT Yield','MNT VM','Austin Top7','MC List') -and $mail.ReceivedTime -lt (Get-Date).AddDays(-30)){return}
- if($route[0] -in @('MNT Yield','MNT VM','Austin Top7','MC List')){SaveYieldMail $mail $route[0];return}
+ if($route[0] -notin @('MNT','MNT PO','MNT Yield','MNT VM','Austin Top7','MC List','Cycle time') -and $mail.ReceivedTime -lt (Get-Date).AddDays(-30)){return}
+ if($route[0] -in @('MNT Yield','MNT VM','Austin Top7','MC List','Cycle time')){SaveYieldMail $mail $route[0];return}
  $received=$mail.ReceivedTime.ToString('yyyyMMdd_HHmmss');$dest=Join-Path $base ($route[0]+'\'+$route[1]+'\'+$received)
  for($i=1;$i -le $mail.Attachments.Count;$i++){
   $a=$mail.Attachments.Item($i);$name=[IO.Path]::GetFileName($a.FileName);if($route[0] -eq 'MNT Yield'){if($name -notmatch '\.(csv|xlsx|xls)$'){continue};$dest=Join-Path $base 'MNT Yield'}elseif($name -notmatch '\.xlsx?$'){continue}
