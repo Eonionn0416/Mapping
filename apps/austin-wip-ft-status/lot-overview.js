@@ -35,5 +35,5 @@ function renderLotOverview(){
  panel(title,body);
  }
  panel('Top 7 Defect','<p>Top 7 원본은 BDR 전체 Device 주간 합계입니다. Lot / Device별 구분이 없어 개별 조회 결과로 표시하지 않습니다.</p>');
- metric([['검색 Lot',lotOverviewQuery||'—'],['검색 Device',overviewDeviceQuery||'—'],['연결 식별자',linked.aliases.size],['연결 기록',found]]);$('content').innerHTML='<div class="lot-overview-grid">'+parts.join('')+'</div>';
+ metric([['검색 Lot',lotOverviewQuery||'—'],['검색 Device',overviewDeviceQuery||'—'],['연결 식별자',linked.aliases.size],['연결 기록',found]]);$('content').innerHTML='<div class="lot-overview-grid">'+parts.join('')+'</div>';const eq=document.createElement('section');eq.className='panel';$('content').append(eq);const eqLots=lotOverviewQuery?[...linked.aliases]:snapshots.flatMap(s=>s.rows).filter(match).flatMap(r=>[r.lot,r.mark,r.assyLot].filter(Boolean));import('../../shared/equipment-store.js?v=118').then(m=>m.show(eq,'BDR',[...new Set(eqLots)])).catch(e=>{eq.textContent='장비 조회 실패: '+e.message;});
 }

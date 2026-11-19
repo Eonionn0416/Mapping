@@ -3,12 +3,12 @@ Dim qaFS, qaSource, qaText
 Set qaFS=CreateObject("Scripting.FileSystemObject")
 qaSource="C:\System project\wafer_strip_mapping_app\automation\auto-mail-server.cjs"
 If Not qaFS.FileExists(qaSource) Then
- MsgBox "Install v101 automation files first.",48,"QA Auto Import"
+ MsgBox "Install v118 automation files first.",48,"QA Auto Import"
  WScript.Quit
 End If
 qaText=qaFS.OpenTextFile(qaSource,1).ReadAll
-If InStr(qaText,"mntvm")=0 Or InStr(qaText,"austintop7")=0 Or InStr(qaText,"csrmail")=0 Then
- MsgBox "Copy all v101 automation files into C:\System project\wafer_strip_mapping_app\automation, then run this launcher again.",48,"QA Auto Import"
+If InStr(qaText,"mclist")=0 Or InStr(qaText,"mntvm")=0 Or InStr(qaText,"austintop7")=0 Or InStr(qaText,"csrmail")=0 Then
+ MsgBox "Copy all v118 automation files into C:\System project\wafer_strip_mapping_app\automation, then run this launcher again.",48,"QA Auto Import"
  WScript.Quit
 End If
 

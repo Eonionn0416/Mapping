@@ -1593,11 +1593,43 @@ async function downloadWorkbook(name,button){
 }
 function setNotice(message,error=false){const n=el('actionNotice');n.textContent=message;n.hidden=false;n.classList.toggle('error',error);}
 function shippingState(row,state){const sh=shipmentContext(rawRows,row,today);if(!sh)return state;return sh.complete?{...state,done:true,code:"done",label:"배송 확인 완료"}:evaluateAlert({...row,status:"",result:""},null,today,ALERT_LEAD_DAYS,"shipping");}
+// A shipment, repeat FT and return shipment are three successive deadlines.
+function repeatFtQueue(records) {
+ const groups = new Map(), active = new Map();
+ for (const row of records) {
+  const key = JSON.stringify([row.sourceFileName,row.sheetName,row.criteria]);
+  if (!groups.has(key)) groups.set(key, []);
+  groups.get(key).push(row);
+ }
+ const shipment = row => /^shipment\b/i.test((row?.relItem||'').trim());
+ const repeat = row => /^re[ -]?ft\b/i.test((row?.relItem||'').trim());
+ for (const group of groups.values()) {
+  group.sort((a,b)=>a.rowNumber-b.rowNumber);
+  for (let i=0;i<group.length-2;i++) {
+   if (!shipment(group[i]) || !repeat(group[i+1])) continue;
+   let end=i+2;
+   while (repeat(group[end])) end++;
+   if (!shipment(group[end])) continue;
+   let blocked=false;
+   for (const row of group.slice(i,end+1)) {
+    const manual=statusMap.get(row.dedupeKey);
+    const state=evaluateAlert(row,manual,today,ALERT_LEAD_DAYS,'sequence');
+    const ongoing=/on\s*going/i.test(row.status||'');
+    const complete=manual?.manualDone ?? (state.done || (!ongoing && shipment(row) && shipmentContext(rawRows,row,today)?.complete));
+    active.set(row, !blocked && !complete);
+    if (!complete) blocked=true;
+   }
+   i=end-1;
+  }
+ }
+ return active;
+}
 function summaryViewRows(){
- const rows=viewRows.filter(r=>shipmentContext(rawRows,r,today) || r.handoff?.parenthesized || r.recvCheck?.parenthesized || r.summarySelected===true || (r.summarySelected===undefined&&/^(FT\b|FT\(|.*SAT)/i.test(r.relItem)));
+ const sequence=repeatFtQueue(viewRows);
+ const rows=viewRows.filter(r=>sequence.has(r) ? sequence.get(r) : shipmentContext(rawRows,r,today) || r.handoff?.parenthesized || r.recvCheck?.parenthesized || r.summarySelected===true || (r.summarySelected===undefined&&/^(FT\b|FT\(|.*SAT)/i.test(r.relItem)));
  return rows.map(r=>{
   const manual=statusMap.get(r.dedupeKey),baseState=evaluateAlert({...r,result:''},manual,today,ALERT_LEAD_DAYS,/on\s*going/i.test(r.status)?'explicit':'');
-  const state=shippingState(r,baseState);
+  const state=sequence.has(r) ? evaluateAlert({...r,status:'',result:''},null,today,ALERT_LEAD_DAYS,'sequence') : shippingState(r,baseState);
   const related=viewRows.filter(x=>x.sourceFileName===r.sourceFileName&&x.sheetName===r.sheetName&&x.criteria===r.criteria&&(x.dueRef===r.dueRef||x.statusRef&&x.statusRef===r.statusRef&&x.dateOut===r.dateOut));
   const handoff=r.handoff||related.find(x=>x.handoff)?.handoff||null;
   const recvCheck=r.recvCheck||related.find(x=>x.recvCheck)?.recvCheck||null;

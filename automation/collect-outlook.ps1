@@ -1,4 +1,4 @@
-﻿param([switch]$Once)
+﻿﻿param([switch]$Once)
 $ErrorActionPreference='Stop'
 $base='C:\System project\QA System File uploader'
 New-Item -ItemType Directory -Force -Path (Join-Path $base 'MNT PO') | Out-Null
@@ -7,6 +7,7 @@ $mutex=[Threading.Mutex]::new($false,'Local\QAOutlookCollector49');if(!$mutex.Wa
 New-Item -ItemType Directory -Force -Path (Join-Path $base 'MNT Yield') | Out-Null
 function Classify($subject){
  switch -Regex ($subject.Trim()) {
+ '^SCK EQUIP LIST BY LOT\s+\d{8}$' {return @('MC List','Equipment')}
  '^\[\d{4}-\d{2}-\d{2}\]\s*Montage VM Yield Report$' {return @('MNT VM','VM Yield')}
  '^BDR_SCK_FC_ASSY_YIELD_\d{4}$' {return @('Austin Top7','Top 7')}
 
@@ -30,15 +31,16 @@ function SaveYieldMail($mail,$kind){
  $archive=Join-Path $root '[Customer] MNT\[1] Weekly\Yield report'
  $target=Join-Path $base 'Austin WIP & Yield\Top 7 defect'
  $pattern='^MNT_YLD_RPT_\d+\.CSV$'
+ if($kind -eq 'MC List'){$target=Join-Path $base 'MC List';$archive=$target;$pattern='^SCK_EQUIP_LIST_BY_LOT\d+\.csv$'}
  if($kind -eq 'MNT Yield'){$target=Join-Path $base 'MNT Yield';$pattern='^YIELD_SCMO31W_\d+\.(csv|xlsx|xls)$'}
  if($kind -eq 'Austin Top7'){$archive=Join-Path $root '[Customer] Austin\[0] Weekly\Auto mail Top7 defect';$pattern='^BDR_SCK_FC_ASSY_YIELD_\d{4}\.xlsx?$'}
- foreach($dir in @($archive,$target)){[IO.Directory]::CreateDirectory($dir)|Out-Null}
+ foreach($dir in @($archive,$target) | Select-Object -Unique){[IO.Directory]::CreateDirectory($dir)|Out-Null}
  for($i=1;$i -le $mail.Attachments.Count;$i++){
   $a=$mail.Attachments.Item($i);$name=[IO.Path]::GetFileName($a.FileName);if($name -notmatch $pattern){continue}
   $temp=Join-Path $archive ([guid]::NewGuid().ToString()+'.partial')
   try{
    $a.SaveAsFile($temp);$hash=(Get-FileHash -LiteralPath $temp -Algorithm SHA256).Hash
-   foreach($dir in @($archive,$target)){
+   foreach($dir in @($archive,$target) | Select-Object -Unique){
     $final=Join-Path $dir $name
     if(Test-Path -LiteralPath $final){if((Get-FileHash -LiteralPath $final).Hash -eq $hash){continue};$final=Join-Path $dir ([IO.Path]::GetFileNameWithoutExtension($name)+'_'+$hash.Substring(0,12)+[IO.Path]::GetExtension($name))}
     if(Test-Path -LiteralPath $final){if((Get-FileHash -LiteralPath $final).Hash -eq $hash){continue}}
@@ -65,8 +67,8 @@ function SaveCSRMail($mail){
 function SaveMail($mail){
  SaveCSRMail $mail
  if($mail.Class -ne 43){return};$route=Classify $mail.Subject;if(!$route -and (SenderSmtp $mail) -eq 'anne.li@montage-tech.com'){$route=@('MNT PO','Orders')};if(!$route){return}
- if($route[0] -notin @('MNT','MNT PO','MNT Yield','MNT VM','Austin Top7') -and $mail.ReceivedTime -lt (Get-Date).AddDays(-30)){return}
- if($route[0] -in @('MNT Yield','MNT VM','Austin Top7')){SaveYieldMail $mail $route[0];return}
+ if($route[0] -notin @('MNT','MNT PO','MNT Yield','MNT VM','Austin Top7','MC List') -and $mail.ReceivedTime -lt (Get-Date).AddDays(-30)){return}
+ if($route[0] -in @('MNT Yield','MNT VM','Austin Top7','MC List')){SaveYieldMail $mail $route[0];return}
  $received=$mail.ReceivedTime.ToString('yyyyMMdd_HHmmss');$dest=Join-Path $base ($route[0]+'\'+$route[1]+'\'+$received)
  for($i=1;$i -le $mail.Attachments.Count;$i++){
   $a=$mail.Attachments.Item($i);$name=[IO.Path]::GetFileName($a.FileName);if($route[0] -eq 'MNT Yield'){if($name -notmatch '\.(csv|xlsx|xls)$'){continue};$dest=Join-Path $base 'MNT Yield'}elseif($name -notmatch '\.xlsx?$'){continue}
@@ -82,7 +84,7 @@ function SaveMail($mail){
 }
 function AllFolders($folder){$folder;foreach($child in $folder.Folders){AllFolders $child}}
 function FindAuto($folder){if(($folder.Name -replace '\s','') -match '^AUTOMAIL/PERSONAL\d*$' -or ($folder.Name -replace '\s','') -in @('AUTOMAIL/PERSONAL','Automail','SCK-QSE/PQA/IT','CUS-MNT(Montage)','CUS-MTK/MSL(MediaTek)','PO')){$folder};foreach($child in $folder.Folders){FindAuto $child}}
-Add-Content -LiteralPath (Join-Path $base 'collector.log') -Value ((Get-Date -Format o)+' START v101 CSR + Weekly Yield + VM + Austin Top7; AUTO MAIL numeric suffix supported')
+Add-Content -LiteralPath (Join-Path $base 'collector.log') -Value ((Get-Date -Format o)+' START v118 CSR + Weekly Yield + VM + Austin Top7; AUTO MAIL numeric suffix supported')
 try{do{try{
  $app=[Runtime.InteropServices.Marshal]::GetActiveObject('Outlook.Application');$ns=$app.GetNamespace('MAPI');$folders=@();foreach($store in $ns.Stores){try{$inbox=$store.GetDefaultFolder(6);$folders+=,$inbox;$folders+=@(FindAuto ($store.GetRootFolder()))}catch{}}
  foreach($store in $ns.Stores){foreach($folder in @(AllFolders ($store.GetRootFolder()))){try{$poItems=$folder.Items.Restrict("[SenderEmailAddress] = 'anne.li@montage-tech.com' AND [ReceivedTime] >= '"+(Get-Date).AddDays(-90).ToString('MM/dd/yyyy hh:mm tt',[Globalization.CultureInfo]::InvariantCulture)+"'");for($j=$poItems.Count;$j -ge 1;$j--){SaveMail $poItems.Item($j)}}catch{Add-Content (Join-Path $base 'collector.log') ((Get-Date -Format o)+' PO scan: '+$folder.Name+' '+$_.Exception.Message)}}}
