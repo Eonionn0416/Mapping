@@ -169,6 +169,7 @@ function buildResults(){
   const customers=new Map();
   for(const entry of rankLots(group,direction)){
    entry.row.all=entry;
+   entry.row.cohort=group;
    add(customers,entry.row.customer,entry.row);
   }
   for(const rows of customers.values())for(const entry of rankLots(rows,direction)){
@@ -224,7 +225,12 @@ function stageCards(rows){
 function details(){
  const host=$('comparison'),selected=visible.filter(r=>selection.has(r.id));
  host.replaceChildren();if(!selected.length)return;
- host.innerHTML='<h3>선택 Lot 상세</h3>'+table(['Customer','Lot','Process','Machine','Window h','전체 고객 비교 평균 h','동일 고객 비교 평균 h',...stages.map(x=>x+' %')],selected.map(r=>[r.customer,r.lot,processLabel(r.process),r.machines.join(', '),r.hours,r.all.peerMean,r.own.peerMean,...stages.map(x=>r.yields[x])]));
+ host.innerHTML='<h3>선택 Lot 상세</h3>';
+ const groups=new Map();
+ for(const row of selected)add(groups,row.cohort,row);
+ for(const [cohort,members] of groups){
+  host.insertAdjacentHTML('beforeend',selectionPanel(cohort,members));
+ }
  for(const r of new Map(selected.map(r=>[JSON.stringify([r.customer,r.lot]),r])).values()){
   host.insertAdjacentHTML('beforeend','<h4>'+esc(r.customer+' · '+r.lot)+'</h4>'+stageCards([r])+specDetails(r));
  }
@@ -280,38 +286,101 @@ $('saveSearch').onclick=async()=>{
 };
 $('savedList').parentElement.addEventListener('toggle',e=>{if(e.currentTarget.open)ensureCycle().catch(err=>{$('status').textContent=err.message;});});
 QAAutoMail.startMany(['mclist','cycle'].map(group=>({group,label:group==='cycle'?'Cycle time':'MC List',ready:()=>!busy,importer:ingest})),{label:'Commonality 자동 가져오기'});
-// Explicit step names are accepted from cycle reports. Map short codes only for identified operations.
-const specSteps={
- tape:['Wafer Taping','14'], grind:['Wafer Back Side Grinding','3'], mount:['Wafer mount'],
- detape:['Wafer mount out & De-Taping','Wafer mount & De-Taping'], uv:['UV Irradiation','438'], bond:['Flip Chip bonding','441'],
- paste:['Cap Solder Paste Printing','80'], reflow:['Flip Chip Reflow'], flux:['Flux Cleaning','451'],
- plasmaUF:['Pre-plasma Cleaning Before Underfill','94'], uf:['Underfill Dispensing','95'], cure:['Underfill Curing','96'],
- bakeUF:['Pre-baking Before Underfill','67'], plasmaMold:['Pre-plasma Cleaning Before Molding','87'],
- mold:['Molding','100'], bakeMold:['Pre-baking Before Molding'], pmc:['Post Mold Cure','105'],
- strip:['Strip Pre-treatment(Reflow)'], osp:['OSP Substrate Pre-treatment (Flux Clean)'], ball:['Ball Placement','500']
-};
+// The two Meaning columns are the authoritative event mapping for W-165.
 const rules=[
- ['tape','end','grind','start',24],['grind','start','mount','end',8],['detape','end','uv','start',48],
- ['uv','end','bond','start',336],['paste','start','reflow','end',8],['reflow','end','flux','end',8],
- ['plasmaUF','end','uf','start',3],['plasmaUF','end','uf','end',4],['bakeUF','end','uf','start',12],
- ['uf','start','cure','start',4],['plasmaMold','end','mold','start',8],['bakeMold','end','mold','start',24],
- ['mold','end','pmc','start',24],['pmc','end','strip','end',48],['osp','end','ball','start',16]
+ ['Wafer Taping out','14','start','Wafer Back Side Grinding in','3','start',24],
+ ['Wafer Back Side Grinding in','3','start','Wafer mount out','3','end',8],
+ ['Wafer mount out & De-Taping','3','start','UV Irradiation in','10','start',48],
+ ['UV Irradiation out','10','end','Flip Chip bonding in','441','start',336],
+ ['Cap Solder Paste Printing in','25','start','Flip Chip Reflow out','441','end',8],
+ ['Flip Chip Reflow out','441','end','Flux Cleaning out','451','end',8],
+ ['Pre-plasma Cleaning Before Underfill out','94','end','Underfill Dispensing in','95','start',3],
+ ['Pre-plasma Cleaning Before Underfill out','94','end','Underfill Dispensing out','95','end',4],
+ ['Pre-baking Before Underfill out','67','end','Underfill Dispensing in','95','start',12],
+ ['Underfill Dispensing in','95','start','Underfill Curing in','96','start',4],
+ ['Pre-plasma Cleaning Before Molding out','87','end','Molding in','100','start',8],
+ ['Pre-baking Before Molding out',null,null,'Molding in','100','start',24],
+ ['Molding out','100','end','Post Mold Cure in','105','start',24],
+ ['Post Mold Cure out','105','end','Strip Pre-treatment (Reflow) out',null,null,48],
+ ['OSP Substrate Pre-treatment (Flux Clean) out',null,null,'Ball Placement in',null,null,16]
 ];
+function eventTime(value){
+ return value?Date.parse(String(value).trim().replaceAll('/','-').replace(' ','T')+'+09:00'):NaN;
+}
 function specDetails(row){
  if(row.customer!=='MTK')return '';
- const point=(step,field)=>{
-  for(const key of specSteps[step]){
-   const rec=windows.get(identity(row.customer,row.lot,key));
-   if(rec?.[field])return rec[field];
-  }
-  return '';
- };
- const stamp=value=>Date.parse(value.replaceAll('/','-').replace(' ','T')+'+09:00');
- const label=(step,field)=>specSteps[step][0]+(field==='start'?' IN':' OUT');
- const lines=rules.map(([a,f,b,g,limit])=>{
-  const left=point(a,f),right=point(b,g),hours=(stamp(right)-stamp(left))/3600000;
-  return [label(a,f),label(b,g),limit,left||null,right||null,Number.isFinite(hours)&&hours>=0?hours:null,
-    !Number.isFinite(hours)?'시각 미수집':hours<0?'시각 순서 확인':hours>limit?'상한 초과':'상한 이내'];
+ const meaning=(op,field)=>op?names[op]+' '+(field==='start'?'In':'Out'):null;
+ const time=(op,field)=>op?windows.get(identity(row.customer,row.lot,op))?.[field]:null;
+ const lines=rules.map(([startLabel,a,f,endLabel,b,g,limit])=>{
+  const left=time(a,f),right=time(b,g),elapsed=(eventTime(right)-eventTime(left))/3600000;
+  const valid=Number.isFinite(elapsed)&&elapsed>=0;
+  let status='Meaning 미지정';
+  if(a&&b)status=!Number.isFinite(elapsed)?'시각 미수집':elapsed<0?'시각 순서 확인':elapsed>limit?'상한 초과':'상한 이내';
+  return [startLabel,meaning(a,f),endLabel,meaning(b,g),limit,left||null,right||null,valid?elapsed:null,status];
  });
- return '<details><summary>MTK W-165 · 구간별 Q time</summary>'+table(['시작 공정','종료 공정','상한 h','시작 시각','종료 시각','Q time h','Spec 판정'],lines)+'</details>';
+ return '<details><summary>MTK W-165 · 구간별 Q time</summary>'+table(['시작 공정','Meaning','종료 공정','Meaning','상한 h','시작 시각','종료 시각','Q time h','Spec 판정'],lines)+'</details>';
+}
+function selectionStats(cohort,members){
+ const ids=new Set(members.map(row=>row.sourceId));
+ const customers=new Set(members.map(row=>row.customer));
+ const remaining=cohort.filter(row=>!ids.has(row.sourceId));
+ const summarize=rows=>C.describe(rows.map(row=>row.hours));
+ return {
+  selected:summarize(members),
+  all:summarize(remaining),
+  own:summarize(remaining.filter(row=>customers.has(row.customer))),
+  customers:[...customers].sort()
+ };
+}
+
+function selectionPanel(cohort,members){
+ const stats=selectionStats(cohort,members),first=members[0];
+ const process=processLabel(first.process),machine=$('machine').value?first.machines[0]:'';
+ const ownLabel=stats.customers.length===1?'동일 고객':'선택 고객';
+ const title=[process,machine,stats.customers.join(' · ')].filter(Boolean).join(' / ');
+ const reports=[...new Map(members.flatMap(row=>row.reports).map(report=>[report.id,report])).values()];
+ const records=members.map(r=>[r.customer,r.lot,r.start,r.hours,r.all.peerMean,r.own.peerMean,...stages.map(stage=>r.yields[stage])]);
+ records.push([stats.customers.join(' · '),'선택 그룹 평균 ('+stats.selected.n+' Lot)','—',stats.selected.mean,stats.all.mean,stats.own.mean,
+  ...stages.map(stage=>stageYield(reports.filter(report=>report.metric===stage)))]);
+ return '<section class="window-selection"><h4>'+esc(title)+'</h4>'
+  +table(['Customer','Lot','In time','Window h','전체 고객 비교 평균 h',ownLabel+' 비교 평균 h',...stages.map(x=>x+' %')],records)
+  +windowPlot(members,stats,ownLabel)+'</section>';
+}
+
+function windowPlot(members,stats,ownLabel){
+ const points=members.map(row=>({row,t:eventTime(row.start)})).filter(p=>Number.isFinite(p.t));
+ if(!points.length)return '<p>In time 기록이 없습니다.</p>';
+ const bounds={left:65,right:845,top:25,bottom:207};
+ let low=Infinity,high=-Infinity,maxY=0;
+ for(const {t,row} of points){low=Math.min(low,t);high=Math.max(high,t);maxY=Math.max(maxY,row.hours);}
+ const padding=high===low?1800000:(high-low)*.05;
+ const minTime=low-padding,maxTime=high+padding;
+ const yMax=Math.max(.01,maxY,stats.all.mean||0,stats.own.mean||0)*1.1;
+ const x=t=>bounds.left+(t-minTime)/(maxTime-minTime)*(bounds.right-bounds.left);
+ const y=h=>bounds.bottom-h/yMax*(bounds.bottom-bounds.top);
+ const tickTime=t=>new Date(t+9*3600000).toISOString().slice(5,16).replace('T',' ');
+ const refs=[
+  {label:'전체 고객',stat:stats.all,color:'#79539b',dash:'9 5'},
+  {label:ownLabel,stat:stats.own,color:'#00796c',dash:'3 5'}
+ ];
+ let marks='';
+ for(let i=0;i<=4;i++){
+  const h=yMax*i/4,yy=y(h);
+  marks+='<path d="M65 '+yy+' H845" stroke="#dde6ee"/><text x="56" y="'+(yy+4)+'" text-anchor="end">'+fmt(Number(h.toPrecision(3)))+'</text>';
+ }
+ const ticks=low===high?[low]:[low,(low+high)/2,high];
+ for(const t of ticks)marks+='<text x="'+x(t)+'" y="228" text-anchor="middle">'+tickTime(t)+'</text>';
+ for(const ref of refs)if(ref.stat.n)marks+='<path d="M65 '+y(ref.stat.mean)+' H845" fill="none" stroke="'+ref.color+'" stroke-width="2" stroke-dasharray="'+ref.dash+'"/>';
+ for(const {row,t} of points){
+  const long=result=>Number.isFinite(result.p)&&result.p<.05&&row.hours>result.peerMean;
+  const own=long(row.own),all=long(row.all);
+  const color=own?'#c02d36':all?'#d66a0a':'#156ebb';
+  const stroke=own&&all?'#e47c15':'white';
+  const status=[own?'동일 고객 장시간':'',all?'전체 고객 장시간':''].filter(Boolean).join(' · ')||'장시간 미검출 / 계산 불가';
+  marks+='<circle cx="'+x(t)+'" cy="'+y(row.hours)+'" r="5" fill="'+color+'" stroke="'+stroke+'" stroke-width="'+(own&&all?2.5:1.5)+'"><title>'
+   +esc(row.lot+' · '+row.start+' · '+fmt(row.hours)+' h · '+status+' · 전체 p '+printP(row.all.p)+' / 고객 p '+printP(row.own.p))+'</title></circle>';
+ }
+ const legend=refs.map(ref=>'<span><i style="color:'+ref.color+'"></i>'+ref.label+' 평균 '+fmt(ref.stat.mean)+' h ('+ref.stat.n+' Lot)</span>').join('');
+ return '<figure class="window-plot"><figcaption>선택 Lot · In time별 Window time</figcaption><svg role="img" aria-label="선택한 Lot의 공정 투입 시각과 Window time, 선택 그룹을 제외한 비교 평균" viewBox="0 0 910 258" font-size="13" fill="#475b70"><text x="12" y="17">시간 (h)</text>'
+  +marks+'<text x="455" y="249" text-anchor="middle">In time (KST)</text></svg><div class="window-key"><span><b style="color:#156ebb">●</b> 기타 선택 Lot</span><span><b style="color:#c02d36">●</b> 동일 고객 장시간</span><span><b style="color:#d66a0a">●</b> 전체 고객 장시간</span><span><b class="both-dot"></b> 두 기준 모두</span>'+legend+'</div><small>점선과 그룹 행의 비교 평균은 선택 Lot 전체를 제외합니다.</small></figure>';
 }
