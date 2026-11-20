@@ -113,7 +113,7 @@ function rankLots(rows,direction){
   return {row,peerMean,p};
  }).sort((a,b)=>b.row.hours-a.row.hours);
 }
-let loaded=false, page=0, serial=0, population=[];
+let loaded=false, serial=0, population=[];
 const stages=['Bump','Assy','FT'];
 const outputHeaders=[...headers,'전체 고객 p','동일 고객 p','판정'];
 const today=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
@@ -190,25 +190,49 @@ function verdict(r){
  return labels.join(' · ')||(r.all.p==null&&r.own.p==null?'계산 불가':'미검출');
 }
 function cells(r){return [...values(r),printP(r.all.p),printP(r.own.p),verdict(r)];}
+function bulkSelection(event,selected,order){
+ if(event.type!=='keydown')return false;
+ const all=(event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='a';
+ if(!all&&event.key!=='Escape')return false;
+ event.preventDefault();
+ event.stopPropagation();
+ selected.clear();
+ anchors.delete(selected);
+ if(all)for(const key of order)selected.add(key);
+ return true;
+}
 function draw(){
- const host=$('equipment'),limit=100,part=visible.slice(page*limit,(page+1)*limit);
- $('count').textContent=visible.length+'행 · 유의 후보 '+visible.filter(r=>r.flag).length+'행';
- host.innerHTML=table(outputHeaders,part.map(cells));
- const trs=host.querySelectorAll('tbody tr');
- function paint(){trs.forEach((tr,i)=>{tr.classList.toggle('picked',selection.has(part[i].id));tr.setAttribute('aria-selected',selection.has(part[i].id));});}
- trs.forEach((tr,i)=>{
-  const r=part[i];tr.tabIndex=0;tr.classList.toggle('flag',r.flag);
-  const pick=e=>{togglePick(selection,r.id,visible.map(x=>x.id),e);paint();details();};
-  tr.onclick=pick;tr.onkeydown=e=>{if(['Enter',' '].includes(e.key)){e.preventDefault();pick(e);}};
- });
- paint();
- if(visible.length>limit){
-  const nav=document.createElement('div');nav.className='pagebar';
-  for(const [label,step] of [['이전',-1],['다음',1]]){
-   const b=document.createElement('button');b.textContent=label;b.disabled=step<0?page===0:(page+1)*limit>=visible.length;b.onclick=()=>{page+=step;draw();};nav.append(b);
-  }
-  nav.append((page+1)+' / '+Math.ceil(visible.length/limit));host.append(nav);
+ const host=$('equipment'),order=visible.map(row=>row.id);
+ host.innerHTML=table(outputHeaders,visible.map(cells));
+ const rows=host.querySelectorAll('tbody tr');
+ const summary=visible.length+'행 · 유의 후보 '+visible.filter(row=>row.flag).length+'행';
+ function paint(){
+  rows.forEach((row,i)=>{
+   const picked=selection.has(order[i]);
+   row.classList.toggle('picked',picked);
+   row.setAttribute('aria-selected',picked);
+  });
+  $('count').textContent=summary+' · 선택 '+selection.size+'행';
  }
+ rows.forEach((row,i)=>{
+  row.tabIndex=0;
+  row.dataset.index=i;
+  row.classList.toggle('flag',visible[i].flag);
+ });
+ function handle(event){
+  const row=event.target.closest('tr[data-index]');
+  if(!row)return;
+  if(!bulkSelection(event,selection,order)){
+   if(event.type==='keydown'&&!['Enter',' '].includes(event.key))return;
+   event.preventDefault();
+   row.focus({preventScroll:true});
+   togglePick(selection,order[Number(row.dataset.index)],order,event);
+  }
+  paint();
+  details();
+ }
+ host.onclick=host.onkeydown=handle;
+ paint();
 }
 function stageCards(rows){
  const reports=[...new Map(rows.flatMap(r=>r.reports).map(y=>[y.id,y])).values()];
@@ -222,18 +246,44 @@ function stageCards(rows){
   return '<section class="stage"><h3>'+stage+' Yield</h3><strong>'+(y==null?'—':fmt(y)+'%')+'</strong>'+ (data.some(y=>y.parent)?' · 모 Lot 수율 포함':'')+'<h4>Defect Pareto · Qty / 누적 %</h4>'+(bars?'<div class="pareto">'+bars+'</div>':'불량 모드별 수량 없음')+'</section>';
  }).join('')+'</div>';
 }
+let detailObserver=null;
 function details(){
  const host=$('comparison'),selected=visible.filter(r=>selection.has(r.id));
+ detailObserver?.disconnect();
  host.replaceChildren();if(!selected.length)return;
  host.innerHTML='<h3>선택 Lot 상세</h3>';
+ const pending=new Map();
+ const fragment=document.createDocumentFragment();
+ function addDetail(render){
+  const block=document.createElement('div');
+  fragment.append(block);
+  if(selected.length<=20||!('IntersectionObserver' in window)){render(block);return;}
+  block.className='pending-detail';
+  pending.set(block,render);
+ }
  const groups=new Map();
  for(const row of selected)add(groups,row.cohort,row);
  for(const [cohort,members] of groups){
-  host.insertAdjacentHTML('beforeend',selectionPanel(cohort,members));
-  linkLotDetails(host.lastElementChild,members);
+  addDetail(block=>{
+   block.innerHTML=selectionPanel(cohort,members);
+   linkLotDetails(block.firstElementChild,members);
+  });
  }
  for(const r of new Map(selected.map(r=>[JSON.stringify([r.customer,r.lot]),r])).values()){
-  host.insertAdjacentHTML('beforeend','<h4>'+esc(r.customer+' · '+r.lot)+'</h4>'+stageCards([r])+specDetails(r));
+  addDetail(block=>{block.innerHTML='<h4>'+esc(r.customer+' · '+r.lot)+'</h4>'+stageCards([r])+specDetails(r);});
+ }
+ host.append(fragment);
+ if(pending.size){
+  detailObserver=new IntersectionObserver((entries,observer)=>{
+   for(const {target,isIntersecting} of entries){
+    if(!isIntersecting||!target.isConnected||!pending.has(target))continue;
+    observer.unobserve(target);
+    pending.get(target)(target);
+    target.classList.remove('pending-detail');
+    pending.delete(target);
+   }
+  },{rootMargin:'250px 0px'});
+  for(const block of pending.keys())detailObserver.observe(block);
  }
  if(selected.length>1){
   const button=document.createElement('button');button.textContent='선택 그룹과 다른 Lot 비교';
@@ -265,11 +315,12 @@ async function search(){
    $('status').textContent=[e.error,...y.errors].filter(Boolean).join(' / ');
   }
   if(token!==serial)return;
-  page=0;selection.clear();buildResults();draw();details();
+  selection.clear();anchors.delete(selection);buildResults();draw();details();
  }catch(e){$('status').textContent='조회 실패 · '+e.message;}finally{busy=false;}
 }
 function clear(){
- serial++;visible=[];population=[];selection.clear();page=0;
+ detailObserver?.disconnect();
+ serial++;visible=[];population=[];selection.clear();anchors.delete(selection);
  for(const id of ['count','equipment','comparison','snapshot'])$(id).replaceChildren();
 }
 $('lotSearch').onclick=search;
@@ -347,35 +398,33 @@ function trendGrade(row){
  return significant(row.own)?(significant(row.all)?'both':'own'):(significant(row.all)?'all':'normal');
 }
 function linkLotDetails(panel,members,gradeFor=longClass,labels=longLabels){
- const scroller=panel.querySelector('.wrap');
- const rows=scroller.querySelectorAll('tbody tr');
- const points=new Map(Array.from(panel.querySelectorAll('.lot-point'),p=>[Number(p.dataset.member),p]));
- const halo=panel.querySelector('.lot-halo'),caption=panel.querySelector('.active-lot');
- let active=-1;
- function select(i,fromChart){
-  if(active>=0){
-   rows[active].classList.remove('active-row');
-   rows[active].removeAttribute('aria-current');
-   points.get(active)?.setAttribute('aria-pressed','false');
+ const scroller=panel.querySelector('.wrap'),rows=scroller.querySelectorAll('tbody tr');
+ const caption=panel.querySelector('.active-lot'),halo=panel.querySelector('.lot-halo');
+ const points=new Map(Array.from(panel.querySelectorAll('.lot-point'),node=>[
+  Number(node.dataset.member),{node,x:Number(node.dataset.x),y:Number(node.dataset.y)}
+ ]));
+ const selected=new Set(),order=members.map((_,index)=>index);
+ function paint(){
+  const rings=[];
+  for(const i of order){
+   const active=selected.has(i),point=points.get(i);
+   rows[i].classList.toggle('active-row',active);
+   rows[i].setAttribute('aria-selected',active);
+   if(!point)continue;
+   point.node.setAttribute('aria-pressed',active);
+   if(active)rings.push('M'+(point.x-8)+' '+point.y+'a8 8 0 1 0 16 0a8 8 0 1 0 -16 0');
   }
-  active=i;
-  const row=rows[i],point=points.get(i),lot=members[i];
-  row.classList.add('active-row');
-  row.setAttribute('aria-current','true');
-  if(halo){
-   halo.style.display=point?'':'none';
-   if(point){
-    halo.setAttribute('transform',point.getAttribute('transform'));
-    point.setAttribute('aria-pressed','true');
-   }
-  }
-  if(caption)caption.textContent=lot.lot+' · '+fmt(lot.hours)+' h · '+labels[gradeFor(lot)];
-  if(fromChart){
-   const area=scroller.getBoundingClientRect(),target=row.getBoundingClientRect();
-   const top=area.top+scroller.querySelector('thead').getBoundingClientRect().height;
-   if(target.top<top)scroller.scrollTop+=target.top-top;
-   else if(target.bottom>area.bottom)scroller.scrollTop+=target.bottom-area.bottom;
-  }
+  if(halo)halo.setAttribute('d',rings.join(' '));
+  const first=members[selected.values().next().value];
+  if(!first)caption.textContent='';
+  else if(selected.size===1)caption.textContent=first.lot+' · '+fmt(first.hours)+' h · '+labels[gradeFor(first)];
+  else caption.textContent=selected.size+'개 행 선택 · '+Array.from(selected).slice(0,3).map(i=>members[i].lot).join(', ')+(selected.size>3?' 외 '+(selected.size-3)+'행':'');
+ }
+ function showRow(row){
+  const area=scroller.getBoundingClientRect(),target=row.getBoundingClientRect();
+  const top=area.top+scroller.querySelector('thead').getBoundingClientRect().height;
+  if(target.top<top)scroller.scrollTop+=target.top-top;
+  else if(target.bottom>area.bottom)scroller.scrollTop+=target.bottom-area.bottom;
  }
  members.forEach((lot,i)=>{
   const row=rows[i],grade=gradeFor(lot);
@@ -388,11 +437,31 @@ function linkLotDetails(panel,members,gradeFor=longClass,labels=longLabels){
  function activate(event){
   const item=event.target.closest('[data-member]');
   if(!item)return;
-  if(event.type==='keydown'){
-   if(event.key!=='Enter'&&event.key!==' ')return;
-   event.preventDefault();
-  }
-  select(Number(item.dataset.member),item.classList.contains('lot-point'));
+  if(bulkSelection(event,selected,order)){paint();return;}
+  if(event.type==='keydown'&&!['Enter',' '].includes(event.key))return;
+  event.preventDefault();
+  item.focus({preventScroll:true});
+  const i=Number(item.dataset.member);
+  const fromChart=item.classList.contains('lot-point');
+  if(fromChart){
+   const point=points.get(i);
+   // Centers under the same marker are indistinguishable at this plot scale.
+   const hits=[];
+   for(const [index,other] of points){
+    if(Math.hypot(point.x-other.x,point.y-other.y)<=5)hits.push(index);
+   }
+   const remove=hits.every(index=>selected.has(index));
+   if(event.shiftKey&&selected.has(anchors.get(selected))){
+    togglePick(selected,i,order,event);
+    for(const index of hits)selected.add(index);
+   }else{
+    if(!event.ctrlKey&&!event.metaKey)selected.clear();
+    for(const index of hits){if(remove)selected.delete(index);else selected.add(index);}
+    if(remove)anchors.delete(selected);else anchors.set(selected,i);
+   }
+   if(selected.has(i))showRow(rows[hits[0]]);
+  }else togglePick(selected,i,order,event);
+  paint();
  }
  panel.addEventListener('click',activate);
  panel.addEventListener('keydown',activate);
@@ -442,13 +511,13 @@ function windowPlot(members,stats,ownLabel,trend=false){
  for(const ref of refs)if(ref.stat.n)marks+='<path d="M65 '+y(ref.stat.mean)+' H845" fill="none" stroke="'+ref.color+'" stroke-width="2" stroke-dasharray="'+ref.dash+'"/>';
  for(const {row,i,t} of points){
   const grade=gradeFor(row),label=row.lot+' · '+row.start+' · '+fmt(row.hours)+' h · '+labels[grade];
-  marks+='<g class="lot-point" role="button" tabindex="0" aria-pressed="false" aria-label="'+esc(label)+'" data-grade="'+grade+'" data-member="'+i+'" transform="translate('+x(t)+' '+y(row.hours)+')"><title>'
-   +esc(label+' · 전체 p '+printP(row.all.p)+' / 고객 p '+printP(row.own.p))+'</title><circle r="9" fill="transparent"/><circle class="lot-dot" r="5"/></g>';
+  marks+='<g class="lot-point" role="button" tabindex="0" aria-pressed="false" aria-label="'+esc(label)+'" data-grade="'+grade+'" data-member="'+i+'" data-x="'+x(t)+'" data-y="'+y(row.hours)+'" transform="translate('+x(t)+' '+y(row.hours)+')"><title>'
+   +esc(label+' · 전체 p '+printP(row.all.p)+' / 고객 p '+printP(row.own.p))+'</title><circle r="9" fill="transparent"/>'+((grade==='all'||grade==='both')?'<path class="lot-dot diamond" d="M0 -6 6 0 0 6 -6 0Z"/>'+(grade==='both'?'<circle r="2.5" fill="#bb263e"/>':''):'<circle class="lot-dot" r="5"/>')+'</g>';
  }
- marks+='<g class="lot-halo" style="display:none" fill="none" pointer-events="none"><circle r="9" stroke="white" stroke-width="5"/><circle r="9" stroke="#163b65" stroke-width="2.5"/></g>';
+ marks+='<path class="lot-halo" fill="none" stroke="#163b65" stroke-width="2" pointer-events="none"/>';
  const legend=refs.map(ref=>'<span><i style="color:'+ref.color+'"></i>'+ref.label+' 평균 '+fmt(ref.stat.mean)+' h ('+ref.stat.n+' Lot)</span>').join('');
  return '<figure class="window-plot"><figcaption>'+plotTitle+'</figcaption><svg role="group" aria-label="'+plotTitle+'" viewBox="0 0 910 258" font-size="13" fill="#475b70"><text x="12" y="17">시간 (h)</text>'
-  +marks+'<text x="455" y="249" text-anchor="middle">In time (KST)</text></svg><div class="window-key"><span><b style="color:#156ebb">●</b> '+labels.normal+'</span><span><b style="color:#c02d36">●</b> '+labels.own+'</span><span><b style="color:#d66a0a">●</b> '+labels.all+'</span><span><b class="both-dot"></b> 두 기준 모두</span>'+legend+'</div>'+(trend?'':'<small>점선과 그룹 행의 비교 평균은 선택 Lot 전체를 제외합니다.</small>')+'<output class="active-lot" aria-live="polite"></output></figure>';
+  +marks+'<text x="455" y="249" text-anchor="middle">In time (KST)</text></svg><div class="window-key"><span><b style="color:#156ebb">●</b> '+labels.normal+'</span><span><b style="color:#c02d36">●</b> '+labels.own+'</span><span><b style="color:#7147aa">◆</b> '+labels.all+'</span><span><b class="both-dot"></b> 두 기준 모두</span>'+legend+'</div>'+(trend?'':'<small>점선과 그룹 행의 비교 평균은 선택 Lot 전체를 제외합니다.</small>')+'<output class="active-lot" aria-live="polite"></output></figure>';
 }
 
 // Build the process populations from In time, independently of the search sheet's Out-date filters.
