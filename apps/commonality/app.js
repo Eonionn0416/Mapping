@@ -1,5 +1,5 @@
 import * as C from '../../shared/equipment-core.js?v=120';
-import * as Store from '../../shared/equipment-store.js?v=118';
+import * as Store from '../../shared/equipment-store.js?v=129';
 import {loadYields} from './yield-sources.js?v=125';
 const $=id=>document.getElementById(id),esc=Store.esc,fmt=v=>v==null?'—':typeof v==='number'?v.toLocaleString(undefined,{maximumFractionDigits:4}):String(v);let equipment=[],yieldRecords=[],busy=false;
 const table=(headers,rows)=>'<div class="wrap"><table><thead><tr>'+headers.map(h=>'<th>'+esc(h)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+r.map(v=>'<td>'+esc(fmt(v))+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>';
@@ -9,7 +9,7 @@ async function ingest(file){
  busy=true;
  try{
   if(/^ASSY_CT_START_/i.test(file.name))await importCycle(file);else await Store.ingest(file);
-  loaded=false;lookupData=null;
+  loaded=false;lookupData=null;refreshTrendTabs();if(activeSheet!=='Commonality')renderTrendSheet();
   $('status').textContent='가져오기 완료 · 검색하면 반영됩니다.';
  }finally{busy=false;}
 }
@@ -159,7 +159,7 @@ function buildResults(){
   const records=[...exact,...parent.filter(y=>!exact.some(r=>r.metric===y.metric)).map(y=>({...y,parent:true}))];
   const yields=Object.fromEntries(stages.map(stage=>[stage,stageYield(records.filter(r=>r.metric===stage))]));
   for(const unit of exposures){
-   const row={...w,machines:unit?[unit]:machines,reports:records,yields,sourceId:w.id,id:JSON.stringify([w.id,unit])};
+   const row={...w,usedMachines:machines,machines:unit?[unit]:machines,reports:records,yields,sourceId:w.id,id:JSON.stringify([w.id,unit])};
    add(groups,JSON.stringify([code(w.process),unit]),row);
   }
  }
@@ -230,6 +230,7 @@ function details(){
  for(const row of selected)add(groups,row.cohort,row);
  for(const [cohort,members] of groups){
   host.insertAdjacentHTML('beforeend',selectionPanel(cohort,members));
+  linkLotDetails(host.lastElementChild,members);
  }
  for(const r of new Map(selected.map(r=>[JSON.stringify([r.customer,r.lot]),r])).values()){
   host.insertAdjacentHTML('beforeend','<h4>'+esc(r.customer+' · '+r.lot)+'</h4>'+stageCards([r])+specDetails(r));
@@ -333,23 +334,91 @@ function selectionStats(cohort,members){
  };
 }
 
+const longLabels={own:'동일 고객 장시간',all:'전체 고객 장시간',both:'두 기준 모두 장시간',normal:'기타 선택 Lot'};
+function longClass(row){
+ const longer=result=>Number.isFinite(result.p)&&result.p<.05&&row.hours>result.peerMean;
+ if(longer(row.own))return longer(row.all)?'both':'own';
+ return longer(row.all)?'all':'normal';
+}
+
+const trendLabels={own:'동일 고객 유의차',all:'전체 고객 유의차',both:'두 기준 모두 유의차',normal:'기타 Lot'};
+function trendGrade(row){
+ const significant=result=>Number.isFinite(result.p)&&result.p<.05;
+ return significant(row.own)?(significant(row.all)?'both':'own'):(significant(row.all)?'all':'normal');
+}
+function linkLotDetails(panel,members,gradeFor=longClass,labels=longLabels){
+ const scroller=panel.querySelector('.wrap');
+ const rows=scroller.querySelectorAll('tbody tr');
+ const points=new Map(Array.from(panel.querySelectorAll('.lot-point'),p=>[Number(p.dataset.member),p]));
+ const halo=panel.querySelector('.lot-halo'),caption=panel.querySelector('.active-lot');
+ let active=-1;
+ function select(i,fromChart){
+  if(active>=0){
+   rows[active].classList.remove('active-row');
+   rows[active].removeAttribute('aria-current');
+   points.get(active)?.setAttribute('aria-pressed','false');
+  }
+  active=i;
+  const row=rows[i],point=points.get(i),lot=members[i];
+  row.classList.add('active-row');
+  row.setAttribute('aria-current','true');
+  if(halo){
+   halo.style.display=point?'':'none';
+   if(point){
+    halo.setAttribute('transform',point.getAttribute('transform'));
+    point.setAttribute('aria-pressed','true');
+   }
+  }
+  if(caption)caption.textContent=lot.lot+' · '+fmt(lot.hours)+' h · '+labels[gradeFor(lot)];
+  if(fromChart){
+   const area=scroller.getBoundingClientRect(),target=row.getBoundingClientRect();
+   const top=area.top+scroller.querySelector('thead').getBoundingClientRect().height;
+   if(target.top<top)scroller.scrollTop+=target.top-top;
+   else if(target.bottom>area.bottom)scroller.scrollTop+=target.bottom-area.bottom;
+  }
+ }
+ members.forEach((lot,i)=>{
+  const row=rows[i],grade=gradeFor(lot);
+  row.dataset.member=i;
+  row.dataset.grade=grade;
+  row.tabIndex=0;
+  row.title=labels[grade];
+  row.setAttribute('aria-label',lot.lot+' · '+labels[grade]);
+ });
+ function activate(event){
+  const item=event.target.closest('[data-member]');
+  if(!item)return;
+  if(event.type==='keydown'){
+   if(event.key!=='Enter'&&event.key!==' ')return;
+   event.preventDefault();
+  }
+  select(Number(item.dataset.member),item.classList.contains('lot-point'));
+ }
+ panel.addEventListener('click',activate);
+ panel.addEventListener('keydown',activate);
+}
+
 function selectionPanel(cohort,members){
  const stats=selectionStats(cohort,members),first=members[0];
  const process=processLabel(first.process),machine=$('machine').value?first.machines[0]:'';
  const ownLabel=stats.customers.length===1?'동일 고객':'선택 고객';
  const title=[process,machine,stats.customers.join(' · ')].filter(Boolean).join(' / ');
  const reports=[...new Map(members.flatMap(row=>row.reports).map(report=>[report.id,report])).values()];
- const records=members.map(r=>[r.customer,r.lot,r.start,r.hours,r.all.peerMean,r.own.peerMean,...stages.map(stage=>r.yields[stage])]);
- records.push([stats.customers.join(' · '),'선택 그룹 평균 ('+stats.selected.n+' Lot)','—',stats.selected.mean,stats.all.mean,stats.own.mean,
+ const records=members.map(r=>[r.customer,r.lot,r.usedMachines.join(' · ')||'—',r.start,r.hours,r.all.peerMean,r.own.peerMean,...stages.map(stage=>r.yields[stage])]);
+ records.push([stats.customers.join(' · '),'선택 그룹 평균 ('+stats.selected.n+' Lot)','—','—',stats.selected.mean,stats.all.mean,stats.own.mean,
   ...stages.map(stage=>stageYield(reports.filter(report=>report.metric===stage)))]);
- return '<section class="window-selection"><h4>'+esc(title)+'</h4>'
-  +table(['Customer','Lot','In time','Window h','전체 고객 비교 평균 h',ownLabel+' 비교 평균 h',...stages.map(x=>x+' %')],records)
-  +windowPlot(members,stats,ownLabel)+'</section>';
+ return '<section class="window-selection"><h4>'+esc(title)+'</h4><div class="lot-layout">'
+  +windowPlot(members,stats,ownLabel)
+  +table(['Customer','Lot','장비 #','In time','Window h','전체 고객 비교 평균 h',ownLabel+' 비교 평균 h',...stages.map(x=>x+' %')],records)
+  +'</div></section>';
 }
 
-function windowPlot(members,stats,ownLabel){
- const points=members.map(row=>({row,t:eventTime(row.start)})).filter(p=>Number.isFinite(p.t));
- if(!points.length)return '<p>In time 기록이 없습니다.</p>';
+function windowPlot(members,stats,ownLabel,trend=false){
+ const labels=trend?trendLabels:longLabels;
+ const gradeFor=trend?trendGrade:longClass;
+ const plotTitle=trend?'공정 In time별 Window time':'선택 Lot · In time별 Window time';
+ const points=members.map((row,i)=>({row,i,t:eventTime(row.start)})).filter(p=>Number.isFinite(p.t));
+ if(!points.length)return '<figure class="window-plot"><figcaption>'+plotTitle+'</figcaption><p>In time 기록이 없습니다.</p><output class="active-lot" aria-live="polite"></output></figure>';
  const bounds={left:65,right:845,top:25,bottom:207};
  let low=Infinity,high=-Infinity,maxY=0;
  for(const {t,row} of points){low=Math.min(low,t);high=Math.max(high,t);maxY=Math.max(maxY,row.hours);}
@@ -359,7 +428,7 @@ function windowPlot(members,stats,ownLabel){
  const x=t=>bounds.left+(t-minTime)/(maxTime-minTime)*(bounds.right-bounds.left);
  const y=h=>bounds.bottom-h/yMax*(bounds.bottom-bounds.top);
  const tickTime=t=>new Date(t+9*3600000).toISOString().slice(5,16).replace('T',' ');
- const refs=[
+ const refs=trend?[]:[
   {label:'전체 고객',stat:stats.all,color:'#79539b',dash:'9 5'},
   {label:ownLabel,stat:stats.own,color:'#00796c',dash:'3 5'}
  ];
@@ -371,16 +440,116 @@ function windowPlot(members,stats,ownLabel){
  const ticks=low===high?[low]:[low,(low+high)/2,high];
  for(const t of ticks)marks+='<text x="'+x(t)+'" y="228" text-anchor="middle">'+tickTime(t)+'</text>';
  for(const ref of refs)if(ref.stat.n)marks+='<path d="M65 '+y(ref.stat.mean)+' H845" fill="none" stroke="'+ref.color+'" stroke-width="2" stroke-dasharray="'+ref.dash+'"/>';
- for(const {row,t} of points){
-  const long=result=>Number.isFinite(result.p)&&result.p<.05&&row.hours>result.peerMean;
-  const own=long(row.own),all=long(row.all);
-  const color=own?'#c02d36':all?'#d66a0a':'#156ebb';
-  const stroke=own&&all?'#e47c15':'white';
-  const status=[own?'동일 고객 장시간':'',all?'전체 고객 장시간':''].filter(Boolean).join(' · ')||'장시간 미검출 / 계산 불가';
-  marks+='<circle cx="'+x(t)+'" cy="'+y(row.hours)+'" r="5" fill="'+color+'" stroke="'+stroke+'" stroke-width="'+(own&&all?2.5:1.5)+'"><title>'
-   +esc(row.lot+' · '+row.start+' · '+fmt(row.hours)+' h · '+status+' · 전체 p '+printP(row.all.p)+' / 고객 p '+printP(row.own.p))+'</title></circle>';
+ for(const {row,i,t} of points){
+  const grade=gradeFor(row),label=row.lot+' · '+row.start+' · '+fmt(row.hours)+' h · '+labels[grade];
+  marks+='<g class="lot-point" role="button" tabindex="0" aria-pressed="false" aria-label="'+esc(label)+'" data-grade="'+grade+'" data-member="'+i+'" transform="translate('+x(t)+' '+y(row.hours)+')"><title>'
+   +esc(label+' · 전체 p '+printP(row.all.p)+' / 고객 p '+printP(row.own.p))+'</title><circle r="9" fill="transparent"/><circle class="lot-dot" r="5"/></g>';
  }
+ marks+='<g class="lot-halo" style="display:none" fill="none" pointer-events="none"><circle r="9" stroke="white" stroke-width="5"/><circle r="9" stroke="#163b65" stroke-width="2.5"/></g>';
  const legend=refs.map(ref=>'<span><i style="color:'+ref.color+'"></i>'+ref.label+' 평균 '+fmt(ref.stat.mean)+' h ('+ref.stat.n+' Lot)</span>').join('');
- return '<figure class="window-plot"><figcaption>선택 Lot · In time별 Window time</figcaption><svg role="img" aria-label="선택한 Lot의 공정 투입 시각과 Window time, 선택 그룹을 제외한 비교 평균" viewBox="0 0 910 258" font-size="13" fill="#475b70"><text x="12" y="17">시간 (h)</text>'
-  +marks+'<text x="455" y="249" text-anchor="middle">In time (KST)</text></svg><div class="window-key"><span><b style="color:#156ebb">●</b> 기타 선택 Lot</span><span><b style="color:#c02d36">●</b> 동일 고객 장시간</span><span><b style="color:#d66a0a">●</b> 전체 고객 장시간</span><span><b class="both-dot"></b> 두 기준 모두</span>'+legend+'</div><small>점선과 그룹 행의 비교 평균은 선택 Lot 전체를 제외합니다.</small></figure>';
+ return '<figure class="window-plot"><figcaption>'+plotTitle+'</figcaption><svg role="group" aria-label="'+plotTitle+'" viewBox="0 0 910 258" font-size="13" fill="#475b70"><text x="12" y="17">시간 (h)</text>'
+  +marks+'<text x="455" y="249" text-anchor="middle">In time (KST)</text></svg><div class="window-key"><span><b style="color:#156ebb">●</b> '+labels.normal+'</span><span><b style="color:#c02d36">●</b> '+labels.own+'</span><span><b style="color:#d66a0a">●</b> '+labels.all+'</span><span><b class="both-dot"></b> 두 기준 모두</span>'+legend+'</div>'+(trend?'':'<small>점선과 그룹 행의 비교 평균은 선택 Lot 전체를 제외합니다.</small>')+'<output class="active-lot" aria-live="polite"></output></figure>';
 }
+
+// Build the process populations from In time, independently of the search sheet's Out-date filters.
+function processPopulations(source, equipmentRows, from, to){
+ const groups=new Map();
+ const byLot=new Map(C.latest(equipmentRows).map(r=>[identity(r.customer,r.lot,r.process),r]));
+ for(const window of source){
+  const day=C.day(window.start);
+  if(!Number.isFinite(window.hours)||!day||day<from||day>to)continue;
+  const process=code(window.process);
+  const exact=byLot.get(identity(window.customer,window.lot,process));
+  const machine=exact||byLot.get(identity(window.customer,C.baseLot(window.lot),process));
+  add(groups,process,{...window,process,usedMachines:machine?.machines||[],machineParent:!exact&&machine?machine.lot:''});
+ }
+ for(const group of groups.values()){
+  const byCustomer=new Map();
+  for(const {row,p,peerMean} of rankLots(group,'both')){
+   row.all={p,peerMean};add(byCustomer,row.customer,row);
+  }
+  for(const own of byCustomer.values()){
+   for(const {row,p,peerMean} of rankLots(own,'both'))row.own={p,peerMean};
+  }
+  group.sort((a,b)=>String(a.start).localeCompare(String(b.start))||a.lot.localeCompare(b.lot));
+ }
+ return groups;
+}
+
+function renderProcessCard(card,rows){
+ const result=(r,hours)=>Number.isFinite(r.p)?printP(r.p)+(r.p<.05?(r.peerMean<hours?' ↑':' ↓'):''):'—';
+ const records=rows.map(r=>[r.customer,r.lot,r.device||'—',(r.usedMachines.join(' · ')||'—')+(r.machineParent?' (모 Lot '+r.machineParent+')':''),r.start,r.end,r.hours,result(r.all,r.hours),result(r.own,r.hours)]);
+ const headers=['Customer','Lot','Device','장비 #','In time','Out time','Window (h)','전체 고객 p','동일 고객 p'];
+ card.innerHTML='<h3>'+esc(processLabel(rows[0].process))+'</h3><div class="lot-layout">'+windowPlot(rows,{all:{},own:{}},'',true)+table(headers,records)+'</div>';
+ linkLotDetails(card,rows,trendGrade,trendLabels);
+}
+
+let activeSheet='Commonality',trendRequest=0,trendObserver=null;
+let sheetCustomers=['MTK','BDR','MNT'];
+function refreshTrendTabs(){
+ const standard=['MTK','BDR','MNT'];
+ const found=new Set([...windows.values()].map(r=>r.customer).filter(Boolean));
+ sheetCustomers=standard.concat([...found].filter(c=>!standard.includes(c)).sort());
+ const buttons=['Commonality','All',...sheetCustomers].map(name=>{
+  const btn=document.createElement('button');
+  btn.type='button';btn.textContent=name;btn.dataset.sheet=name;
+  btn.setAttribute('aria-pressed',String(name===activeSheet));
+  return btn;
+ });
+ $('trendTabs').replaceChildren(...buttons);
+}
+async function renderTrendSheet(){
+ const seq=++trendRequest,customer=activeSheet,from=$('trendFrom').value,to=$('trendTo').value;
+ trendObserver?.disconnect();
+ const host=$('processTrends'),status=$('trendStatus');
+ host.replaceChildren();
+ if(customer==='Commonality')return;
+ if(!from||!to||from>to){status.textContent='조회 기간을 확인하세요.';return;}
+ status.textContent='공정 이력 조회 중…';
+ try{
+  const [,eq]=await Promise.all([ensureCycle(),Store.load().catch(e=>({records:[],error:'장비 조회 실패 · '+e.message}))]);
+  if(seq!==trendRequest)return;
+  refreshTrendTabs();
+  const groups=processPopulations(windows.values(),eq.records,from,to);
+  const cards=new Map();
+  for(const process of [...groups.keys()].sort(Store.compareProcesses)){
+   const source=groups.get(process),rows=customer==='All'?source:source.filter(r=>r.customer===customer);
+   if(!rows.length)continue;
+   const card=document.createElement('section');card.className='card process-card';
+   const title=document.createElement('h3');title.textContent=processLabel(process);card.append(title);
+   cards.set(card,rows);host.append(card);
+  }
+  status.textContent=(cards.size?cards.size+'개 공정 · 보정 p < 0.05 · ↑ 장시간 / ↓ 단시간':'이 기간에 완료된 공정 Window time이 없습니다.')+(eq.error?' · '+eq.error:'');
+  if(!cards.size)return;
+  if(!('IntersectionObserver' in window)){for(const [card,rows] of cards)renderProcessCard(card,rows);return;}
+  const observer=new IntersectionObserver(entries=>{
+   if(seq!==trendRequest)return;
+   for(const entry of entries){
+    if(!entry.isIntersecting)continue;
+    observer.unobserve(entry.target);renderProcessCard(entry.target,cards.get(entry.target));cards.delete(entry.target);
+   }
+  },{rootMargin:'300px 0px'});
+  trendObserver=observer;
+  for(const card of cards.keys())observer.observe(card);
+ }catch(error){if(seq===trendRequest)status.textContent='공정 이력 조회 실패 · '+error.message;}
+}
+$('trendTabs').onclick=event=>{
+ const button=event.target.closest('button[data-sheet]');
+ if(!button||button.dataset.sheet===activeSheet)return;
+ activeSheet=button.dataset.sheet;
+ const search=activeSheet==='Commonality';
+ $('searchSheet').hidden=!search;$('trendSheet').hidden=search;
+ for(const tab of $('trendTabs').children)tab.setAttribute('aria-pressed',String(tab===button));
+ renderTrendSheet();
+};
+const previousMonth=new Date(today+'T00:00:00Z');
+previousMonth.setUTCDate(1);
+previousMonth.setUTCMonth(previousMonth.getUTCMonth()-1);
+const lastDay=new Date(Date.UTC(previousMonth.getUTCFullYear(),previousMonth.getUTCMonth()+1,0)).getUTCDate();
+previousMonth.setUTCDate(Math.min(Number(today.slice(-2)),lastDay));
+$('trendFrom').value=previousMonth.toISOString().slice(0,10);$('trendTo').value=today;
+for(const id of ['trendFrom','trendTo'])$(id).addEventListener('change',renderTrendSheet);
+refreshTrendTabs();
+// Discover customer tabs without calculating any charts until a trend sheet is opened.
+const discover=()=>ensureCycle().then(refreshTrendTabs).catch(()=>{});
+if('requestIdleCallback' in window)window.requestIdleCallback(discover);else setTimeout(discover,0);

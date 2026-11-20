@@ -35,6 +35,11 @@ function readCycleWindows() {
 const operations = new Map('S01:D/B N11:AIN 2:W/I 14:LMN 3:B/G 8:L/G 10:D/S 20:2ND 438:SAU 80:SPP 25:CCM 441:C/A 451:DFX 67:PB2 94:PSU 95:U/F 96:UFC 60:3RD 66:A/M 87:PS3 100:M/D 105:PMC 202:LM2 140:SDA 141:SDC 203:LMK 495:PCI 503:LSC 500:SBM 510:SGN 512:ICO 290:EVI S31:S31'.split(' ').map(pair => pair.split(':')));
 const operationCodes = new Map([...operations].map(([code, name]) => [name, code]));
 const processCode = value => operationCodes.get(C.norm(value)) || C.norm(value).replace(/^0+(?=\d)/, '');
+const routeOrder = new Map(Array.from(operations.keys(), (code, i) => [code, i]));
+export function compareProcesses(left, right) {
+  const a = processCode(left), b = processCode(right);
+  return (routeOrder.get(a) ?? Infinity) - (routeOrder.get(b) ?? Infinity) || a.localeCompare(b, 'en', {numeric:true});
+}
 const lotKey = value => String(value ?? '').trim().toUpperCase().replace(/\s+/g, ' ');
 const parentLot = lot => lot.replace(/\s+\d{1,3}$/, '');
 const windowKey = (lot, process) => JSON.stringify([lot, process]);
@@ -102,7 +107,7 @@ function lotWindows(customer, lots, equipment, cycles) {
     }
   }
   for (const group of groups.values()) group.sort((a,b) => a.time - b.time || a.lot.localeCompare(b.lot));
-  return [...display.values()].sort((a,b) => a.lot.localeCompare(b.lot) || (a.time || Infinity) - (b.time || Infinity) || a.process.localeCompare(b.process, 'en', {numeric:true})).map(row => {
+  return [...display.values()].sort((a,b) => compareProcesses(a.process,b.process) || a.lot.localeCompare(b.lot)).map(row => {
     const machine = tools.get(windowKey(row.lot, row.process)) || tools.get(windowKey(parentLot(row.lot), row.process));
     return {...row, machine, stats:neighborStats(groups.get(row.process), row.time, row.hours)};
   });
