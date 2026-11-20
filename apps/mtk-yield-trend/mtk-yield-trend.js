@@ -1,5 +1,5 @@
 import {ingest as ingestEquipment} from '../../shared/equipment-store.js?v=118';
-import {mountLotOverview} from './lot-overview.js?v=118';
+import {mountLotOverview} from './lot-overview.js?v=131';
 let refreshLotOverview=()=>{};
 let qaAutoBusy=true;
 import { mtkYieldFirebaseConfig } from "../../shared/firebase-config.js";

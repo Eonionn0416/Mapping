@@ -5,9 +5,16 @@ const number=v=>v===null||v===undefined||v===''?null:Number.isFinite(Number(v))?
 const pct=(a,b)=>a!==null&&b>0?a/b*100:null;
 export function selectLot(data,query){
  const q=norm(query);if(!valid(q))return {assy:[],os:[],bin:[]};
- // Match the requested lot directly. Shared MO/batch IDs must never expand the result to sibling lots.
  const match=(r,fields)=>fields.some(k=>norm(r[k])===q);
- return {assy:data.assy.filter(r=>match(r,['sckInputLotNo','ftLotNo'])),os:data.os.filter(r=>match(r,['lotId'])),bin:data.bin.filter(r=>match(r,['lotId','custRunId']))};
+ const assy=data.assy.filter(r=>match(r,['sckInputLotNo','ftLotNo']));
+ // Weekly Assy and FT files can arrive independently.
+ const assyLot=assy.some(r=>norm(r.sckInputLotNo)===q)||/^[A-Z0-9]+\.\d+-[A-Z0-9]*\d$/.test(q);
+ const bin=data.bin.filter(row=>{
+  const ftLot=norm(row.lotId);
+  if(ftLot===q||norm(row.custRunId)===q)return true;
+  return assyLot&&/[A-Z]$/.test(ftLot)&&ftLot.slice(0,-1)===q;
+ });
+ return {assy,os:data.os.filter(r=>match(r,['lotId'])),bin};
 }
 export function pareto(rows){
  const totals=new Map();let input=0;
