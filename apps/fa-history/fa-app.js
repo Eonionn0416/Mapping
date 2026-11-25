@@ -100,3 +100,12 @@ async function clearFAHistory(where){if(busy){status('진행 중인 작업이 �
 }
 $('clearFALocal').onclick=()=>clearFAHistory('local');$('clearFACloud').onclick=()=>clearFAHistory('cloud');$('clearFAAll').onclick=()=>clearFAHistory('all');
 window.addEventListener('storage',e=>{if(e.key===FAStore.KEY&&!busy){FAStore.reload();renderList();if(!FAStore.all().some(v=>v.requestId===requestId)){current=null;dirty=false;$('editor').hidden=true;}}});
+
+guard(async()=>{
+ const result=await S.load(status);
+ renderList();
+ const id=new URLSearchParams(location.search).get('qaFA');
+ const linked=id&&FAStore.all().find(v=>v.id===id||v.requestId===id);
+ if(linked&&!dirty)open(linked);
+ if(result.failed)status('FA Firestore 조회 실패 '+result.failed+'건');
+});

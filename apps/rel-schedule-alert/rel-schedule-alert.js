@@ -1626,8 +1626,39 @@ function repeatFtQueue(records) {
 }
 function summaryViewRows(){
  const sequence=repeatFtQueue(viewRows);
- const rows=viewRows.filter(r=>sequence.has(r) ? sequence.get(r) : shipmentContext(rawRows,r,today) || r.handoff?.parenthesized || r.recvCheck?.parenthesized || r.summarySelected===true || (r.summarySelected===undefined&&/^(FT\b|FT\(|.*SAT)/i.test(r.relItem)));
+ const stages = new Map(), hidden = new Set(), plans = new Map();
+ for (const row of viewRows) {
+  if (!/MTK/i.test(row.sourceFileName)) continue;
+  const key = JSON.stringify([row.sourceFileName,row.sheetName,row.criteria]);
+  if (!plans.has(key)) plans.set(key,[]);
+  plans.get(key).push(row);
+ }
+ for (const rows of plans.values()) {
+  rows.sort((a,b)=>a.rowNumber-b.rowNumber);
+  for (const [i,row] of rows.entries()) {
+   const previous=rows[i-1];
+   if (/^SAT$/i.test(row.relItem) && row.dateOut) {
+    const stress=rows.slice(0,i).reverse().find(r=>/^(HTST|TC|[uUbB]?HAST)\s*\d/i.test(r.relItem));
+    const state=evaluateAlert({...row,result:''},statusMap.get(row.dedupeKey),today,ALERT_LEAD_DAYS,/on\s*going/i.test(row.status)?'explicit':'');
+    stages.set(row,{state,label:[stress?.relItem,'SAT'].filter(Boolean).join(' ')});
+    if (stress===previous && previous && previous.statusRef && previous.statusRef===row.statusRef) hidden.add(previous);
+   }
+   if (/^Shipment$/i.test(row.relItem) && stages.has(previous)) {
+    const sat=stages.get(previous);
+    if (!sat.state.done && /on\s*going/i.test(previous.status)) hidden.add(row);
+    const sh=shipmentContext(rawRows,row,today);
+    const state=evaluateAlert({...row,result:''},statusMap.get(row.dedupeKey),today,ALERT_LEAD_DAYS,/on\s*going/i.test(row.status)?'explicit':'');
+    const missing=[];
+    if (!sh?.complete) missing.push('발송일 미기재');
+    if (!/DHL\s*[#:]?\s*\d{8,}/i.test(row.dhlText||row.remark||'')) missing.push('DHL# 미기재');
+    stages.set(row,{state,label:sat.label+' Shipment'+(missing.length?' · '+missing.join(' · '):'')});
+   }
+  }
+ }
+ const rows=viewRows.filter(r=>!hidden.has(r)).filter(r=>stages.has(r) || (sequence.has(r) ? sequence.get(r) : shipmentContext(rawRows,r,today) || r.handoff?.parenthesized || r.recvCheck?.parenthesized || (/\b(?:BHAST|biased\s+HAST)\b/i.test(r.criteria||'') && /^SAT$/i.test((r.relItem||'').trim()) && r.dateOut) || r.summarySelected===true || (r.summarySelected===undefined&&/^(FT\b|FT\(|.*SAT)/i.test(r.relItem))));
  return rows.map(r=>{
+  const stage=stages.get(r);
+  if(stage)return {...r,relItem:stage.label,state:stage.state,handoff:null,recvCheck:null,block:null};
   const manual=statusMap.get(r.dedupeKey),baseState=evaluateAlert({...r,result:''},manual,today,ALERT_LEAD_DAYS,/on\s*going/i.test(r.status)?'explicit':'');
   const state=sequence.has(r) ? evaluateAlert({...r,status:'',result:''},null,today,ALERT_LEAD_DAYS,'sequence') : shippingState(r,baseState);
   const related=viewRows.filter(x=>x.sourceFileName===r.sourceFileName&&x.sheetName===r.sheetName&&x.criteria===r.criteria&&(x.dueRef===r.dueRef||x.statusRef&&x.statusRef===r.statusRef&&x.dateOut===r.dateOut));

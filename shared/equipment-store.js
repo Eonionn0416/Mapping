@@ -8,7 +8,15 @@ export async function load(force=false){if(pending&&!force)return pending;pendin
 export async function ingest(file){const incoming=C.parse(await file.text(),file.name),all=C.merge(await local(),incoming);await local(all);cache=all;pending=null;const db=await connection();for(let i=0;i<incoming.length;i+=300){const b=writeBatch(db);for(const r of incoming.slice(i,i+300)){const saved=all.find(x=>x.id===r.id&&x.date===r.date);b.set(doc(db,'equipmentRecords',await hash(JSON.stringify([r.id,r.date]))),saved);}await b.commit();}window.dispatchEvent(new Event('qa-equipment-updated'));return incoming.length;}
 export const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 // Commonality owns this database and its migrations.
-function readCycleWindows() {
+export async function readCycleWindows(){
+ const {history}=await import('./report-history.js');
+ const merged=new Map((await localCycleWindows()).map(r=>[r.id,r]));
+ for(const group of await history('qaCycleReports'))for(const r of group){
+  if((merged.get(r.id)?.rev||'')<=r.rev)merged.set(r.id,r);
+ }
+ return [...merged.values()];
+}
+function localCycleWindows() {
   return new Promise((resolve, reject) => {
     const open = indexedDB.open('QACommonalityCycle');
     let missing = false;
@@ -36,6 +44,7 @@ const operations = new Map('S01:D/B N11:AIN 2:W/I 14:LMN 3:B/G 8:L/G 10:D/S 20:2
 const operationCodes = new Map([...operations].map(([code, name]) => [name, code]));
 const processCode = value => operationCodes.get(C.norm(value)) || C.norm(value).replace(/^0+(?=\d)/, '');
 const routeOrder = new Map(Array.from(operations.keys(), (code, i) => [code, i]));
+routeOrder.set('MUF', routeOrder.get('441') + 0.5);
 export function compareProcesses(left, right) {
   const a = processCode(left), b = processCode(right);
   return (routeOrder.get(a) ?? Infinity) - (routeOrder.get(b) ?? Infinity) || a.localeCompare(b, 'en', {numeric:true});

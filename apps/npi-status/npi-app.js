@@ -16,7 +16,7 @@ $('export').onclick=()=>{const cell=v=>'"'+String(v??'').replace(/^[=+@-]/,"'$&"
 
 async function npiAPI(){return import('../../shared/qa-cloud.js?v=85');}
 async function npiSaveCloud(){if(busy)return;busy=true;try{await (await npiAPI()).saveNPI(sheets);$('status').textContent='NPI Local / Firestore 저장 완료';}catch(e){$('status').textContent='Local 저장 완료. Firestore 저장 실패: '+e.message;}finally{busy=false;}}
-$('npiSync').onclick=()=>{if(!busy)npiSaveCloud();};$('npiLoad').onclick=async()=>{if(busy)return;busy=true;try{persist(await (await npiAPI()).loadNPI());$('status').textContent='Firestore NPI 불러오기 완료';}catch(e){$('status').textContent=e.message;}finally{busy=false;}};
+$('npiSync').onclick=()=>{if(!busy)npiSaveCloud();};$('npiLoad').onclick=async()=>{if(busy)return;busy=true;try{const incoming=await (await npiAPI()).loadNPI();if(incoming.length)persist(incoming);$('status').textContent='Firestore NPI 불러오기 완료';}catch(e){$('status').textContent=e.message;}finally{busy=false;}};
 async function deleteNpi(where){if(busy)return;if(!confirm((where==='all'?'Local + Firestore':where==='local'?'Local':'Firestore')+' NPI 전체 이력을 삭제할까요?'))return;busy=true;try{if(where!=='local')await (await npiAPI()).deleteNPI();if(where!=='cloud'){persist([]);pending=[];$('save').disabled=true;$('preview').innerHTML='';$('file').value='';$('restore').value='';}$('status').textContent='NPI 삭제 완료. 다른 저장소를 남긴 경우 저장/불러오기로 다시 복원될 수 있습니다.';}catch(e){$('status').textContent='삭제 실패: '+e.message+' 일부 삭제되었을 수 있습니다. 재시도하세요.';}finally{busy=false;}}
 $('npiDeleteLocal').onclick=()=>deleteNpi('local');$('npiDeleteCloud').onclick=()=>deleteNpi('cloud');$('npiDeleteAll').onclick=()=>deleteNpi('all');
 
@@ -38,3 +38,5 @@ async function refreshReliability(){const button=$('refreshRel');button.disabled
  for(const report of overrides.filter(r=>r.kind==='report'&&NPIReliability.isFinal(r.label))){const base=rr.find(r=>r.sourceFileName===report.fileName&&r.sheetName===report.sheetName);if(base)rr.push({...base,relItem:report.label,criteria:'Report',status:report.approval,manualDone:undefined});}
  reliabilityPlans=NPIReliability.index(rr);$('relStatus').textContent=note+' · '+reliabilityPlans.length+'개 REL Plan';render();button.disabled=false;}
 $('refreshRel').onclick=refreshReliability;window.addEventListener('focus',refreshReliability);refreshReliability();
+
+$('npiLoad').click();

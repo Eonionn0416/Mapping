@@ -1,5 +1,5 @@
 import * as C from '../../shared/equipment-core.js?v=120';
-import * as Store from '../../shared/equipment-store.js?v=129';
+import * as Store from '../../shared/equipment-store.js?v=132';
 import {loadYields} from './yield-sources.js?v=125';
 const $=id=>document.getElementById(id),esc=Store.esc,fmt=v=>v==null?'—':typeof v==='number'?v.toLocaleString(undefined,{maximumFractionDigits:4}):String(v);let equipment=[],yieldRecords=[],busy=false;
 const table=(headers,rows)=>'<div class="wrap"><table><thead><tr>'+headers.map(h=>'<th>'+esc(h)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(r=>'<tr>'+r.map(v=>'<td>'+esc(fmt(v))+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>';
@@ -44,6 +44,13 @@ async function initCycle(){
  const open=indexedDB.open('QACommonalityCycle',1);open.onupgradeneeded=()=>{for(const name of ['windows','searches'])open.result.createObjectStore(name,{keyPath:'id'});};
  db=await requestResult(open);
  for(const r of await requestResult(db.transaction('windows').objectStore('windows').getAll()))windows.set(r.id,r);
+ try{
+  const {publish}=await import('../../shared/report-history.js');
+  const legacy=new Map();
+  for(const r of windows.values())if(r.rev)add(legacy,r.rev,r);
+  for(const [rev,group] of legacy)await publish('qaCycleReports',rev,group,true);
+  for(const r of await Store.readCycleWindows())windows.set(r.id,r);
+ }catch(error){$('status').textContent='Window time Firestore 동기화 실패 · '+error.message;}
  savedRows=await requestResult(db.transaction('searches').objectStore('searches').getAll());listSaved();
 }
 async function importCycle(file){
@@ -54,11 +61,15 @@ async function importCycle(file){
   for(const key of head.filter(k=>k.endsWith('_IN_TIME'))){
    const op=key.slice(0,-8),process=codes[op]||op,start=data[key],end=data[op+'_OUT_TIME'];if(!start&&!end)continue;
    const ms=v=>Date.parse(String(v||'').replaceAll('/','-').replace(' ','T')+'+09:00');
-   const hours=(ms(end)-ms(start))/3600000,id=identity(data.CUST_ID,data.LOT_ID,process),old=incoming.get(id)||windows.get(id);if(old?.rev>rev)continue;
+   const hours=(ms(end)-ms(start))/3600000,id=identity(data.CUST_ID,data.LOT_ID,process);
    incoming.set(id,{id,rev,customer:C.customer(data.CUST_ID),lot:data.LOT_ID,device:data.CUST_DEVICE,process,start,end,hours:Number.isFinite(hours)&&hours>=0?hours:null});
   }
  }
- await writeRecords('windows',incoming.values());for(const [id,r] of incoming)windows.set(id,r);
+ const {publish}=await import('../../shared/report-history.js');
+ if(!rev)throw Error('Cycle time 보고서 날짜를 확인하세요.');
+ await publish('qaCycleReports',rev,[...incoming.values()]);
+ const current=[...incoming.values()].filter(r=>(windows.get(r.id)?.rev||'')<=rev);
+ await writeRecords('windows',current);for(const r of current)windows.set(r.id,r);
 }
 function listSaved(){
  const items=[...savedRows].reverse(),host=$('savedList');
@@ -90,28 +101,77 @@ function togglePick(set,key,order,event){
  if(!event.ctrlKey && !event.metaKey)set.clear();
  set.add(key);anchors.set(set,key);
 }
-function rankLots(rows,direction){
- const {n,mean,sd}=C.describe(rows.map(r=>r.hours));
- return rows.map(row=>{
-  const delta=row.hours-mean;
-  const peerMean=n>1?mean-delta/(n-1):null;
-  let p=null;
-  if(n>=3&&sd>0){
-   const total=(n-1)*sd**2;
-   let ss=total-delta**2*n/(n-1);
-   if(ss<=total*1e-12){
-    const peers=rows.filter(other=>other!==row);
-    ss=(C.describe(peers.map(other=>other.hours)).sd**2)*(n-2);
+function familyKey(row){
+ return JSON.stringify([row.customer, row.process, C.baseLot(row.lot)]);
+}
+
+// Only combine records when both endpoints agree within the CSV's one-second resolution.
+function operationFamilies(rows){
+ const families=new Map();
+ for(const row of rows)add(families,familyKey(row),{row,start:eventTime(row.start),end:eventTime(row.end)});
+ const groups=[];
+ for(const entries of families.values()){
+  entries.sort((a,b)=>a.start-b.start || a.end-b.end || a.row.lot.localeCompare(b.row.lot));
+  const runs=[];
+  for(const {row,start,end} of entries){
+   let match;
+   if(Number.isFinite(start)&&Number.isFinite(end)){
+    for(let i=runs.length-1;i>=0;i--){
+     const run=runs[i];
+     if(start-run.firstStart>1000)break;
+     if(Math.max(run.lastEnd,end)-Math.min(run.firstEnd,end)<=1000){match=run;break;}
+    }
    }
-   if(ss>0){
-    const df=n-2,t=(row.hours-peerMean)/Math.sqrt(ss/df*(1+1/(n-1)));
-    const tail=C.beta(df/(df+t*t),df/2,.5)/2;
-    const upper=t>=0?tail:1-tail;
-    p=Math.min(1,n*(direction==="both"?2*tail:direction==="low"?(t<=0?tail:1-tail):upper));
+   if(!match){
+    match={firstStart:start,firstEnd:end,lastEnd:end,rows:[]};
+    runs.push(match);
    }
+   match.rows.push(row);
+   match.firstEnd=Math.min(match.firstEnd,end);
+   match.lastEnd=Math.max(match.lastEnd,end);
   }
-  return {row,peerMean,p};
- }).sort((a,b)=>b.row.hours-a.row.hours);
+  for(const run of runs){
+   const parent=run.rows.find(r=>C.norm(r.lot)===C.baseLot(r.lot));
+   run.hours=parent?.hours??C.describe(run.rows.map(r=>r.hours)).mean;
+  }
+  groups.push(runs);
+ }
+ return groups;
+}
+function runSummary(rows){
+ return C.describe(operationFamilies(rows).flat().map(run=>run.hours));
+}
+
+// Merge centered sums of squares without subtracting two nearly equal variances.
+function mergeStats(left,right){
+ if(!left.n)return right;
+ if(!right.n)return left;
+ const n=left.n+right.n,delta=right.mean-left.mean;
+ return {n,mean:left.mean+delta*(right.n/n),ss:left.ss+right.ss+delta**2*(left.n/n)*right.n};
+}
+function rankLots(rows,direction){
+ const families=operationFamilies(rows),empty={n:0,mean:0,ss:0};
+ const summaries=families.map(runs=>runs.reduce((stats,run)=>mergeStats(stats,{n:1,mean:run.hours,ss:0}),empty));
+ const prefix=[empty];
+ for(const stats of summaries)prefix.push(mergeStats(prefix.at(-1),stats));
+ const tests=prefix.at(-1).n,results=[];
+ let suffix=empty;
+ for(let i=families.length-1;i>=0;i--){
+  const peers=mergeStats(prefix[i],suffix);
+  suffix=mergeStats(summaries[i],suffix);
+  for(const run of families[i]){
+   let p=null;
+   if(peers.n>=2&&peers.ss>0){
+    const df=peers.n-1;
+    const t=(run.hours-peers.mean)/Math.sqrt(peers.ss/df*(1+1/peers.n));
+    const tail=C.beta(df/(df+t*t),df/2,.5)/2;
+    const raw=direction==='both'?2*tail:(direction==='low'?t<=0:t>=0)?tail:1-tail;
+    p=Math.min(1,tests*raw);
+   }
+   for(const row of run.rows)results.push({row,peerMean:peers.n?peers.mean:null,p});
+  }
+ }
+ return results.sort((a,b)=>b.row.hours-a.row.hours);
 }
 let loaded=false, serial=0, population=[];
 const stages=['Bump','Assy','FT'];
@@ -263,7 +323,7 @@ function details(){
  }
  const groups=new Map();
  for(const row of selected)add(groups,row.cohort,row);
- for(const [cohort,members] of groups){
+ for(const [cohort,members] of [...groups].sort((a,b)=>Store.compareProcesses(a[1][0].process,b[1][0].process))){
   addDetail(block=>{
    block.innerHTML=selectionPanel(cohort,members);
    linkLotDetails(block.firstElementChild,members);
@@ -292,12 +352,12 @@ function details(){
    const cohorts=new Map();
    for(const r of selected)add(cohorts,JSON.stringify([r.process,$('machine').value?r.machines[0]:'']),r);
    body.replaceChildren();
-   for(const [key,group] of cohorts){
-    const [process,m]=JSON.parse(key),ids=new Set(group.map(x=>x.sourceId));
-    const others=population.filter(x=>x.process===process&&(!m||x.machines.includes(m))&&!ids.has(x.sourceId));
+   for(const [key,group] of [...cohorts].sort((a,b)=>Store.compareProcesses(a[1][0].process,b[1][0].process))){
+    const [process,m]=JSON.parse(key),ids=new Set(group.map(familyKey));
+    const others=population.filter(x=>x.process===process&&(!m||x.machines.includes(m))&&!ids.has(familyKey(x)));
     body.insertAdjacentHTML('beforeend','<h3>'+esc(processLabel(process)+' '+m)+'</h3>');
     for(const [name,list] of [['선택 그룹',group],['다른 Lot',others]]){
-     body.insertAdjacentHTML('beforeend','<h4>'+name+' · '+list.length+' Lot · 평균 Window '+fmt(C.describe(list.map(x=>x.hours)).mean)+' h</h4>'+stageCards(list));
+     body.insertAdjacentHTML('beforeend','<h4>'+name+' · '+list.length+' Lot · 평균 Window '+fmt(runSummary(list).mean)+' h</h4>'+stageCards(list));
     }
    }
   };
@@ -373,10 +433,10 @@ function specDetails(row){
  return '<details><summary>MTK W-165 · 구간별 Q time</summary>'+table(['시작 공정','Meaning','종료 공정','Meaning','상한 h','시작 시각','종료 시각','Q time h','Spec 판정'],lines)+'</details>';
 }
 function selectionStats(cohort,members){
- const ids=new Set(members.map(row=>row.sourceId));
+ const ids=new Set(members.map(familyKey));
  const customers=new Set(members.map(row=>row.customer));
- const remaining=cohort.filter(row=>!ids.has(row.sourceId));
- const summarize=rows=>C.describe(rows.map(row=>row.hours));
+ const remaining=cohort.filter(row=>!ids.has(familyKey(row)));
+ const summarize=runSummary;
  return {
   selected:summarize(members),
   all:summarize(remaining),
@@ -474,7 +534,7 @@ function selectionPanel(cohort,members){
  const title=[process,machine,stats.customers.join(' · ')].filter(Boolean).join(' / ');
  const reports=[...new Map(members.flatMap(row=>row.reports).map(report=>[report.id,report])).values()];
  const records=members.map(r=>[r.customer,r.lot,r.usedMachines.join(' · ')||'—',r.start,r.hours,r.all.peerMean,r.own.peerMean,...stages.map(stage=>r.yields[stage])]);
- records.push([stats.customers.join(' · '),'선택 그룹 평균 ('+stats.selected.n+' Lot)','—','—',stats.selected.mean,stats.all.mean,stats.own.mean,
+ records.push([stats.customers.join(' · '),'선택 그룹 평균 ('+stats.selected.n+' 작업)','—','—',stats.selected.mean,stats.all.mean,stats.own.mean,
   ...stages.map(stage=>stageYield(reports.filter(report=>report.metric===stage)))]);
  return '<section class="window-selection"><h4>'+esc(title)+'</h4><div class="lot-layout">'
   +windowPlot(members,stats,ownLabel)
@@ -515,9 +575,9 @@ function windowPlot(members,stats,ownLabel,trend=false){
    +esc(label+' · 전체 p '+printP(row.all.p)+' / 고객 p '+printP(row.own.p))+'</title><circle r="9" fill="transparent"/>'+((grade==='all'||grade==='both')?'<path class="lot-dot diamond" d="M0 -6 6 0 0 6 -6 0Z"/>'+(grade==='both'?'<circle r="2.5" fill="#bb263e"/>':''):'<circle class="lot-dot" r="5"/>')+'</g>';
  }
  marks+='<path class="lot-halo" fill="none" stroke="#163b65" stroke-width="2" pointer-events="none"/>';
- const legend=refs.map(ref=>'<span><i style="color:'+ref.color+'"></i>'+ref.label+' 평균 '+fmt(ref.stat.mean)+' h ('+ref.stat.n+' Lot)</span>').join('');
+ const legend=refs.map(ref=>'<span><i style="color:'+ref.color+'"></i>'+ref.label+' 평균 '+fmt(ref.stat.mean)+' h ('+ref.stat.n+' 작업)</span>').join('');
  return '<figure class="window-plot"><figcaption>'+plotTitle+'</figcaption><svg role="group" aria-label="'+plotTitle+'" viewBox="0 0 910 258" font-size="13" fill="#475b70"><text x="12" y="17">시간 (h)</text>'
-  +marks+'<text x="455" y="249" text-anchor="middle">In time (KST)</text></svg><div class="window-key"><span><b style="color:#156ebb">●</b> '+labels.normal+'</span><span><b style="color:#c02d36">●</b> '+labels.own+'</span><span><b style="color:#7147aa">◆</b> '+labels.all+'</span><span><b class="both-dot"></b> 두 기준 모두</span>'+legend+'</div>'+(trend?'':'<small>점선과 그룹 행의 비교 평균은 선택 Lot 전체를 제외합니다.</small>')+'<output class="active-lot" aria-live="polite"></output></figure>';
+  +marks+'<text x="455" y="249" text-anchor="middle">In time (KST)</text></svg><div class="window-key"><span><b style="color:#156ebb">●</b> '+labels.normal+'</span><span><b style="color:#c02d36">●</b> '+labels.own+'</span><span><b style="color:#7147aa">◆</b> '+labels.all+'</span><span><b class="both-dot"></b> 두 기준 모두</span>'+legend+'</div>'+(trend?'':'<small>점선과 그룹 행의 비교 평균은 선택한 모 Lot의 모든 작업을 제외합니다.</small>')+'<output class="active-lot" aria-live="polite"></output></figure>';
 }
 
 // Build the process populations from In time, independently of the search sheet's Out-date filters.

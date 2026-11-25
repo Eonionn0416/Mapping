@@ -99,7 +99,7 @@ export async function readPlanWorkbook(buffer,fileName){
 
 function summaryRecords(rows){
  // Yellow Shipping marks select checkpoints; resolve dates/status independently to merge anchors.
- const selected=rows.filter(r=>r.yellow);
+ const selected=rows.filter(r=>r.yellow||(r.family==="BHAST"&&/^SAT$/i.test(r.relItem.trim())&&r.dateOut));
  // Customer templates may omit yellow on the final FT. Include actual FT endpoints, no ET2 requirement.
  const blocks=ftBlocks(rows);
  for(const b of blocks){if(!selected.some(r=>b.rows.includes(r)))selected.push(b.rows.at(-1));}
