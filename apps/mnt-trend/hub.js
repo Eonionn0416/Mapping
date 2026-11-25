@@ -6,13 +6,13 @@ function selectTab(index){
  active=index;[...$('nav').children].forEach((b,i)=>b.setAttribute('aria-current',i===index));
  $('form').hidden=index!==0;$('#extra').hidden=index!==0;
  for(const [k,f] of Object.entries(frames))f.hidden=k!==(index<3?'yield':index===3?'cpk':'po');
- const doc=frames.yield?.contentDocument;
+ const doc=frames.yield?.contentDocument;doc?.body?.classList.toggle('lookup',index===0);
  doc?.getElementById(['lotTab','weeklyTab','vmTab'][index])?.click();
 }
 tabs.forEach((t,i)=>{const b=document.createElement('button');b.textContent=t;b.onclick=()=>selectTab(i);$('nav').append(b)});
 for(const [key,path] of Object.entries({yield:'mnt-yield-trend',cpk:'mnt-cpk-trend',po:'mnt-po-history'})){
  const f=document.createElement('iframe');frames[key]=f;f.title=path;f.src='../'+path+'/?mntHub=1';
- f.onload=()=>{const d=f.contentDocument;const style=d.createElement('style');style.textContent='a[href*="customer-quality-trend"],main h1,#lotTab,#weeklyTab,#vmTab,#lotPanel #lot,#lotPanel #find{display:none!important}';d.head.append(style);selectTab(active)};
+ f.onload=()=>{const d=f.contentDocument;const style=d.createElement('style');style.textContent='body{background:transparent!important}main{padding:0!important;margin:0!important;max-width:none!important}.lookup #drop,.lookup .report-download,.lookup #lotPanel>.filters,.lookup #lotPanel>h2,body:has(#lotTab) nav{display:none!important}a[href*="customer-quality-trend"],main h1,#lotTab,#weeklyTab,#vmTab,#lotPanel #lot,#lotPanel #find{display:none!important}';d.head.append(style);selectTab(active);const fit=()=>{if(!f.hidden)f.style.height=Math.ceil(d.querySelector('main')?.getBoundingClientRect().height||600)+24+'px'};new ResizeObserver(fit).observe(d.querySelector('main')||d.body);fit()};
  $('#frames').append(f);
 }
 selectTab(0);

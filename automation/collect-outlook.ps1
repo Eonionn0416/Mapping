@@ -7,6 +7,7 @@ $mutex=[Threading.Mutex]::new($false,'Local\QAOutlookCollector49');if(!$mutex.Wa
 New-Item -ItemType Directory -Force -Path (Join-Path $base 'MNT Yield') | Out-Null
 function Classify($subject){
  switch -Regex ($subject.Trim()) {
+ '^Long operation cycle time Lot$' {return @('ctlot','Report')}
  '^SCK SIP C Inventory REPORT$' {return @('saninv','Report')}
  '^SCK SAN PCB Inventory\s+\d{4}[/ -]\d{1,2}[/ -]\d{1,2}$' {return @('sanpcb','Report')}
  '^QCT Trigger Limit 1% over Lot List on\s+\d{8}$' {return @('qct','Report')}
@@ -35,6 +36,7 @@ function SaveYieldMail($mail,$kind){
  $archive=Join-Path $root '[Customer] MNT\[1] Weekly\Yield report'
  $target=Join-Path $base 'Austin WIP & Yield\Top 7 defect'
  $pattern='^MNT_YLD_RPT_\d+\.CSV$'
+ if($kind -in @('sanct','ctlot')){$target=Join-Path $base 'SAN cycle time';$archive=$target;$pattern=if($kind -eq 'ctlot'){'^Cycle_Time_Lot_\d{4}\.csv$'}else{'^Sandisk_Cycle_Time REPORT_\d{8}\.xlsx$'}}
  if($kind -eq 'saninv'){$target=Join-Path $base 'Sandisk Inventory';$archive=$target;$pattern='^Sandisk Inventory Report\d{14}\.xlsx$'}
  if($kind -eq 'sanpcb'){$target=Join-Path $base 'Sandisk Inventory';$archive=$target;$pattern='^SCK_SAN_PCB_INV_\d{8}\.xlsx$'}
  if($kind -eq 'qct'){$target=Join-Path $base 'QCT related';$archive=$target;$pattern='^QCT_Trigger_Limit_1%_over_Lot_List_\d{8}\.csv$'}
@@ -74,9 +76,9 @@ function SaveCSRMail($mail){
 
 function SaveMail($mail){
  SaveCSRMail $mail
- if($mail.Class -ne 43){return};$route=Classify $mail.Subject;if(!$route -and (SenderSmtp $mail) -eq 'anne.li@montage-tech.com'){$route=@('MNT PO','Orders')};if(!$route){return}
- if($route[0] -notin @('MNT','MNT PO','MNT Yield','MNT VM','saninv','sanpcb','qct','Austin Top7','MC List','Cycle time') -and $mail.ReceivedTime -lt (Get-Date).AddDays(-30)){return}
- if($route[0] -in @('MNT Yield','MNT VM','saninv','sanpcb','qct','Austin Top7','MC List','Cycle time')){SaveYieldMail $mail $route[0];return}
+ if($mail.Class -ne 43){return};$route=Classify $mail.Subject;if(!$route -and (SenderSmtp $mail) -eq 'anne.li@montage-tech.com'){$route=@('MNT PO','Orders')};if(!$route){foreach($attachment in $mail.Attachments){if($attachment.FileName -match '^Sandisk_Cycle_Time REPORT_\d{8}\.xlsx$'){$route=@('sanct','Report');break}}};if(!$route){return}
+ if($route[0] -notin @('MNT','MNT PO','MNT Yield','MNT VM','sanct','ctlot','saninv','sanpcb','qct','Austin Top7','MC List','Cycle time') -and $mail.ReceivedTime -lt (Get-Date).AddDays(-30)){return}
+ if($route[0] -in @('MNT Yield','MNT VM','sanct','ctlot','saninv','sanpcb','qct','Austin Top7','MC List','Cycle time')){SaveYieldMail $mail $route[0];return}
  $received=$mail.ReceivedTime.ToString('yyyyMMdd_HHmmss');$dest=Join-Path $base ($route[0]+'\'+$route[1]+'\'+$received)
  for($i=1;$i -le $mail.Attachments.Count;$i++){
   $a=$mail.Attachments.Item($i);$name=[IO.Path]::GetFileName($a.FileName);if($route[0] -eq 'MNT Yield'){if($name -notmatch '\.(csv|xlsx|xls)$'){continue};$dest=Join-Path $base 'MNT Yield'}elseif($name -notmatch '\.xlsx?$'){continue}
