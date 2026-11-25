@@ -1,3 +1,4 @@
+import {pickChart,pickTable} from '../../shared/trend-selection.js';
 import {ingest,load} from './data.js';
 const $=s=>document.querySelector(s),san=new URLSearchParams(location.search).has('san2');
 let records=[],customer='All',plots=[];
@@ -8,6 +9,7 @@ function details(host,rows){
  for(const values of [['고객','Lot','Device',san?'ASSY/TEST 시작일':'공정 In time','Qty','CT (days)'],...rows.map(r=>[r.customer,r.lot,r.device,r.start,r.qty,r.ct])]){
  const tr=table.insertRow();for(const v of values){const cell=document.createElement(tr.rowIndex?'td':'th');cell.textContent=v;tr.append(cell)}
  }
+ pickTable(table);
 }
 function render(){
  for(const plot of plots)plot.destroy();plots=[];$('#cards').replaceChildren();
@@ -28,6 +30,7 @@ function render(){
  const datasets=devices.map((device,i)=>({label:device,backgroundColor:colors[i%colors.length],data:dates.map(d=>byDay.get(d).filter(r=>r.device===device).reduce((s,r)=>s+Number(r.qty),0)),stack:'Qty'}));
  datasets.push({type:'line',label:'평균 CT (days)',yAxisID:'ct',borderColor:'#15626c',backgroundColor:'#15626c',data:dates.map(d=>byDay.get(d).reduce((s,r)=>s+r.ct,0)/byDay.get(d).length)});
  plots.push(new Chart(card.querySelector('canvas'),{type:'bar',data:{labels:dates,datasets},options:{maintainAspectRatio:false,scales:{x:{stacked:true,title:{display:true,text:san?'ASSY/TEST 시작일':'공정 투입일'}},y:{display:!san,stacked:true,beginAtZero:true,title:{display:true,text:'Qty'}},ct:{position:'right',beginAtZero:true,title:{display:true,text:'CT (days)'},grid:{drawOnChartArea:false}}},onClick:(e,hits)=>{if(!hits.length)return;const h=hits[0],subset=byDay.get(dates[h.index]);details(host,h.datasetIndex===datasets.length-1?subset:subset.filter(r=>r.device===devices[h.datasetIndex]))}}}));
+ const chart=plots.at(-1);chart.options.plugins.legend.display=false;pickChart(chart,keys=>details(host,keys.length?rows.filter(r=>keys.some(([i,j])=>r.date===dates[i]&&(j===devices.length||r.device===devices[j]))):rows));
  }
  if(!groups.size)$('#cards').textContent='해당 기간에 일치하는 공정 기록이 없습니다.';
 }

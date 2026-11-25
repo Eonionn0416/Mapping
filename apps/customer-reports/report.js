@@ -1,3 +1,4 @@
+import {pickChart,pickTable} from '../../shared/trend-selection.js';
 import {publish,history} from '../../shared/report-history.js';
 const $=s=>document.querySelector(s);
 const qct=new URLSearchParams(location.search).get('report')==='qct';
@@ -9,6 +10,7 @@ function table(parent,headers,rows){
  const wrap=elem('div',parent);wrap.className='scroll';const t=elem('table',wrap),head=elem('tr',elem('thead',t));
  headers.forEach(h=>elem('th',head,h));const body=elem('tbody',t);
  for(const row of rows){const tr=elem('tr',body);row.forEach(v=>elem('td',tr,v==null||v===''?'—':v))}
+ pickTable(t);
 }
 const iso=d=>[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');
 function parse(file,bytes){
@@ -47,6 +49,7 @@ const quantityLabels={
 function plot(parent,labels,sets,choose,stack=true){
  const box=elem('div',parent);box.className='plot';const canvas=elem('canvas',box);
  charts.push(new Chart(canvas,{type:'bar',plugins:[quantityLabels],data:{labels,datasets:sets},options:{responsive:true,maintainAspectRatio:false,interaction:{intersect:true},onClick:(_,hits)=>{if(hits.length)choose(hits[0].index,hits[0].datasetIndex)},scales:{x:{stacked:stack},y:{stacked:stack,beginAtZero:true},...(sets.some(s=>s.yAxisID==='loss')?{loss:{position:'right',title:{display:true,text:tab==='lot'?'누적 (%)':'Yield Loss (%)'},grid:{drawOnChartArea:false}}}:{})}}}));
+ pickChart(charts.at(-1),choose);
 }
 const sum=(rows,i)=>rows.reduce((a,r)=>a+(Number(r[i])||0),0);
 function inventory(reports,query){
@@ -54,8 +57,8 @@ function inventory(reports,query){
  const daily=reports.map(r=>({...r,rows:r.rows.filter(row=>!query||String(row[pcb?0:1]).toUpperCase().includes(query))}));
  const types=[...new Set(daily.flatMap(d=>d.rows.map(row=>row[key])))].sort();
  const box=card(pcb?'Material No · Available Qty':'Inventory Type · Unit Qty'),pair=elem('div',box);pair.className='pair';const left=elem('div',pair),right=elem('div',pair);
- function detail(index,type){right.replaceChildren();if(index<0)return;const d=daily[index];elem('h3',right,d.date+' · '+(type||'전체'));table(right,pcb?['Material No','Description','Location','IQA Batch','Vendor Lot','Vendor','Available Qty','Blocked Qty','UoM','G/R','Mfg','Exp']:['Type','PN','Wafer Lot','WO/AI complete date','Aging days','Sandisk location','Unit Qty','SCK Oper','Detail DESC'],d.rows.filter(r=>!type||r[0]===type).map(r=>r.slice(0,pcb?12:9)))}
- plot(left,daily.map(d=>d.date),types.map((k,i)=>({label:k,backgroundColor:palette[i%palette.length],data:daily.map(d=>sum(d.rows.filter(r=>r[0]===k),qty))})),(i,j)=>detail(i,types[j]));detail(daily.length-1);
+ function detail(index,type){if(index<0)return;const d=daily[index];elem('h3',right,d.date+' · '+(type||'전체'));table(right,pcb?['Material No','Description','Location','IQA Batch','Vendor Lot','Vendor','Available Qty','Blocked Qty','UoM','G/R','Mfg','Exp']:['Type','PN','Wafer Lot','WO/AI complete date','Aging days','Sandisk location','Unit Qty','SCK Oper','Detail DESC'],d.rows.filter(r=>!type||r[0]===type).map(r=>r.slice(0,pcb?12:9)))}
+ plot(left,daily.map(d=>d.date),types.map((k,i)=>({label:k,backgroundColor:palette[i%palette.length],data:daily.map(d=>sum(d.rows.filter(r=>r[0]===k),qty))})),keys=>{right.replaceChildren();if(!keys.length)detail(daily.length-1);for(const [i,j] of keys)detail(i,types[j])});detail(daily.length-1);
  if(!pcb||!daily.length)return;
  const latest=daily.at(-1),limit=new Date(latest.date+'T12:00:00');const day=limit.getDate();limit.setDate(1);limit.setMonth(limit.getMonth()+6);const end=new Date(limit.getFullYear(),limit.getMonth()+1,0).getDate();limit.setDate(Math.min(day,end));
  const alert=[];for(const [material,rows] of group(latest.rows.filter(r=>Number(r[6])>0||Number(r[7])>0),r=>r[0])){
@@ -70,8 +73,8 @@ function quality(reports,query){
  for(const [device,items] of group(rows,r=>r[3])){
  const pair=elem('div',card(device));pair.className='pair';const left=elem('div',pair),right=elem('div',pair);
  function detail(rs){right.replaceChildren();table(right,['Device','Lot','Schedule','Qty','Cum Yield Loss','Trans time','OPER','Defect / Qty'],rs.map(r=>[...r.slice(3,10),Object.entries(defects(r)).map(([k,v])=>k+' '+v).join(' / ')]))}
- if(tab==='lot'){const totals=new Map();for(const row of items)for(const [k,v] of Object.entries(defects(row)))totals.set(k,(totals.get(k)||0)+v);const sorted=[...totals].sort((a,b)=>b[1]-a[1]);let cum=0;const total=sorted.reduce((a,r)=>a+r[1],0);plot(left,sorted.map(r=>r[0]),[{label:'Defect Qty',data:sorted.map(r=>r[1]),backgroundColor:palette[0]},{type:'line',label:'누적 %',yAxisID:'loss',data:sorted.map(r=>total?100*(cum+=r[1])/total:null),borderColor:palette[1]}],i=>detail(items.filter(r=>sorted[i][0] in defects(r))),false)}
- else{const modes=[...new Set(items.flatMap(r=>Object.keys(defects(r))))];plot(left,items.map(r=>r[8]),[...modes.map((m,i)=>({label:m+' PPM',backgroundColor:palette[i%palette.length],data:items.map(r=>Number(r[6])>0?(defects(r)[m]||0)*1e6/Number(r[6]):null)})),{type:'line',label:'Cum Yield Loss %',yAxisID:'loss',borderColor:'#21566e',data:items.map(r=>parseFloat(r[7]))}],i=>detail([items[i]]));if(items.some(r=>!(Number(r[6])>0)))elem('small',left,'Quantity가 없는 Lot은 PPM을 계산할 수 없습니다.')}
+ if(tab==='lot'){const totals=new Map();for(const row of items)for(const [k,v] of Object.entries(defects(row)))totals.set(k,(totals.get(k)||0)+v);const sorted=[...totals].sort((a,b)=>b[1]-a[1]);let cum=0;const total=sorted.reduce((a,r)=>a+r[1],0);plot(left,sorted.map(r=>r[0]),[{label:'Defect Qty',data:sorted.map(r=>r[1]),backgroundColor:palette[0]},{type:'line',label:'누적 %',yAxisID:'loss',data:sorted.map(r=>total?100*(cum+=r[1])/total:null),borderColor:palette[1]}],keys=>detail(keys.length?items.filter(r=>keys.some(([i])=>sorted[i][0] in defects(r))):items),false)}
+ else{const modes=[...new Set(items.flatMap(r=>Object.keys(defects(r))))];plot(left,items.map(r=>r[8]),[...modes.map((m,i)=>({label:m+' PPM',backgroundColor:palette[i%palette.length],data:items.map(r=>Number(r[6])>0?(defects(r)[m]||0)*1e6/Number(r[6]):null)})),{type:'line',label:'Cum Yield Loss %',yAxisID:'loss',borderColor:'#21566e',data:items.map(r=>parseFloat(r[7]))}],keys=>detail(keys.length?[...new Set(keys.map(([i])=>items[i]))]:items));if(items.some(r=>!(Number(r[6])>0)))elem('small',left,'Quantity가 없는 Lot은 PPM을 계산할 수 없습니다.')}
  detail(items);
  }}
 function render(){charts.forEach(c=>c.destroy());charts=[];$('#results').replaceChildren();const query=$('#query').value.trim().toUpperCase();const reports=records.filter(r=>r.kind===(qct?'qct':tab)).sort((a,b)=>a.date.localeCompare(b.date));$('#searchLabel').textContent=tab==='lot'?'Lot':tab==='pcb'?'Material No':qct?'Device':'PN';qct?quality(reports,query):inventory(reports,query)}

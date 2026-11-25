@@ -1,3 +1,4 @@
+import {load as loadSan,ingest as ingestSan} from '../cycle-lot/data.js';
 import * as C from '../../shared/equipment-core.js?v=120';
 import * as Store from '../../shared/equipment-store.js?v=132';
 import {loadYields} from './yield-sources.js?v=125';
@@ -8,7 +9,7 @@ async function ingest(file){
  if(busy)throw Error('조회 중입니다. 잠시 후 다시 시도하세요.');
  busy=true;
  try{
-  if(/^ASSY_CT_START_/i.test(file.name))await importCycle(file);else await Store.ingest(file);
+  if(/^Sandisk_Cycle_Time REPORT_/i.test(file.name)){await ingestSan(file);await refreshSan()}else if(/^ASSY_CT_START_/i.test(file.name))await importCycle(file);else await Store.ingest(file);
   loaded=false;lookupData=null;refreshTrendTabs();if(activeSheet!=='Commonality')renderTrendSheet();
   $('status').textContent='가져오기 완료 · 검색하면 반영됩니다.';
  }finally{busy=false;}
@@ -40,6 +41,14 @@ async function lookup(prefix){
   presentList(prefix+'machine',processes.flatMap(r=>r.machines||[]).filter(m=>m.includes(term('machine'))));
  }catch(err){$('status').textContent=err.message;}
 }
+async function refreshSan(){
+ const rows=await loadSan(true);
+ for(const row of rows){
+  const process=row.process.replaceAll('/','')+'2';
+  const id=JSON.stringify(['SAN2',row.lot,process,row.start]);
+  windows.set(id,{...row,id,process,machines:[],end:'',hours:row.ct*24});
+ }
+}
 async function initCycle(){
  const open=indexedDB.open('QACommonalityCycle',1);open.onupgradeneeded=()=>{for(const name of ['windows','searches'])open.result.createObjectStore(name,{keyPath:'id'});};
  db=await requestResult(open);
@@ -51,6 +60,7 @@ async function initCycle(){
   for(const [rev,group] of legacy)await publish('qaCycleReports',rev,group,true);
   for(const r of await Store.readCycleWindows())windows.set(r.id,r);
  }catch(error){$('status').textContent='Window time Firestore 동기화 실패 · '+error.message;}
+ try{await refreshSan()}catch(e){$('status').textContent='SAN2 조회 실패 · '+e.message}
  savedRows=await requestResult(db.transaction('searches').objectStore('searches').getAll());listSaved();
 }
 async function importCycle(file){
@@ -208,7 +218,7 @@ function buildResults(){
  const term=id=>C.norm($(id).value);
  const machine=term('machine'),process=term('process'),customer=term('customer'),lot=term('query');
  for(const w of windows.values()){
-  const day=C.day(w.end);
+  const day=C.day(w.customer==='SAN2'?w.start:w.end);
   if(!Number.isFinite(w.hours)||!day||day<$('from').value||day>$('to').value)continue;
   if(!C.norm(processLabel(w.process)).includes(process))continue;
   const machines=equipmentById.get(w.id)?.machines||[];
@@ -397,7 +407,7 @@ $('saveSearch').onclick=async()=>{
  await writeRecords('searches',[item]);savedRows.push(item);listSaved();
 };
 $('savedList').parentElement.addEventListener('toggle',e=>{if(e.currentTarget.open)ensureCycle().catch(err=>{$('status').textContent=err.message;});});
-QAAutoMail.startMany(['mclist','cycle'].map(group=>({group,label:group==='cycle'?'Cycle time':'MC List',ready:()=>!busy,importer:ingest})),{label:'Commonality 자동 가져오기'});
+QAAutoMail.startMany(['mclist','cycle'].map(group=>({group,label:group==='cycle'?'Cycle time':'MC List',ready:()=>!busy,importer:ingest})).concat({group:'sanct',label:'SAN2',ready:()=>!busy,importer:async(f,item)=>{await ingestSan(f,item);await refreshSan();loaded=false;lookupData=null;refreshTrendTabs();if(activeSheet!=='Commonality')await renderTrendSheet()}}),{label:'Commonality 자동 가져오기'});
 // The two Meaning columns are the authoritative event mapping for W-165.
 const rules=[
  ['Wafer Taping out','14','start','Wafer Back Side Grinding in','3','start',24],
@@ -417,6 +427,7 @@ const rules=[
  ['OSP Substrate Pre-treatment (Flux Clean) out',null,null,'Ball Placement in',null,null,16]
 ];
 function eventTime(value){
+ if(/^\d{4}-\d{2}-\d{2}$/.test(value))return Date.parse(value+'T00:00:00+09:00');
  return value?Date.parse(String(value).trim().replaceAll('/','-').replace(' ','T')+'+09:00'):NaN;
 }
 function specDetails(row){
@@ -619,6 +630,7 @@ function refreshTrendTabs(){
  const standard=['MTK','BDR','MNT'];
  const found=new Set([...windows.values()].map(r=>r.customer).filter(Boolean));
  sheetCustomers=standard.concat([...found].filter(c=>!standard.includes(c)).sort());
+ sheetCustomers=sheetCustomers.filter(c=>c!=='SAN2');if(!sheetCustomers.includes('SAN'))sheetCustomers.push('SAN');sheetCustomers.splice(sheetCustomers.indexOf('SAN')+1,0,'SAN2');
  const buttons=['Commonality','All',...sheetCustomers].map(name=>{
   const btn=document.createElement('button');
   btn.type='button';btn.textContent=name;btn.dataset.sheet=name;
