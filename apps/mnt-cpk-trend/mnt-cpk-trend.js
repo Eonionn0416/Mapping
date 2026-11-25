@@ -1681,3 +1681,5 @@ QAAutoMail.start('mnt',()=>!!db&&!!currentUser&&!mntBusy,async file=>{
   try{const rows=await readExcelBuffer(file.name,await file.arrayBuffer());selectedFiles=[file];selectedRows=rows;renderSelectedFileList();await uploadSelectedRows(true);}
   finally{selectedRows=[];selectedFiles=[];setBusy(false);}
 });
+
+window.mntFindLot=q=>rawRows.filter(r=>[r.lot,r.lotNo].some(v=>String(v||'').trim().toUpperCase()===q)).map(r=>[r.device||r.product,r.item,r.cpk,r.ppk]);

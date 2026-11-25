@@ -22,3 +22,6 @@ $('export').onclick=()=>{const w=XLSX.utils.book_new();XLSX.utils.book_append_sh
 resetPeriod();$('lot').value=new URLSearchParams(location.search).get('qaLot')||'';processOptions();render();message('저장 이력을 불러왔습니다.');
 QAAutoMail.start('mntpo',()=>!busy,importFile,{label:'MNT PO 자동 가져오기',forceOnClick:true});
 try{rows=C.merge(rows,await(await cloud()).rows('mntPORecords'));cache();processOptions();render();}catch(e){message('Local 이력 표시 중 · Firestore 조회 실패: '+e.message);}
+
+window.mntFindLot=q=>rows.filter(r=>[r.lot,r.waferLot].some(v=>String(v||'').trim().toUpperCase()===q)).map(r=>[r.date,r.device,r.lot,r.waferLot,r.wo,r.quantity]);
+
