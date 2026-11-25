@@ -74,7 +74,35 @@ function SaveCSRMail($mail){
  Add-Content -LiteralPath (Join-Path $base 'collector.log') -Value ((Get-Date -Format o)+' SAVED CSR DCC / '+[IO.Path]::GetFileName($file))
 }
 
+
+function SaveMesHold($mail){
+ $subject=[string]$mail.Subject
+ if($subject -notmatch '^(?:MES\+\s+Hold Lot Mail\s*$|★?\s*QA Release Lot 통보\b)'){return $false}
+ $kind=if($subject -match 'Release'){'release'}else{'hold'}
+ $lines=@{}
+ foreach($line in ([string]$mail.Body -split '\r?\n')){
+  if($line -match '^\s*([^:]+?)\s*:\s*(.*?)\s*$'){$lines[$Matches[1]]=$Matches[2]}
+ }
+ $start=if($kind -eq 'hold'){$lines['Hold Date']}else{$lines['Hold Time']}
+ $stamp=([string]$start) -replace '\D',''
+ $lot=([string]$lines['Lot_ID']).Trim()
+ if(!$lot -or !$lines['Customer'] -or $stamp.Length -ne 14){throw "MES Hold body missing Lot/customer/date"}
+ $event=[ordered]@{kind=$kind;customer=$lines['Customer'];lot=$lot;start=$stamp;end=([string]$lines['Release Time'] -replace '\D','');device=$(if($lines['Device']){$lines['Device']}else{$lines['Cust Device']});operation=$lines['Operation'];package=$lines['Package'];qty=$lines["Out q'ty"];inputQty=$lines["In q'ty"];reason=$lines['Hold Desc'];code=$lines['Hold Code'];comment=$lines['Release Comment']}
+ if($kind -eq 'release' -and $event.end.Length -ne 14){throw "MES release time missing"}
+ $json=$event|ConvertTo-Json -Compress
+ $sha=[Security.Cryptography.SHA256]::Create()
+ try{$id=[BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($json))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
+ $dir=Join-Path $base 'MES Hold';[IO.Directory]::CreateDirectory($dir)|Out-Null
+ $path=Join-Path $dir ("mes-"+$id+".json")
+ if(!(Test-Path -LiteralPath $path)){
+ $tmp=Join-Path $dir ([guid]::NewGuid().ToString()+'.partial')
+ [IO.File]::WriteAllText($tmp,$json);[IO.File]::Move($tmp,$path)
+ }
+ return $true
+}
+
 function SaveMail($mail){
+ if($mail.Class -eq 43 -and (SaveMesHold $mail)){return}
  SaveCSRMail $mail
  if($mail.Class -ne 43){return};$route=Classify $mail.Subject;if(!$route -and (SenderSmtp $mail) -eq 'anne.li@montage-tech.com'){$route=@('MNT PO','Orders')};if(!$route){foreach($attachment in $mail.Attachments){if($attachment.FileName -match '^Sandisk_Cycle_Time REPORT_\d{8}\.xlsx$'){$route=@('sanct','Report');break}}};if(!$route){return}
  if($route[0] -notin @('MNT','MNT PO','MNT Yield','MNT VM','sanct','ctlot','saninv','sanpcb','qct','Austin Top7','MC List','Cycle time') -and $mail.ReceivedTime -lt (Get-Date).AddDays(-30)){return}
@@ -93,7 +121,7 @@ function SaveMail($mail){
  }
 }
 function AllFolders($folder){$folder;foreach($child in $folder.Folders){AllFolders $child}}
-function FindAuto($folder){if(($folder.Name -replace '\s','') -match '^AUTOMAIL/PERSONAL\d*$' -or ($folder.Name -replace '\s','') -in @('AUTOMAIL/PERSONAL','Automail','SCK-QSE/PQA/IT','CUS-MNT(Montage)','CUS-MTK/MSL(MediaTek)','PO')){$folder};foreach($child in $folder.Folders){FindAuto $child}}
+function FindAuto($folder){if(($folder.Name -replace '\s','') -match '^AUTOMAIL/PERSONAL\d*$' -or ($folder.Name -replace '\s','') -in @('AUTOMAIL/PERSONAL','Automail','MESPlusHoldLot','MES+HoldLot','SCK-QSE/PQA/IT','CUS-MNT(Montage)','CUS-MTK/MSL(MediaTek)','PO')){$folder};foreach($child in $folder.Folders){FindAuto $child}}
 Add-Content -LiteralPath (Join-Path $base 'collector.log') -Value ((Get-Date -Format o)+' START v118 CSR + Weekly Yield + VM + Austin Top7; AUTO MAIL numeric suffix supported')
 try{do{try{
  $app=[Runtime.InteropServices.Marshal]::GetActiveObject('Outlook.Application');$ns=$app.GetNamespace('MAPI');$folders=@();foreach($store in $ns.Stores){try{$inbox=$store.GetDefaultFolder(6);$folders+=,$inbox;$folders+=@(FindAuto ($store.GetRootFolder()))}catch{}}
