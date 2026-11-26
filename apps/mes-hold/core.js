@@ -19,3 +19,41 @@ export function summary(rows){
  const lots=list=>new Set(list.map(r=>r.lot)).size;
  return [...groups.values()].sort((a,b)=>b.date.localeCompare(a.date)||a.customer.localeCompare(b.customer)).map(g=>{const released=g.rows.filter(r=>r.end),active=g.rows.filter(r=>!r.end);return [g.date,g.customer,lots(g.rows),qty(g.rows),lots(released),qty(released),lots(active),qty(active)]});
 }
+export function balances(rows, today) {
+ const customers = new Map();
+ const totals = new Map();
+ const summaryRows = [];
+ const qty = entries => entries.some(r => !Number.isFinite(r.qty)) ? '—' : entries.reduce((n,r) => n + r.qty, 0);
+ const count = entries => new Set(entries.map(r => r.lot.trim().toUpperCase())).size;
+ for (const r of rows) {
+  if (!customers.has(r.customer)) customers.set(r.customer,new Map());
+  const calendar = customers.get(r.customer);
+  for (const [event, stamp] of [['holds',r.start],['releases',r.end]]) {
+   if (!stamp) continue;
+   const day = dateOf(stamp);
+   if (day > today) continue;
+   if (!calendar.has(day)) calendar.set(day,{holds:[],releases:[]});
+   calendar.get(day)[event].push(r);
+  }
+ }
+ for (const [customer,calendar] of customers) {
+  const first = [...calendar.keys()].sort()[0];
+  if (!first) continue;
+  const active = new Set();
+  for (let time = Date.parse(first); time <= Date.parse(today); time += 86400000) {
+   const day = new Date(time).toISOString().slice(0,10);
+   const {holds=[], releases=[]} = calendar.get(day) || {};
+   const opening = count([...active]);
+   for (const r of holds) active.add(r);
+   for (const r of releases) active.delete(r);
+   const closing = count([...active]);
+   const total = totals.get(day) || {day, holds:0, releases:0, closing:0};
+   total.holds += count(holds);
+   total.releases += count(releases);
+   total.closing += closing;
+   totals.set(day,total);
+   if (opening || holds.length || releases.length) summaryRows.push([day,customer,opening,count(holds),qty(holds),count(releases),qty(releases),closing,qty([...active])]);
+  }
+ }
+ return {days:[...totals.values()].sort((a,b)=>a.day.localeCompare(b.day)),summaryRows:summaryRows.sort((a,b)=>b[0].localeCompare(a[0]) || a[1].localeCompare(b[1]))};
+}
